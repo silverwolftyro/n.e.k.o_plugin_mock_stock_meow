@@ -368,6 +368,23 @@ def test_panel_emoji_seam_is_at_least_fifty() -> None:
     assert "Math.max(50" in source
 
 
+def test_pure_version_does_not_leak_the_director_hint() -> None:
+    """开源纯净版**不许剧透**导演台。
+
+    真机验收（0.8.0）发现：标题栏右端的「长按标题栏」提示是**无条件渲染**的，
+    于是纯净版也看得见导演台的入口提示 —— 与「纯净版 = 无后台干预」的规格相悖。
+    长按逻辑本身早被 ``startHold`` 的 ``directorEnabled`` 挡住了，但提示文字漏了。
+    """
+    source = _PANEL.read_text(encoding="utf-8")
+    assert "directorEnabled" in source
+    # 提示只能在 directorEnabled 为真时渲染。
+    assert "directorEnabled\n      ? h(" in source
+    # 长按本身也必须被开关挡住。
+    assert "if (!directorEnabled) return" in source
+    # 漂移按钮同样只在特制版生效。
+    assert "const driftEnabled = directorEnabled" in source
+
+
 def test_i18n_has_the_p7_keys() -> None:
     """P7 的键族都在 i18n 里（文案不许硬编码在代码里）。"""
     data = json.loads(_I18N_FILE.read_text(encoding="utf-8"))
@@ -379,6 +396,12 @@ def test_i18n_has_the_p7_keys() -> None:
         "taunt.buy.1",
         "taunt.sell.1",
         "taunt.skip_day.1",
+        "taunt.loan.1",
+        "taunt.bankrupt.1",
+        "director.note.crash",
+        "director.note.loan",
+        "director.note.welfare",
+        "director.note.kill",
         "visual.stage_rich",
         "visual.stage_broke",
         "visual.stage_dying",
@@ -391,6 +414,40 @@ def test_i18n_has_the_p7_keys() -> None:
         "visual.emoji_sea_title",
     ):
         assert key in data, key
+
+
+def test_p7_copy_is_configurable_not_hardcoded() -> None:
+    """P7 的抽象文案必须走 i18n（规格：文案不许硬编码在代码里）。
+
+    真机验收（0.8.0）发现两处漏网：
+
+    1. 导演台的四条 ``note`` 是直接写死的中文字面量；
+    2. 普通 ``daily_loan`` 入口压根没推弹幕（只有导演强制放贷那条推了），
+       于是 ``taunt.loan.*`` 键族在正常玩法里永远用不上。
+
+    修法：全部改成 ``i18n_text(key, fallback)`` 查表（沿用 P5/P6 的既有模式），
+    键值落在 ``i18n/zh-CN.json``。
+    """
+    source = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
+    for key in (
+        "director.note.crash",
+        "director.note.loan",
+        "director.note.welfare",
+        "director.note.kill",
+        "taunt.bankrupt.1",
+        "taunt.loan.1",
+    ):
+        assert f'"{key}"' in source, key
+    # 导演台的 note 不许再是裸中文字面量。
+    for literal in (
+        '"note": "魔爪契约已生效。明天记得还，忘了就当你签的是遗嘱。"',
+        '"note": "恭喜，你已经连续七天没去领那份不该领的东西了。"',
+        '"note": "收工。"',
+        '"note": f"安排 {stock.name} 在下一个 tick 崩给你看。"',
+    ):
+        assert literal not in source, literal
+    # 破产弹幕不许再是裸字面量。
+    assert 'self._push_danmaku("你按了破产。放心，天台的风是免费送你的。")' not in source
 
 
 def test_config_example_has_the_director_and_visual_sections() -> None:

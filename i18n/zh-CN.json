@@ -1,5 +1,5 @@
 {
-  "plugin.name": "久留美式收割模拟器",
+  "plugin.name": "反向暴富模拟器",
   "plugin.description": "纯虚构反诈沙盘：养套杀 + 每日账单斩杀",
   "notice.anti_fraud.short": "纯虚构反诈沙盘。所有标的、价格、代币均为虚构，无现金价值。",
   "notice.anti_fraud.full": "本游戏是纯虚构、纯娱乐的反诈教学游戏。不提供充值、提现、兑换、真实行情对接、投资建议或任何金融服务。",
@@ -56,7 +56,7 @@
   "error.card_channel_unavailable": "卡片暂时发不出去，不影响本局。",
   "error.settlement_already_archived": "本局已经结算归档了。",
 
-  "market.title": "久留美市场",
+  "market.title": "反向暴富市场",
   "market.holdings": "持仓",
   "market.cash": "现钱",
   "market.total_asset": "总资产",
@@ -178,8 +178,8 @@
   "card.pawnbroker.title": "二道贩子来敲门",
   "card.achievement.title": "称号解锁",
 
-  "panel.title": "久留美市场",
-  "panel.subtitle": "纯虚构反诈沙盘 · P5.5 体验打磨版",
+  "panel.title": "反向暴富市场",
+  "panel.subtitle": "纯虚构反诈沙盘 · P7 社区抽象化与节目效果版",
   "panel.placeholder": "市场面板将在 P5 阶段接入，当前展示 P2 的行情与持仓基础数据。",
   "panel.idle": "当前没有进行中的对局，请先加入一局。",
   "panel.idle_hint": "在聊天里说一句「加入一局」，这一页就会活过来。",
@@ -286,6 +286,11 @@
   "taunt.skip_day.3": "逃得挺快。可惜这局没有存档点。",
   "taunt.loan.1": "钱到账了。利息也到账了，只是它不会告诉你。",
   "taunt.loan.2": "借五百还六百。你刚才那个决定，会在明天回来收账。",
+  "taunt.bankrupt.1": "你按了破产。放心，天台的风是免费送你的。",
+  "director.note.crash": "安排 {stock} 在下一个 tick 崩给你看。",
+  "director.note.loan": "魔爪契约已生效。明天记得还，忘了就当你签的是遗嘱。",
+  "director.note.welfare": "恭喜，你已经连续七天没去领那份不该领的东西了。",
+  "director.note.kill": "收工。",
   "visual.stage_rich": "家道：丰盈",
   "visual.stage_broke": "家道：断供",
   "visual.stage_dying": "家道：濒死",

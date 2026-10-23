@@ -583,14 +583,17 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       },
     },
     h("span", null, `${t("panel.title")} · ${stageLabel}`),
-    h(
-      "span",
-      {
-        className: holdHint ? "rrm-titlebar-hold" : "",
-        style: { fontSize: "12px", opacity: holdHint ? 0.9 : 0.35 },
-      },
-      holdHint ? t("visual.director_hold") : t("visual.director_hint")
-    )
+    // 开源纯净版**不剧透**导演台：连提示都不给（入口本身插件层还会再挡一次）。
+    directorEnabled
+      ? h(
+          "span",
+          {
+            className: holdHint ? "rrm-titlebar-hold" : "",
+            style: { fontSize: "12px", opacity: holdHint ? 0.9 : 0.35 },
+          },
+          holdHint ? t("visual.director_hold") : t("visual.director_hint")
+        )
+      : null
   )
 
   // ── P7：导演台（只在特制版；入口本身也会在插件层再挡一次）──────

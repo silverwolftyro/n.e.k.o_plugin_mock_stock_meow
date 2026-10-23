@@ -3256,7 +3256,13 @@ class ReverseRichSimPlugin(NekoPluginBase):
                     "stock_id": stock.id,
                     "stock_name": stock.name,
                     "queued": True,
-                    "note": f"安排 {stock.name} 在下一个 tick 崩给你看。",
+                    "note": _fill_text(
+                        i18n_text(
+                            "director.note.crash",
+                            "安排 {stock} 在下一个 tick 崩给你看。",
+                        ),
+                        {"stock": stock.name},
+                    ),
                 }
             )
         if op == "loan":
@@ -3310,7 +3316,9 @@ class ReverseRichSimPlugin(NekoPluginBase):
                 seed=player.trade_count,
                 params={"amount": infinite.loan_amount, "repay": infinite.loan_repay},
             )
-            or "钱到账了。利息也到账了，只是它不会告诉你。"
+            or i18n_text(
+                "taunt.loan.1", "钱到账了。利息也到账了，只是它不会告诉你。"
+            )
         )
         return Ok(
             {
@@ -3318,7 +3326,10 @@ class ReverseRichSimPlugin(NekoPluginBase):
                 "op": "loan",
                 "cash": round(player.cash, 6),
                 "loan_debt": round(player.loan_debt, 6),
-                "note": "魔爪契约已生效。明天记得还，忘了就当你签的是遗嘱。",
+                "note": i18n_text(
+                    "director.note.loan",
+                    "魔爪契约已生效。明天记得还，忘了就当你签的是遗嘱。",
+                ),
             }
         )
 
@@ -3351,7 +3362,10 @@ class ReverseRichSimPlugin(NekoPluginBase):
                 "action": "director",
                 "op": "welfare",
                 "welfare_missed_days": player.welfare_missed_days,
-                "note": "恭喜，你已经连续七天没去领那份不该领的东西了。",
+                "note": i18n_text(
+                    "director.note.welfare",
+                    "恭喜，你已经连续七天没去领那份不该领的东西了。",
+                ),
             }
         )
 
@@ -3380,7 +3394,7 @@ class ReverseRichSimPlugin(NekoPluginBase):
                 "action": "director",
                 "op": "kill",
                 "death_reason": player.death_reason,
-                "note": "收工。",
+                "note": i18n_text("director.note.kill", "收工。"),
             }
         )
 
@@ -3440,7 +3454,14 @@ class ReverseRichSimPlugin(NekoPluginBase):
         except (DbUnavailableError, sqlite3.Error) as db_error:
             return _err("db_unavailable", db_error)
         self._archive_settlement(payload, session)
-        self._push_danmaku("你按了破产。放心，天台的风是免费送你的。")
+        self._push_danmaku(
+            pick_taunt(
+                "bankrupt",
+                seed=int(player.trade_count),
+                params={"days": int(player.day)},
+            )
+            or i18n_text("taunt.bankrupt.1", "你按了破产。放心，天台的风是免费送你的。")
+        )
         return Ok(payload)
 
     def _roster_news_headline(self, item: Any) -> tuple[str, str | None, str | None]:
@@ -3599,6 +3620,18 @@ class ReverseRichSimPlugin(NekoPluginBase):
             )
         except (DbUnavailableError, sqlite3.Error) as db_error:
             return _err("db_unavailable", db_error)
+
+        # ── P7：猫娘弹幕（借了钱也要挨骂）────────────────────────────
+        self._push_danmaku(
+            pick_taunt(
+                "loan",
+                seed=player.trade_count,
+                params={"amount": infinite.loan_amount, "repay": infinite.loan_repay},
+            )
+            or i18n_text(
+                "taunt.loan.1", "钱到账了。利息也到账了，只是它不会告诉你。"
+            )
+        )
 
         return Ok(
             {
