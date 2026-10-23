@@ -183,6 +183,8 @@ enabled = false
 # 暴跌强度系数（0~1）。实际 severity = 0.15 + 0.25 × 该系数 × crash_severity_scale。
 crash_severity_scale = 1.0
 # 赛博弹窗轰炸：封住操作多少秒（1~30）
+# P7.3：这是**上限**，不是保证 —— 面板侧还有一道**客户端硬截止**
+# （从第一次看见轰炸起算，到点无条件关窗），防止前端定时器出 bug 锁死屏幕。
 boom_seconds = 5
 # 赛博弹窗轰炸：屏幕上有多少个小丑（1~200）
 boom_emoji_count = 50

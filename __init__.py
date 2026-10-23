@@ -151,7 +151,7 @@ __all__ = ["ReverseRichSimPlugin"]
 PLUGIN_ID = "reverse_rich_sim"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.8.2"
+PLUGIN_VERSION = "0.8.3"
 
 #: 「无为而治」称号的解锁天数（P5.5 改动 6）。
 #:
@@ -225,6 +225,19 @@ _DANMAKU_PAYLOAD_MAX = 8
 
 #: P7.2：每个标的的**走势小折线**带多少个点（降采样，别把载荷撑爆）。
 _PANEL_SPARK_POINTS = 18
+
+#: P7.3：网贷弹窗的**超时兜底**（秒）。
+#:
+#: 0.8.2 真机事故：网贷弹窗是「点不掉 + 按 ESC 也关不掉」的，而唯一能关它的
+#: 路径是按钮的 ``onResult`` —— 那条路径被宿主 ``ActionButton`` 里的
+#: ``await api.refresh()`` 挡着，刷新一失败按钮就永远等不到回调，弹窗也永远
+#: 关不掉，玩家直接被锁死在面板里。
+#:
+#: 这里给出**服务端**兜底：弹窗打开超过这个时间没人操作，就由插件层自动结算
+#: —— 无限模式**强制借入**（保住游戏），经典模式**直接判定破产**（没有第二条
+#: 路）。前端自己也有一份倒计时，两边各管各的，谁先到谁生效；即便前端整个
+#: 冻住了，服务端这一条也能把玩家放出来。
+_LOAN_PROMPT_TIMEOUT_SECONDS = 30.0
 
 #: 结算页固定反诈文案（**不可通过配置关闭**）。
 ANTI_FRAUD_NOTICE = (
@@ -408,6 +421,17 @@ class ReverseRichSimPlugin(NekoPluginBase):
         #: Emoji 海，并在倒计时里封锁操作。纯表现层，不影响任何数值。
         self._director_boom_until: float = 0.0
         self._director_boom_count: int = 50
+        #: 本次轰炸**本来该持续多久**（秒）。P7.3：前端拿它算自己的硬上限
+        #: （从第一次看见轰炸起算，到点无条件关窗），不再去减客户端时钟 ——
+        #: 时钟偏了、载荷停更了，都锁不死玩家。
+        self._director_boom_duration: float = 5.0
+        #: ── P7.3：网贷弹窗的**死锁兜底**───────────────────────────────
+        #: 弹窗**被打开**的时刻（epoch 秒）。0 = 当前没有待处理的网贷弹窗。
+        #: 服务端据此在 ``_LOAN_PROMPT_TIMEOUT_SECONDS`` 之后自动结算 ——
+        #: 前端哪怕整个冻住、按钮永远等不到回调，玩家也不会被永久锁死。
+        self._loan_prompt_at: float = 0.0
+        #: 弹窗是在第几天弹出来的（跨天要重置计时）。
+        self._loan_prompt_day: int = 0
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -2389,6 +2413,12 @@ class ReverseRichSimPlugin(NekoPluginBase):
                 await self._run_ticks(due)
         except Exception as error:  # noqa: BLE001 - 心跳绝不能把定时器带崩
             self.logger.error(f"市场心跳异常（不影响后续 tick）：{error}")
+        # P7.3：网贷弹窗的 30 秒超时兜底（前端冻住时的最后一道保险）。
+        # 它自己持锁（``_run_ticks`` 已经把锁还回来了），所以放在这里不会嵌套。
+        try:
+            await self._loan_prompt_watchdog()
+        except Exception as error:  # noqa: BLE001 - 看门狗绝不能把心跳带崩
+            self.logger.error(f"网贷弹窗看门狗异常（不影响后续心跳）：{error}")
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         if elapsed_ms > 100.0:
             # 只有真的慢了才去读配置，避免每秒都打一次宿主配置
@@ -3312,6 +3342,8 @@ class ReverseRichSimPlugin(NekoPluginBase):
         count = max(1, min(200, int(settings.get("boom_emoji_count", 50) or 50)))
         self._director_boom_until = time.time() + seconds
         self._director_boom_count = count
+        # P7.3：把「本来该持续多久」告诉前端，前端据此算自己的**硬上限**。
+        self._director_boom_duration = seconds
         return Ok(
             {
                 "action": "director",
@@ -3469,11 +3501,15 @@ class ReverseRichSimPlugin(NekoPluginBase):
     )
     @_locked
     async def declare_bankrupt(self) -> Ok:
-        """宣布破产（面板「赛博网贷广告」弹窗的唯一出路）。
+        """宣布破产（面板「赛博网贷广告」弹窗的**逃生通道**之一）。
 
         走的是**引擎既有的** ``apply_death(player, "starved")`` —— 死因文案
         仍然是引擎那一套，引擎层一行不改。归档路径与 ``settle`` 入口**完全
         复用**（结算报告 + 归档 JSON + 清空 ``market_state.player_id``）。
+
+        P7.3：本体挪到 :meth:`_do_declare_bankrupt`（**无锁**版本）——
+        ``_locked`` 不可重入，而网贷弹窗的入口 ``loan_prompt`` 自己也持锁，
+        两个 ``@_locked`` 方法互相调用会死锁。
         """
         engine_config = await self._engine_config()
         session, error = await self._session_or_error(engine_config)
@@ -3481,6 +3517,12 @@ class ReverseRichSimPlugin(NekoPluginBase):
             return error
         if session is None:
             return _err("no_active_game")
+        return await self._do_declare_bankrupt(session, engine_config)
+
+    async def _do_declare_bankrupt(
+        self, session: Session, engine_config: EngineConfig
+    ) -> Ok:
+        """``declare_bankrupt`` 的**无锁**实现（调用方必须自己持锁）。"""
         player = session.player
         if not player.alive:
             return _err("director_dead_player")
@@ -3515,7 +3557,192 @@ class ReverseRichSimPlugin(NekoPluginBase):
             )
             or i18n_text("taunt.bankrupt.1", "你按了破产。放心，天台的风是免费送你的。")
         )
+        # P7.3：玩家已经死了，网贷弹窗的待办一笔勾销（别让 watchdog 再动它）。
+        self._loan_prompt_at = 0.0
         return Ok(payload)
+
+    # ------------------------------------------------------------------
+    # P7.3：赛博网贷弹窗的**唯一出口**（0.8.2 面板死锁事故的修复）
+    # ------------------------------------------------------------------
+    @ui.action(
+        id="loan_prompt",
+        label="网贷弹窗",
+        icon="coin",
+        tone="danger",
+        group="daily",
+        order=6,
+    )
+    @plugin_entry(
+        id="loan_prompt",
+        name="网贷弹窗",
+        description=(
+            "P7.3：赛博网贷弹窗的**唯一出口**。choice=borrow 借高利贷、"
+            "choice=refuse 直接破产、choice=open 只是登记「弹窗打开了」。"
+            "**借不到也返回成功**（带一句提示），绝不会把玩家锁在弹窗里。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "choice": {
+                    "type": "string",
+                    "enum": ["open", "borrow", "refuse"],
+                    "description": (
+                        "open=登记弹窗已打开（启动 30 秒超时计时）；"
+                        "borrow=借走 500 万；refuse=我不借了，直接破产。"
+                    ),
+                },
+            },
+            "required": ["choice"],
+        },
+    )
+    @_locked
+    async def loan_prompt(self, choice: str = "borrow") -> Ok:
+        """赛博网贷弹窗的出口（**永远不会失败**）。
+
+        0.8.2 真机事故：弹窗唯一能关掉的路径是按钮的 ``onResult``，而那条
+        路径被宿主的 ``await api.refresh()`` 挡着 —— 刷新一失败，按钮就永远
+        等不到回调，弹窗永远关不掉，玩家被锁死在面板里（连「破产认输」都
+        点不了，因为那条路也被弹窗挡住了）。
+
+        所以这里有三条硬规矩：
+
+        1. **永远返回 Ok**。借不到钱不是「操作失败」，只是「这次没借到」——
+           把原因写进 ``note``，前端弹个 toast 就完事。弹窗照样关。
+        2. ``refuse`` 是**真·逃生通道**：直接走引擎既有的破产结算路径。
+        3. ``open`` 让服务端知道「弹窗开着」，从这一刻起算 30 秒超时；
+           到点没人操作，服务端自动结算（无限模式强制借入 / 经典模式破产）。
+        """
+        engine_config = await self._engine_config()
+        session, error = await self._session_or_error(engine_config)
+        if error is not None:
+            return error
+        if session is None:
+            return _err("no_active_game")
+        player = session.player
+        if not player.alive:
+            self._loan_prompt_at = 0.0
+            return _err("director_dead_player")
+
+        if choice == "open":
+            # 登记弹窗已打开：启动（或续上）30 秒超时计时。
+            if self._loan_prompt_at <= 0.0 or self._loan_prompt_day != player.day:
+                self._loan_prompt_at = time.time()
+                self._loan_prompt_day = int(player.day)
+            return Ok(
+                {
+                    "action": "loan_prompt",
+                    "choice": "open",
+                    "deadline": round(
+                        self._loan_prompt_at + _LOAN_PROMPT_TIMEOUT_SECONDS, 3
+                    ),
+                    "timeout_seconds": int(_LOAN_PROMPT_TIMEOUT_SECONDS),
+                }
+            )
+
+        # 玩家做了选择（或者超时了）→ 这笔待办到此为止。
+        self._loan_prompt_at = 0.0
+
+        if choice == "refuse":
+            # 逃生通道：我不借了，把我埋了吧。
+            return await self._do_declare_bankrupt(session, engine_config)
+
+        # choice == "borrow"
+        if session.mode != "infinite":
+            # 经典模式压根没有高利贷 —— 这是**规则的实话**，不是操作失败。
+            return Ok(
+                {
+                    "action": "loan_prompt",
+                    "choice": "borrow",
+                    "granted": 0.0,
+                    "cash_after": round(player.cash, 6),
+                    "note": i18n_text(
+                        "loan.prompt.classic_no_loan",
+                        "经典模式没有高利贷。你已经输在规则上了。",
+                    ),
+                }
+            )
+
+        result = await self._take_loan(session, engine_config)
+        if result.is_err():
+            # 借不到（今天借过了 / 上一笔没还）—— **照样算成功**，
+            # 把原因带给前端弹 toast，弹窗照关。
+            error_obj = result.err()
+            message = str(getattr(error_obj, "message", "") or "loan_failed")
+            code = str(getattr(error_obj, "code", "") or "loan_failed")
+            return Ok(
+                {
+                    "action": "loan_prompt",
+                    "choice": "borrow",
+                    "granted": 0.0,
+                    "cash_after": round(player.cash, 6),
+                    "failed": True,
+                    "code": code,
+                    "note": message,
+                }
+            )
+        payload = dict(result.unwrap())
+        payload["action"] = "loan_prompt"
+        payload["choice"] = "borrow"
+        payload["failed"] = False
+        return Ok(payload)
+
+    async def _loan_prompt_watchdog(self) -> None:
+        """网贷弹窗的**服务端**超时兜底（0.8.2 面板死锁事故的第二道保险）。
+
+        前端有自己的 30 秒倒计时，但前端可能整个冻住（渲染卡死、网络断了、
+        WebView 被系统挂起）。这时候只有服务端能救玩家：
+
+        * **无限模式** → 强制借入（``_take_loan`` 的既有参数），保住这一局；
+        * **经典模式** → 直接判定破产（那儿没有第二条路）。
+
+        两边都走引擎既有的路径，**引擎层一行不改**。
+        """
+        if self._loan_prompt_at <= 0.0:
+            return
+        if time.time() - self._loan_prompt_at < _LOAN_PROMPT_TIMEOUT_SECONDS:
+            return
+
+        # 到点了。把这笔待办清掉，免得下面的异常路径反复触发。
+        self._loan_prompt_at = 0.0
+        try:
+            engine_config = await self._engine_config()
+            with self._lock:
+                session, error = await self._session_or_error(engine_config)
+                if error is not None or session is None:
+                    return
+                player = session.player
+                if not player.alive:
+                    return
+                if self._loan_prompt_day != int(player.day):
+                    # 已经跨天了：这一笔早就作废了，别误伤新的一局。
+                    return
+
+                if session.mode == "infinite":
+                    # 只有「今天还没借」且「没有没还的债」时才值得自动借入。
+                    # 否则这次自动借入注定报错 —— 那就**什么都不做**：
+                    # 面板本来就没被锁死（弹窗早就自己关了），让玩家接着玩。
+                    if player.loan_taken_day == player.day or player.loan_debt > 0:
+                        return
+                    result = await self._take_loan(session, engine_config)
+                    if result.is_err():
+                        self._push_danmaku(
+                            i18n_text(
+                                "taunt.loan.1",
+                                "钱到账了。利息也到账了，只是它不会告诉你。",
+                            )
+                        )
+                        return
+                    self._push_danmaku(
+                        i18n_text(
+                            "taunt.loan.timeout",
+                            "你发呆太久，魔爪自己替你按了确认。",
+                        )
+                    )
+                else:
+                    # 经典模式没有高利贷，只剩「拒绝并破产」这一条路。
+                    await self._do_declare_bankrupt(session, engine_config)
+        except Exception as error:  # noqa: BLE001 - 看门狗绝不能把心跳带崩
+            self.logger.error(f"网贷弹窗超时兜底失败（不影响后续心跳）：{error}")
 
     def _roster_news_headline(
         self, item: Any, market: Any = None
@@ -4248,6 +4475,18 @@ class ReverseRichSimPlugin(NekoPluginBase):
         boom_left = max(0.0, float(self._director_boom_until) - time.time())
         boom_active = bool(self._director_on() and boom_left > 0)
 
+        # P7.3：网贷弹窗的**超时倒计时**（前端据此显示「N 秒后自动结算」）。
+        # ``pending`` 为假时前端根本不用管这个弹窗。
+        loan_prompt_pending = self._loan_prompt_at > 0.0
+        loan_prompt_left = (
+            max(
+                0.0,
+                self._loan_prompt_at + _LOAN_PROMPT_TIMEOUT_SECONDS - time.time(),
+            )
+            if loan_prompt_pending
+            else 0.0
+        )
+
         return {
             "stage": stage,
             "critical": critical,
@@ -4268,6 +4507,16 @@ class ReverseRichSimPlugin(NekoPluginBase):
                 "count": int(self._director_boom_count) if boom_active else 0,
                 "seconds_left": int(boom_left) + 1 if boom_active else 0,
                 "until": round(float(self._director_boom_until), 3),
+                # P7.3：本次轰炸**本来该持续多久**（秒）—— 前端据此算硬上限。
+                "duration": int(round(float(self._director_boom_duration) or 5.0)),
+            },
+            # P7.3：网贷弹窗的死锁兜底信息（纯表现层 + 倒计时）。
+            "loan_prompt": {
+                "pending": loan_prompt_pending,
+                "seconds_left": int(loan_prompt_left) + 1 if loan_prompt_pending else 0,
+                "timeout_seconds": int(_LOAN_PROMPT_TIMEOUT_SECONDS),
+                # 经典模式没有高利贷 —— 前端据此决定要不要显示「借走 500 万」。
+                "can_borrow": session is not None and session.mode == "infinite",
             },
             "roster": roster,
         }
@@ -4541,6 +4790,20 @@ class ReverseRichSimPlugin(NekoPluginBase):
             player.mode, player.day, market.seed, engine_config
         )
 
+        # P7.3：面板一旦**渲染出**「交不起饭钱」，服务端就登记这笔待办 ——
+        # 30 秒内没人操作就自动结算（前端整个冻住时的最后一道保险）。
+        # 载荷是**面板渲染**的同义词（``@ui.context`` 才会调到这里），所以
+        # 「面板开着」这件事服务端自己是知道的，不依赖前端额外上报。
+        bill_gap = max(0.0, next_cost - player.cash)
+        if bill_gap > 0.0 and player.alive:
+            if self._loan_prompt_at <= 0.0 or self._loan_prompt_day != int(player.day):
+                self._loan_prompt_at = time.time()
+                self._loan_prompt_day = int(player.day)
+        else:
+            # 交得起了（或人没了）：这笔待办作废。
+            if self._loan_prompt_day == int(player.day):
+                self._loan_prompt_at = 0.0
+
         return {
             "stage": "playing",
             "day": player.day,
@@ -4559,7 +4822,7 @@ class ReverseRichSimPlugin(NekoPluginBase):
             "initial_cash": round(float(player.initial_cash), 6),
             "living_cost": round(living_cost, 6),
             "next_bill": round(next_cost, 6),
-            "bill_gap": round(max(0.0, next_cost - player.cash), 6),
+            "bill_gap": round(bill_gap, 6),
             "missed_bills": int(player.strikes),
             "distance_to_kill": self._distance_to_death(session, engine_config),
             "concentration": round(position_concentration(player.positions, prices), 6),

@@ -162,6 +162,8 @@ type Boom = {
   count?: number
   seconds_left?: number
   until?: number
+  /** P7.3：本次轰炸**本来该持续多久**（秒）—— 前端据此算自己的硬上限。 */
+  duration?: number
 }
 
 /** P7：视觉降级三档 + 弹幕 + 导演台 + 名册（**纯表现层**）。 */
@@ -294,12 +296,40 @@ const RRM_CSS = `
 .rrm-font-rich { font-family: "YouYuan", "Yuanti SC", "Hiragino Maru Gothic ProN", "Microsoft YaHei UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
 .rrm-font-broke { font-weight: 300; }
 .rrm-font-dying { font-weight: 500; }
+.rrm-root .neko-button.rrm-escape { font-size: 11px; padding: 2px 8px; color: var(--muted); }
 `
 
 function money(value: number | undefined | null): string {
   if (value === undefined || value === null) return "—"
   return Number(value).toFixed(2)
 }
+
+/**
+ * P7.3：网贷弹窗的**本地超时**（秒）。
+ *
+ * 0.8.2 真机事故：弹窗唯一能关掉的路径是按钮的 `onResult`，而宿主
+ * `ActionButton` 把 `onResult` 挡在 `await props.api.refresh()` 后面 ——
+ * 刷新一失败，回调永远不来，弹窗永远关不掉，玩家被锁死在面板里。
+ *
+ * 现在有三道保险，任何一道都能把玩家放出来：
+ *   1. **同步关窗**（点按钮的那一瞬间就把弹窗关掉，不等任何回调）；
+ *   2. **本地倒计时**（本常量）：30 秒没人操作就自己关窗；
+ *   3. **服务端看门狗**：30 秒没人操作，服务端自动结算
+ *      （无限模式强制借入 / 经典模式直接破产）。
+ */
+const LOAN_PROMPT_TIMEOUT_SECONDS = 30
+
+/**
+ * P7.3：赛博弹窗轰炸的**客户端硬上限**（毫秒）。
+ *
+ * 0.8.2 用服务端的 `until` 时间戳减**客户端时钟**算剩余时间 —— 时钟偏了、
+ * 或者面板载荷停止刷新，`boom.active` 就会永远为 true ⇒ 永久锁屏。
+ *
+ * 现在改成：从**第一次看见它**起，本地记一个截止时刻，到点无条件关窗。
+ * 服务端说该持续多久就持续多久（`boom.duration`），但**只认第一次**，
+ * 之后载荷再怎么刷都不会把这个上限往后推。
+ */
+const BOOM_HARD_LIMIT_MS = 5000
 
 function percent(value: number | undefined | null): string {
   if (value === undefined || value === null) return "—"
@@ -530,6 +560,13 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   const [holdHint, setHoldHint] = useState(false)
   const [loanModalOpen, setLoanModalOpen] = useState(false)
   const [loanModalDay, setLoanModalDay] = useState<number>(-1)
+  // ── P7.3：网贷弹窗的本地倒计时（秒）+ 标题栏逃生按钮的两步确认 ──────
+  const [loanLeft, setLoanLeft] = useState<number>(0)
+  const [escapeArmed, setEscapeArmed] = useState(false)
+  const escapeTimer = useRef<any>(null)
+  // P7.3：网贷弹窗的**本地截止时刻**（epoch 毫秒）与轰炸的**硬上限**。
+  const loanDeadline = useRef<number>(0)
+  const boomDeadline = useRef<number>(0)
   // ── P7.2：濒死档「数字偶尔闪红」（**JS 定时器**，不用 CSS 动画）──
   const [flashOn, setFlashOn] = useState(false)
   // ── P7.2：弹窗轰炸的倒计时心跳（用来把 5 秒倒计时画出来）─────────
@@ -561,7 +598,43 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     if (loanModalDay === day) return
     setLoanModalDay(day)
     setLoanModalOpen(true)
-  }, [state.bill_gap, state.day, state.stage, loanModalDay])
+    // P7.3：告诉服务端「弹窗开了」——服务端据此启动 30 秒超时看门狗。
+    // （服务端在渲染载荷时也会自己登记一遍，这里是双保险。）
+    try {
+      props.api
+        .call("loan_prompt", { choice: "open" }, { userInitiated: true })
+        .catch(() => undefined)
+    } catch (_error) {
+      // 登记失败也不要紧：服务端还有载荷侧登记 + 前端本地倒计时兜底。
+    }
+  }, [state.bill_gap, state.day, state.stage, loanModalDay, props.api])
+
+  // ── P7.3：网贷弹窗的**本地倒计时**（前端兜底）────────────────────
+  // 30 秒内没人操作 → 本地自己把弹窗关掉（服务端看门狗同时会自动结算）。
+  // 计时与关窗**写在同一个定时器里**，避免两个 effect 抢同一个状态。
+  useEffect(() => {
+    if (!loanModalOpen) {
+      loanDeadline.current = 0
+      setLoanLeft(0)
+      return undefined
+    }
+    if (loanDeadline.current <= 0) {
+      loanDeadline.current = Date.now() + LOAN_PROMPT_TIMEOUT_SECONDS * 1000
+    }
+    setLoanLeft(LOAN_PROMPT_TIMEOUT_SECONDS)
+    const timer = setInterval(() => {
+      const left = Math.max(
+        0,
+        Math.ceil((loanDeadline.current - Date.now()) / 1000)
+      )
+      setLoanLeft(left)
+      if (left <= 0) {
+        // 到点了：本地关窗（**不动** loanModalDay —— 今天不再自动重开）。
+        setLoanModalOpen(false)
+      }
+    }, 500)
+    return () => clearInterval(timer)
+  }, [loanModalOpen])
 
   // ── P7：长按标题栏 → 露出导演台（只在特制版）────────────────────
   const startHold = () => {
@@ -601,15 +674,28 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     }
   }, [stage])
 
-  // ── P7.2：弹窗轰炸的倒计时（面板自己算秒数，5 秒后自动收工）──────
-  const boomUntil = Number(boom.until || 0)
+  // ── P7.3：弹窗轰炸的**客户端硬上限**（不依赖载荷刷新）───────────
+  // 0.8.2 用服务端的 `until` 时间戳减**客户端时钟**算剩余时间：时钟一偏、
+  // 或者面板载荷停止刷新，`boom.active` 就会永远为 true ⇒ 永久锁屏。
+  // 现在改成：**第一次看见它**的时候本地记一个截止时刻，到点无条件关窗。
+  const boomPayloadActive = Boolean(boom.active)
+  const boomWindow = Math.min(30, Math.max(1, Number(boom.duration || 5) || 5))
   useEffect(() => {
-    if (!boomUntil) return
+    if (!boomPayloadActive) {
+      boomDeadline.current = 0
+      return
+    }
+    if (boomDeadline.current <= 0) {
+      boomDeadline.current = Date.now() + boomWindow * 1000
+    }
+  }, [boomPayloadActive, boomWindow])
+  useEffect(() => {
+    if (!boomPayloadActive) return
     const timer = setInterval(() => setBoomTick((count) => count + 1), 300)
     return () => clearInterval(timer)
-  }, [boomUntil])
-  const boomLeft = Math.max(0, boomUntil - Date.now() / 1000)
-  const boomActive = Boolean(boom.active) && boomLeft > 0
+  }, [boomPayloadActive])
+  const boomLeft = Math.max(0, (boomDeadline.current - Date.now()) / 1000)
+  const boomActive = boomPayloadActive && boomLeft > 0
 
   const stocks = state.stocks || []
   const positions = state.positions || []
@@ -761,6 +847,46 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       })
     : null
 
+  // ── P7.3：标题栏右上角的**紧急逃生**（两步内联确认）────────────
+  // 用途：处理所有不可预见的 UI 卡死（弹窗锁死、载荷不刷新、按钮点不动）。
+  // 刻意**不用 Modal** 做二次确认 —— 万一面板已经卡死，再弹一个 Modal
+  // 只会更糟；两步点确认（3 秒内再点一次）足够防误触。
+  const escapeGame = () => {
+    try {
+      props.api
+        .call("declare_bankrupt", {}, { userInitiated: true })
+        .then(async () => {
+          await props.api.refresh()
+        })
+        .catch((error: any) => {
+          showToast(String((error && error.message) || error), "danger")
+        })
+    } catch (_error) {
+      // 连调用都抛出来了：面板已经彻底坏了 —— 玩家只能手动重启插件。
+    }
+  }
+
+  const armEscape = () => {
+    if (escapeArmed) {
+      if (escapeTimer.current) {
+        clearTimeout(escapeTimer.current)
+        escapeTimer.current = null
+      }
+      setEscapeArmed(false)
+      escapeGame()
+      return
+    }
+    setEscapeArmed(true)
+    if (escapeTimer.current) clearTimeout(escapeTimer.current)
+    escapeTimer.current = setTimeout(() => setEscapeArmed(false), 3000)
+  }
+  useEffect(
+    () => () => {
+      if (escapeTimer.current) clearTimeout(escapeTimer.current)
+    },
+    []
+  )
+
   // ── P7：标题栏（长按露出导演台）─────────────────────────────────
   // 0.8.1：**只保留布局**，不再有背景 / 边框 / 圆角 —— 那层深色半透明底
   // 在宿主深浅色主题下都会让整块面板显脏。
@@ -792,6 +918,30 @@ export default function Panel(props: PluginSurfaceProps<State>) {
           "span",
           { style: { fontSize: "12px", opacity: holdHint ? 0.9 : 0.6 } },
           holdHint ? t("visual.director_hold") : t("visual.director_hint")
+        )
+      : null,
+    // ── P7.3：紧急逃生（极小、不显眼；点两下才真退出）────────────
+    state.stage === "playing"
+      ? h(
+          Button,
+          {
+            className: "rrm-escape",
+            tone: "default",
+            onClick: (event: any) => {
+              if (event && typeof event.stopPropagation === "function") {
+                event.stopPropagation()
+              }
+              armEscape()
+            },
+            onPointerDown: (event: any) => {
+              if (event && typeof event.stopPropagation === "function") {
+                event.stopPropagation()
+              }
+            },
+            children: escapeArmed
+              ? t("visual.escape_confirm")
+              : t("visual.escape_exit"),
+          }
         )
       : null
   )
@@ -1091,10 +1241,45 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   }
 
   // ── P7 模块二 ②：荒诞弹窗（赛博网贷广告）─────────────────────
+  // P7.3：**点按钮 = 同步关窗**，然后才异步调后端。
+  //
+  // 0.8.2 的死锁根因：这里用的是宿主 `ActionButton`，而它的 `onResult` 被
+  // `await props.api.refresh()` 挡在后面 —— 刷新一失败，回调永远不来，弹窗就永远
+  // 关不掉；无限模式下这个弹窗**又只有那一个按钮**，于是玩家被彻底锁死，
+  // 连「宣布破产」都点不了（它被遮罩挡住了）。
+  //
+  // 现在有三道保险，任何一道都能把玩家放出来：
+  //   ① 不用 `ActionButton`，直接宿主 `Button` + `props.api.call`，**点了立刻关**；
+  //   ② **永远**给一个「我不借了，把我埋了吧」的逃生按钮；
+  //   ③ 30 秒本地倒计时，到点自己关（服务端看门狗同时自动结算）。
+  const loanChoice = (choice: string) => {
+    // ── 同步关窗：不管后端成不成功，玩家都不会被卡住 ──
+    setLoanModalOpen(false)
+    try {
+      props.api
+        .call("loan_prompt", { choice }, { userInitiated: true })
+        .then(async (result: any) => {
+          await props.api.refresh()
+          const note = result && result.note ? String(result.note) : ""
+          if (note) {
+            showToast(note, result && result.failed ? "danger" : "info")
+          }
+        })
+        .catch((error: any) => {
+          showToast(String((error && error.message) || error), "danger")
+        })
+    } catch (_error) {
+      // 连调用都抛出来了：弹窗已经关了，至少玩家还能继续操作别的。
+    }
+  }
+
+  const loanCanBorrow = state.mode === "infinite"
+
   const loanModal = h(Modal, {
     open: loanModalOpen,
     title: t("visual.loan_modal_title"),
-    // **点遮罩 / 按 ESC 都关不掉** —— 只能点按钮。
+    // 点遮罩 / 按 ESC 依然关不掉（这是广告的排面）——
+    // 但**按钮永远在**，而且 30 秒后自动收工，玩家绝不会被困住。
     closeOnBackdrop: false,
     closeOnEscape: false,
     size: "md",
@@ -1102,28 +1287,36 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       Stack,
       { gap: 12 },
       h(Text, null, t("visual.loan_modal_body")),
-      h(Alert, { tone: "danger", message: t("visual.loan_modal_note") })
+      h(Alert, { tone: "danger", message: t("visual.loan_modal_note") }),
+      // P7.3：把逃生通道**写在脸上**（玩家不用猜有没有出路）。
+      h(Alert, { tone: "info", message: t("visual.loan_modal_escape_hint") }),
+      // P7.3：倒计时（玩家看得见自己还剩多久就要被自动结算）。
+      h(Alert, {
+        tone: "warning",
+        message: t("visual.loan_modal_countdown", { seconds: loanLeft }),
+      })
     ),
     footer: h(
       "div",
       { className: "neko-button-group" },
-      state.mode === "infinite"
-        ? h(ActionButton, {
-            action: actionById("daily_loan"),
-            label: t("visual.loan_modal_confirm"),
+      // ── 「借走 500 万」（经典模式没有高利贷，就不显示）─────────
+      loanCanBorrow
+        ? h(Button, {
             tone: "danger",
-            onResult: () => setLoanModalOpen(false),
-            onError: (error: any) =>
-              showToast(String((error && error.message) || error), "danger"),
+            onClick: () => {
+              loanChoice("borrow")
+            },
+            children: t("visual.loan_modal_confirm"),
           })
-        : h(ActionButton, {
-            action: actionById("declare_bankrupt"),
-            label: t("visual.loan_modal_classic"),
-            tone: "danger",
-            onResult: () => setLoanModalOpen(false),
-            onError: (error: any) =>
-              showToast(String((error && error.message) || error), "danger"),
-          })
+        : null,
+      // ── 逃生通道：**永远存在**，无限模式也有 ──────────────────
+      h(Button, {
+        tone: "default",
+        onClick: () => {
+          loanChoice("refuse")
+        },
+        children: t("visual.loan_modal_refuse"),
+      })
     ),
   })
 
