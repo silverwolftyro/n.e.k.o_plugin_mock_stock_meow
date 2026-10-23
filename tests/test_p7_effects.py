@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,52 @@ def _set_business_config(plugin: Any, ctx: Any, payload: dict[str, Any]) -> None
     ctx.config_payload = dict(payload)
     plugin._business_config_cache = None
     plugin._business_config_cached_at = 0.0
+
+
+def _panel_code() -> str:
+    """面板源码**去掉注释与 CSS 字符串**后的 TSX 代码正文。
+
+    0.8.1 的面板顶上留了一段「事故复盘」注释，里面**故意**写着
+    ``@keyframes`` / ``filter:`` / ``inset:0`` 这些字样 —— 源码扫描必须
+    先把注释剥掉，否则守卫会误报。
+    """
+    source = _strip_comments(_PANEL.read_text(encoding="utf-8"))
+    # CSS 模板字符串单独拆出来扫（见 _panel_css）。
+    marker = "const RRM_CSS = `"
+    if marker in source:
+        head, _, rest = source.partition(marker)
+        body, _, tail = rest.partition("`")
+        source = head + "\n/* <RRM_CSS> */\n" + tail
+    return source
+
+
+def _panel_css() -> str:
+    """面板里注入的那一段 CSS（``RRM_CSS``）的正文。"""
+    source = _PANEL.read_text(encoding="utf-8")
+    marker = "const RRM_CSS = `"
+    assert marker in source, "找不到 RRM_CSS"
+    _, _, rest = source.partition(marker)
+    body, _, _ = rest.partition("`")
+    return body
+
+
+def _strip_comments(source: str) -> str:
+    kept: list[str] = []
+    in_block = False
+    for line in source.splitlines():
+        stripped = line.strip()
+        if in_block:
+            if "*/" in stripped:
+                in_block = False
+            continue
+        if stripped.startswith("/*"):
+            if "*/" not in stripped:
+                in_block = True
+            continue
+        if stripped.startswith("//"):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
 
 
 def _enable_director(plugin: Any, ctx: Any, enabled: bool = True) -> None:
@@ -333,13 +380,12 @@ def _player_of(plugin: Any) -> Any:
 # ---------------------------------------------------------------- 面板特效
 
 
-def test_panel_contains_the_p7_effects() -> None:
-    """面板里必须有 P7 的四类特效（源码扫描）。"""
-    source = _PANEL.read_text(encoding="utf-8")
-    # 病危闪烁 + 动画
-    assert "@keyframes rrm-panic" in source
-    assert "rrm-critical" in source
+def test_panel_contains_the_p7_features() -> None:
+    """面板里必须有 P7 仍然保留的能力（源码扫描）。"""
+    source = _panel_code()
+    # 病危：只保留徽标 + 关键数字染红（闪烁动画已回滚）
     assert "critical_emoji" in source
+    assert "var(--danger)" in source
     # 荒诞弹窗（点不掉）
     assert "Modal" in source
     assert "closeOnBackdrop: false" in source
@@ -348,18 +394,104 @@ def test_panel_contains_the_p7_effects() -> None:
     # Emoji 海
     assert "🤡" in source and "🪦" in source
     assert "visual.emoji_sea_title" in source
-    # 按钮漂移
-    assert "DriftButton" in source
-    assert "driftRate={0.05}" in source
-    assert "visual.drift_miss" in source
-    # 弹幕悬浮窗 + 导演台（长按）
-    assert "rrm-danmaku" in source
+    # 弹幕 + 导演台（长按）
+    assert "visual.danmaku_title" in source
     assert "onPointerDown" in source
     assert "visual.director_title" in source
-    # 三档降级
-    assert "rrm-stage-rich" in source
-    assert "rrm-stage-broke" in source
-    assert "rrm-stage-dying" in source
+    # 三档降级只剩**文案**
+    assert "visual.stage_rich" in source
+    assert "visual.stage_broke" in source
+    assert "visual.stage_dying" in source
+
+
+def test_panel_has_no_layout_breaking_css() -> None:
+    """0.8.1 的**核心守卫**：面板里不许再出现会破坏宿主布局的写法。
+
+    0.8.0 在 Steam 宿主（0.9.0）上把 UI 整个搞崩了，根因有四条：
+
+    1. ``position:absolute; inset:0`` + 对角 ``linear-gradient`` ⇒ 巨大 X 线条；
+    2. 动画改**祖先**的 ``opacity`` ⇒ 整个面板泛白半透明；
+    3. ``filter: grayscale()`` ⇒ 给祖先建立 containing block ⇒ 布局错位；
+    4. ``<div>`` 包裹层 ⇒ 卡片不再是 ``Stack`` 的直接 flex item ⇒ 间距消失。
+
+    这四类构造在本插件的**面板**里一律禁止（引擎层与模式层不受影响）。
+    """
+    css = _panel_css()
+    css_forbidden = (
+        "@keyframes",
+        "position: absolute",
+        "position: fixed",
+        "z-index",
+        "filter:",
+        "clip-path",
+        "inset:",
+        # 伪元素**画东西**（content）就是遮罩层的前奏 —— 一律禁。
+        # 注意 `*, *::before, *::after { box-sizing: border-box }` 这种
+        # 标准 reset 里出现 ::before / ::after 是无害的，所以不按名字禁。
+        "content:",
+        "linear-gradient",
+        "radial-gradient",
+        "rrm-stage-",
+        "rrm-critical",
+        "rrm-danmaku",
+        "rrm-drift",
+        "rrm-emoji-sea",
+        "rrm-titlebar",
+        "opacity",
+    )
+    for token in css_forbidden:
+        assert token not in css, f"注入的 CSS 里不许再出现 {token}"
+
+    # 只允许 `animation: none`（关掉宿主的入场淡入），不许任何别的动画。
+    for match in re.finditer(r"animation:\s*([^;]+);", css):
+        value = match.group(1).strip()
+        assert value.replace("!important", "").strip() == "none", f"只允许 animation: none，发现 {value!r}"
+
+    code = _panel_code()
+    code_forbidden = (
+        'position: "absolute"',
+        'position: "fixed"',
+        "zIndex",
+        "filter:",
+        "animation:",
+        "clipPath",
+        "linear-gradient",
+        "<div className=",
+    )
+    for token in code_forbidden:
+        assert token not in code, f"面板代码里不许再出现 {token}"
+
+
+def test_panel_cards_are_direct_stack_children() -> None:
+    """卡片必须是 ``Stack`` 的**直接** flex item（与 P6 已验证的骨架一致）。"""
+    source = _panel_code()
+    # 不许有自定义的 div 包裹层
+    assert '<div className={`rrm-stage-' not in source
+    assert "<div className=" not in source
+    # 面板主体是 Stack，Page 上挂防御性 CSS 的作用域类
+    assert 'className="rrm-root"' in source
+    assert "<Stack gap={12}>" in source
+
+
+def test_panel_critical_is_only_an_alert_and_a_red_number() -> None:
+    """病危只允许两种表现：顶部红色 Alert 条 + 关键数字染红。"""
+    source = _panel_code()
+    assert 'tone="danger"' in source
+    assert "var(--danger)" in source
+    # 不许有自定义背景色 / 动画
+    assert "rrm-panic" not in source
+    assert "rrm-glitch" not in source
+    assert "rrm-crack" not in source
+
+
+def test_panel_has_no_drift_button() -> None:
+    """按钮漂移已回滚（自定义包裹会破坏宿主按钮组的布局）。"""
+    source = _panel_code()
+    assert "DriftButton" not in source
+    assert "driftRate" not in source
+    # 买入 / 放贷一律用宿主原生 ActionButton
+    assert 'action={actionById("buy")}' in source
+    assert 'action={actionById("daily_loan")}' in source
 
 
 def test_panel_emoji_seam_is_at_least_fifty() -> None:
@@ -375,14 +507,12 @@ def test_pure_version_does_not_leak_the_director_hint() -> None:
     于是纯净版也看得见导演台的入口提示 —— 与「纯净版 = 无后台干预」的规格相悖。
     长按逻辑本身早被 ``startHold`` 的 ``directorEnabled`` 挡住了，但提示文字漏了。
     """
-    source = _PANEL.read_text(encoding="utf-8")
+    source = _panel_code()
     assert "directorEnabled" in source
     # 提示只能在 directorEnabled 为真时渲染。
     assert "directorEnabled\n      ? h(" in source
     # 长按本身也必须被开关挡住。
     assert "if (!directorEnabled) return" in source
-    # 漂移按钮同样只在特制版生效。
-    assert "const driftEnabled = directorEnabled" in source
 
 
 def test_i18n_has_the_p7_keys() -> None:

@@ -16,12 +16,18 @@
 //   3. `style` 传的是**对象**（运行时逐键写 `dom.style[key]`），
 //      **不是** CSS 字符串；CSS 自定义属性（`--x`）用 `setProperty` 也支持。
 //
-// P7 的四个模块全在这个文件里（**引擎零改动**，视觉全部落在面板）：
-//   * 病危特效：红色高频闪烁 + 💀/🩸；
+// 0.8.1 的**硬规矩**（Steam 宿主 0.9.0 上 0.8.0 把面板 UI 整个搞崩了）：
+//   * 面板**只用宿主组件的默认样式** —— 不碰 opacity / filter / animation /
+//     position / 背景 / 伪元素；
+//   * 卡片必须是 `Stack` 的**直接** flex item（和 P6 已验证的骨架一致），
+//     中间**不许**再塞 `<div>` 包裹层；
+//   * 自定义 CSS 只剩「盒模型 + 溢出收敛」这类不改变布局的声明（见 RRM_CSS）；
+//   * 「病危」只有两种表现：面板顶部一条红色 `Alert` + 关键数字染红。
+//
+// 仍然保留的 P7 能力（都不涉及 CSS 特效）：
 //   * 荒诞弹窗：赛博网贷广告（`Modal` 关不掉，只能借款或破产）；
-//   * Emoji 海结算：终局铺满 🤡 / 🪦；
-//   * 按钮漂移：特制版才开，5% 概率跑掉；
-//   * 社区名册 + 猫娘弹幕悬浮窗 + 家道中落的视觉降级三档。
+//   * Emoji 海结算：终局铺满 🤡 / 🪦（纯 `Grid` 内容，无背景无定位）；
+//   * 社区名册 + 猫娘弹幕（`Card` / `Alert`）+ 家道档位的**文案**变化。
 //
 // 局中隐藏（P4 §14 / P5 方案 B）：本面板**不显示** heat、反转日、新闻真假。
 // 载荷里没有的东西，面板也拿不到 —— 面板只渲染 `state` 里的白名单字段。
@@ -227,51 +233,44 @@ const PHASE_TONE: Record<string, Tone> = {
  * CSS 自定义属性用 `setProperty`。这里注入一份 `<style>`（`h("style", null, css)`
  * —— 子节点会变成 text node），拿到 keyframes 与伪元素。
  */
+/**
+ * 0.8.1 防御性基线 —— **只做收敛，绝不做任何视觉效果**。
+ *
+ * 0.8.0 在 Steam 宿主（0.9.0）上把面板 UI 整个搞崩了，根因有**五**条：
+ *
+ *   1. `.rrm-stage-dying .neko-card::after` —— `position:absolute; inset:0`
+ *      加两条对角 `linear-gradient` ⇒ 面板上出现**巨大的交叉 X 线条**，
+ *      直接盖在表格和卡片上。
+ *   2. `.rrm-stage-dying` 的 `rrm-glitch` 动画改的是**祖先容器的 opacity**
+ *      （掉到 0.30 / 0.45）⇒ 整个面板泛白半透明，文字数字全看不清。
+ *   3. `.rrm-stage-broke` 的 `filter: grayscale(...)` ⇒ filter 会给祖先
+ *      建立 containing block，宿主的 flex / grid 布局随之错位。
+ *   4. P7 新加的 `<div className="rrm-stage-*">` 包裹层把卡片从
+ *      `Stack` 的 flex item 变成了嵌套 block ⇒ 间距消失、挤成一团。
+ *   5. **宿主自己的** `.neko-page` / `.neko-card` 都带
+ *      `animation: neko-fade-up 240ms ease both`，而 `neko-fade-up` 从
+ *      `opacity: 0` 起步。宿主每次刷新上下文都会**重建 iframe**，
+ *      于是这段入场动画**每次都从头重放** —— 面板长期停在半透明状态，
+ *      文字数字几乎看不清。
+ *      宿主的 `styles.css` 里其实留了官方逃生口
+ *      （`@media (prefers-reduced-motion: reduce)` → `animation: none !important`），
+ *      这里照搬它的口径，但**限定在本面板的根节点内**。
+ *
+ * 因此 0.8.1 的规矩改成：
+ *   * 面板**只用宿主组件的默认样式**，不碰 opacity / filter / 动画 /
+ *     position / 背景 / 伪元素；
+ *   * 自定义 CSS 只允许「盒模型 + 溢出收敛 + 关掉入场动画」这类
+ *     **不会改变布局**的声明；
+ *   * 卡片必须是 `Stack` 的**直接** flex item（和 P6 已验证的骨架一致）。
+ *
+ * 宿主 `styles.css` 里本来就有 `* { box-sizing: border-box }` 与
+ * `.neko-card { overflow: hidden }`，这里再声明一次是为了不依赖宿主版本。
+ */
 const RRM_CSS = `
-@keyframes rrm-panic {
-  0%, 100% { background-color: rgba(220, 38, 38, 0.08); }
-  50% { background-color: rgba(220, 38, 38, 0.40); }
-}
-@keyframes rrm-glitch {
-  0%, 91%, 100% { opacity: 1; }
-  93% { opacity: 0.30; }
-  95% { opacity: 1; }
-  97% { opacity: 0.45; }
-}
-@keyframes rrm-crack {
-  0%, 100% { opacity: 0.55; }
-  50% { opacity: 0.26; }
-}
-@keyframes rrm-danmaku-in {
-  from { opacity: 0; transform: translateY(16px) scale(0.96); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-.rrm-critical { animation: rrm-panic 0.42s ease-in-out infinite; border-radius: 12px; }
-.rrm-stage-rich .neko-card { border-color: #d4af37 !important; }
-.rrm-stage-rich .neko-stat { border-color: rgba(212, 175, 55, 0.55) !important; }
-.rrm-stage-broke { filter: grayscale(0.82) contrast(0.94) brightness(0.97); }
-.rrm-stage-broke .neko-card { border-color: #4b5563 !important; }
-.rrm-stage-dying { animation: rrm-glitch 7s steps(1, end) infinite; }
-.rrm-stage-dying .neko-card { position: relative; }
-.rrm-stage-dying .neko-card::after {
-  content: ""; position: absolute; inset: 0; pointer-events: none;
-  background:
-    linear-gradient(112deg, transparent 47%, rgba(0, 0, 0, 0.92) 47.6%, transparent 48.4%),
-    linear-gradient(68deg, transparent 61%, rgba(0, 0, 0, 0.78) 61.5%, transparent 62.2%);
-  animation: rrm-crack 3.2s ease-in-out infinite;
-}
-.rrm-danmaku { position: sticky; bottom: 10px; z-index: 40; }
-.rrm-danmaku-box {
-  animation: rrm-danmaku-in 0.28s ease-out;
-  border: 1px solid rgba(244, 63, 94, 0.55);
-  background: rgba(14, 9, 13, 0.93);
-  border-radius: 10px;
-  padding: 8px 12px;
-}
-.rrm-emoji-sea { font-size: 20px; line-height: 1.25; letter-spacing: 1px; }
-.rrm-titlebar { user-select: none; }
-.rrm-drift { transition: transform 0.12s ease-out, opacity 0.12s ease-out; }
-.rrm-titlebar-hold { opacity: 0.85; }
+*, *::before, *::after { box-sizing: border-box; }
+.rrm-root, .rrm-root *, .rrm-root *::before, .rrm-root *::after { animation: none !important; }
+.rrm-root .neko-stack > *, .rrm-root .neko-card-body > * { min-width: 0; }
+.rrm-root .neko-key-value-value { overflow-wrap: anywhere; }
 `
 
 function money(value: number | undefined | null): string {
@@ -288,8 +287,6 @@ function percent(value: number | undefined | null): string {
 function Kline(props: {
   points: KlinePoint[]
   emptyText: string
-  /** P7：濒死档变成"心电图暗红"。 */
-  ecg?: boolean
 }) {
   const points = props.points || []
   if (points.length === 0) {
@@ -300,8 +297,9 @@ function Kline(props: {
   const min = Math.min.apply(null, prices)
   const span = max - min || 1
   const height = 116
-  const up = props.ecg ? "#7f1d1d" : "#15803d"
-  const down = props.ecg ? "#450a0a" : "#b91c1c"
+  // 0.8.1：不再按档位改 K 线颜色（家道中落的视觉降级已回滚，见 RRM_CSS 注释）。
+  const up = "#15803d"
+  const down = "#b91c1c"
   const bars = points.map((point, index) => {
     const tick = point[0]
     const price = point[1]
@@ -317,7 +315,6 @@ function Kline(props: {
         marginRight: "1px",
         background: color,
         borderRadius: "1px",
-        boxShadow: props.ecg ? "0 0 4px rgba(127, 29, 29, 0.9)" : "none",
       },
     })
   })
@@ -333,72 +330,6 @@ function Kline(props: {
       },
     },
     ...bars
-  )
-}
-
-/**
- * P7：会跑掉的按钮（**只在直播特制版开**）。
- *
- * 5% 概率在鼠标靠近时**偏移**，于是玩家的点击落在容器上而不是按钮上 ——
- * 动作**不会**被触发（这是"点空了"的本意），只弹一句提示；下一次点击恢复。
- */
-function DriftButton(props: {
-  action?: HostedAction
-  label: string
-  values?: Record<string, any>
-  tone?: Tone
-  drift: boolean
-  driftRate: number
-  onMiss: () => void
-}) {
-  const [shifted, setShifted] = useState(false)
-  const armed = useRef(true)
-
-  const maybeDrift = () => {
-    if (!props.drift || !armed.current || shifted) return
-    if (Math.random() < props.driftRate) {
-      armed.current = false
-      setShifted(true)
-    }
-  }
-
-  const onWrapperClick = (event: any) => {
-    if (!shifted) return
-    if (event && typeof event.stopPropagation === "function") event.stopPropagation()
-    props.onMiss()
-    setShifted(false)
-    armed.current = true
-  }
-
-  return h(
-    "span",
-    {
-      style: {
-        display: "inline-block",
-        position: "relative",
-        padding: shifted ? "0 16px" : "0",
-      },
-      onClick: onWrapperClick,
-    },
-    h(
-      "span",
-      {
-        className: "rrm-drift",
-        style: {
-          display: "inline-block",
-          transform: shifted ? "translate(14px, -6px)" : "translate(0, 0)",
-          opacity: shifted ? 0.45 : 1,
-        },
-        onMouseEnter: maybeDrift,
-        onPointerEnter: maybeDrift,
-      },
-      h(ActionButton, {
-        action: props.action,
-        label: props.label,
-        values: props.values,
-        tone: props.tone,
-      })
-    )
   )
 }
 
@@ -557,19 +488,17 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   }, [visual.emoji_sea_size])
 
   // ── P7：标题栏（长按露出导演台）─────────────────────────────────
+  // 0.8.1：**只保留布局**，不再有背景 / 边框 / 圆角 —— 那层深色半透明底
+  // 在宿主深浅色主题下都会让整块面板显脏。
   const titleBar = h(
     "div",
     {
-      className: "rrm-titlebar",
       style: {
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
         gap: "8px",
-        padding: "6px 10px",
-        border: "1px dashed rgba(148, 163, 184, 0.45)",
-        borderRadius: "10px",
-        background: "rgba(15, 23, 42, 0.35)",
+        flexWrap: "wrap",
       },
       onPointerDown: startHold,
       onPointerUp: endHold,
@@ -587,10 +516,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     directorEnabled
       ? h(
           "span",
-          {
-            className: holdHint ? "rrm-titlebar-hold" : "",
-            style: { fontSize: "12px", opacity: holdHint ? 0.9 : 0.35 },
-          },
+          { style: { fontSize: "12px", opacity: holdHint ? 0.9 : 0.6 } },
           holdHint ? t("visual.director_hold") : t("visual.director_hint")
         )
       : null
@@ -660,27 +586,17 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       )
     : null
 
-  // ── P7：猫娘弹幕悬浮窗 ──────────────────────────────────────────
+  // ── P7：猫娘弹幕 ────────────────────────────────────────────────
+  // 0.8.1：原来是「position: sticky + z-index + 入场动画」的悬浮窗 ——
+  // sticky 会给祖先建立滚动容器，动画会改 opacity，这两条在宿主 iframe 里
+  // 都可能导致面板错位。现在改成**普通文档流里的宿主 Alert**：
+  // 不定位、不动画、不覆盖任何内容。
   const danmakuOverlay =
     danmakuList.length > 0
-      ? h(
-          "div",
-          { className: "rrm-danmaku" },
-          h(
-            "div",
-            { className: "rrm-danmaku-box" },
-            h(
-              "div",
-              { style: { fontSize: "12px", opacity: 0.7, marginBottom: "2px" } },
-              t("visual.danmaku_title")
-            ),
-            h(
-              "div",
-              { key: String(danmakuList[danmakuList.length - 1].id || 0) },
-              danmakuList[danmakuList.length - 1].text || ""
-            )
-          )
-        )
+      ? h(Alert, {
+          tone: "warning",
+          message: `${t("visual.danmaku_title")}：${danmakuList[danmakuList.length - 1].text || ""}`,
+        })
       : null
 
   // ── 局终：展示归档的结算报告 ─────────────────────────────────────
@@ -696,7 +612,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       const current =
         sceneScreen === 1 ? scene.screen1 : sceneScreen === 2 ? scene.screen2 : scene.screen3
       return (
-        <Page title={t("panel.title")} subtitle={t("panel.subtitle")}>
+        <Page className="rrm-root" title={t("panel.title")} subtitle={t("panel.subtitle")}>
           <Stack gap={12}>
             {h("style", null, RRM_CSS)}
             {titleBar}
@@ -740,121 +656,117 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     }
 
     return (
-      <Page title={t("panel.title")} subtitle={t("panel.subtitle")}>
+      <Page className="rrm-root" title={t("panel.title")} subtitle={t("panel.subtitle")}>
         <Stack gap={12}>
           {h("style", null, RRM_CSS)}
           {titleBar}
-          <div className={`rrm-stage-${stage} ${critical ? "rrm-critical" : ""}`}>
+          <Card title={t("panel.settlement")}>
             <Stack gap={12}>
-              <Card title={t("panel.settlement")}>
-                <Stack gap={12}>
-                  <Alert tone="info" message={t("panel.settlement_notice")} />
-                  <KeyValue
-                    items={[
-                      { key: "mode", label: t("panel.mode"), value: report.mode_name || report.mode },
-                      { key: "days", label: t("panel.days_survived"), value: report.days_survived },
-                      { key: "trades", label: t("panel.trades"), value: report.trade_count },
-                      { key: "reason", label: t("panel.death_reason"), value: report.death_reason || "—" },
-                      { key: "title", label: t("panel.death_title"), value: report.death_title || "—" },
-                      { key: "ending", label: t("panel.ending"), value: report.ending || "—" },
-                      { key: "identity", label: t("panel.identity"), value: report.identity || "—" },
-                    ]}
-                  />
-                  {/* P5.5 改动 2：身份呼应句 —— 只在死亡结算页出现 */}
-                  {report.identity_echo ? <Text>{report.identity_echo}</Text> : null}
-                  {/* P5.5 改动 1：「无为而治」的打工叙事 */}
-                  {report.inaction_worker ? <Text>{report.inaction_worker}</Text> : null}
-                  {/* 猫娘播报 */}
-                  {catgirlResult ? (
-                    <KeyValue
-                      items={[
-                        {
-                          key: "catgirl_alive",
-                          label: t("catgirl.alive"),
-                          value: catgirlResult.alive ? t("catgirl.alive") : t("catgirl.dead"),
-                        },
-                        {
-                          key: "catgirl_days",
-                          label: t("catgirl.survived_days"),
-                          value: catgirlResult.days_survived,
-                        },
-                        {
-                          key: "catgirl_cash",
-                          label: t("catgirl.cash"),
-                          value: money(catgirlResult.final_cash),
-                        },
-                        {
-                          key: "catgirl_trades",
-                          label: t("panel.trades"),
-                          value: catgirlResult.trade_count,
-                        },
-                        {
-                          key: "catgirl_reason",
-                          label: t("panel.death_reason"),
-                          value: catgirlResult.death_reason || "—",
-                        },
-                      ]}
-                    />
-                  ) : null}
-                  {/* P5.5 改动 3：猫娘沉默旁白（在猫娘播报之后） */}
-                  {report.catgirl_silence ? <Text>{report.catgirl_silence}</Text> : null}
-                  <Text>{report.anti_fraud_notice || ""}</Text>
-                </Stack>
-              </Card>
-
-              {/* ── P7 模块二 ④：Emoji 海结算（至少 50 个 🤡 / 🪦）── */}
-              <Card title={t("visual.emoji_sea_title")}>
-                <Stack gap={8}>
-                  <Text>{t("visual.emoji_sea_caption")}</Text>
-                  <Grid cols={10} gap={2}>
-                    {emojiSea.map((emoji, index) => (
-                      <span key={index}>{emoji}</span>
-                    ))}
-                  </Grid>
-                </Stack>
-              </Card>
-
-              {/* ⑫ 称号图鉴（P5.5 改动 7）：可折叠 */}
-              {achievements ? (
-                <Card title={t("panel.achievements")}>
-                  <Stack gap={8}>
-                    <Inline gap={8} align="center" wrap>
-                      <StatusBadge
-                        tone="default"
-                        label={t("panel.achievements_count", {
-                          unlocked: achievements.unlocked_count || 0,
-                          total: achievements.total || 0,
-                        })}
-                      />
-                      <Button
-                        onClick={() => {
-                          setAchievementsOpen(achievementsOpen === "1" ? "0" : "1")
-                        }}
-                      >
-                        {achievementsOpen === "1"
-                          ? t("panel.achievements_collapse")
-                          : t("panel.achievements_expand")}
-                      </Button>
-                    </Inline>
-                    {achievementsOpen === "1" ? (
-                      <List<AchievementRow>
-                        items={rows}
-                        render={(row) => (
-                          <Inline gap={8} align="center" wrap>
-                            <StatusBadge
-                              tone={row.unlocked ? "success" : "default"}
-                              label={row.unlocked ? row.title : t("panel.achievements_locked")}
-                            />
-                            <Text>{row.text}</Text>
-                          </Inline>
-                        )}
-                      />
-                    ) : null}
-                  </Stack>
-                </Card>
+              <Alert tone="info" message={t("panel.settlement_notice")} />
+              <KeyValue
+                items={[
+                  { key: "mode", label: t("panel.mode"), value: report.mode_name || report.mode },
+                  { key: "days", label: t("panel.days_survived"), value: report.days_survived },
+                  { key: "trades", label: t("panel.trades"), value: report.trade_count },
+                  { key: "reason", label: t("panel.death_reason"), value: report.death_reason || "—" },
+                  { key: "title", label: t("panel.death_title"), value: report.death_title || "—" },
+                  { key: "ending", label: t("panel.ending"), value: report.ending || "—" },
+                  { key: "identity", label: t("panel.identity"), value: report.identity || "—" },
+                ]}
+              />
+              {/* P5.5 改动 2：身份呼应句 —— 只在死亡结算页出现 */}
+              {report.identity_echo ? <Text>{report.identity_echo}</Text> : null}
+              {/* P5.5 改动 1：「无为而治」的打工叙事 */}
+              {report.inaction_worker ? <Text>{report.inaction_worker}</Text> : null}
+              {/* 猫娘播报 */}
+              {catgirlResult ? (
+                <KeyValue
+                  items={[
+                    {
+                      key: "catgirl_alive",
+                      label: t("catgirl.alive"),
+                      value: catgirlResult.alive ? t("catgirl.alive") : t("catgirl.dead"),
+                    },
+                    {
+                      key: "catgirl_days",
+                      label: t("catgirl.survived_days"),
+                      value: catgirlResult.days_survived,
+                    },
+                    {
+                      key: "catgirl_cash",
+                      label: t("catgirl.cash"),
+                      value: money(catgirlResult.final_cash),
+                    },
+                    {
+                      key: "catgirl_trades",
+                      label: t("panel.trades"),
+                      value: catgirlResult.trade_count,
+                    },
+                    {
+                      key: "catgirl_reason",
+                      label: t("panel.death_reason"),
+                      value: catgirlResult.death_reason || "—",
+                    },
+                  ]}
+                />
               ) : null}
+              {/* P5.5 改动 3：猫娘沉默旁白（在猫娘播报之后） */}
+              {report.catgirl_silence ? <Text>{report.catgirl_silence}</Text> : null}
+              <Text>{report.anti_fraud_notice || ""}</Text>
             </Stack>
-          </div>
+          </Card>
+
+          {/* ── P7 模块二 ④：Emoji 海结算（至少 50 个 🤡 / 🪦）── */}
+          <Card title={t("visual.emoji_sea_title")}>
+            <Stack gap={8}>
+              <Text>{t("visual.emoji_sea_caption")}</Text>
+              <Grid cols={10} gap={2}>
+                {emojiSea.map((emoji, index) => (
+                  <span key={index}>{emoji}</span>
+                ))}
+              </Grid>
+            </Stack>
+          </Card>
+
+          {/* ⑫ 称号图鉴（P5.5 改动 7）：可折叠 */}
+          {achievements ? (
+            <Card title={t("panel.achievements")}>
+              <Stack gap={8}>
+                <Inline gap={8} align="center" wrap>
+                  <StatusBadge
+                    tone="default"
+                    label={t("panel.achievements_count", {
+                      unlocked: achievements.unlocked_count || 0,
+                      total: achievements.total || 0,
+                    })}
+                  />
+                  <Button
+                    onClick={() => {
+                      setAchievementsOpen(achievementsOpen === "1" ? "0" : "1")
+                    }}
+                  >
+                    {achievementsOpen === "1"
+                      ? t("panel.achievements_collapse")
+                      : t("panel.achievements_expand")}
+                  </Button>
+                </Inline>
+                {achievementsOpen === "1" ? (
+                  <List<AchievementRow>
+                    items={rows}
+                    render={(row) => (
+                      <Inline gap={8} align="center" wrap>
+                        <StatusBadge
+                          tone={row.unlocked ? "success" : "default"}
+                          label={row.unlocked ? row.title : t("panel.achievements_locked")}
+                        />
+                        <Text>{row.text}</Text>
+                      </Inline>
+                    )}
+                  />
+                ) : null}
+              </Stack>
+            </Card>
+          ) : null}
           {danmakuOverlay}
         </Stack>
       </Page>
@@ -864,7 +776,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   // ── 没开局 ───────────────────────────────────────────────────────
   if (state.stage !== "playing") {
     return (
-      <Page title={t("panel.title")} subtitle={t("panel.subtitle")}>
+      <Page className="rrm-root" title={t("panel.title")} subtitle={t("panel.subtitle")}>
         <Stack gap={12}>
           {h("style", null, RRM_CSS)}
           {titleBar}
@@ -917,137 +829,126 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     ),
   })
 
-  const driftEnabled = directorEnabled
-
   return (
-    <Page title={t("panel.title")} subtitle={t("panel.subtitle")}>
+    <Page className="rrm-root" title={t("panel.title")} subtitle={t("panel.subtitle")}>
       <Stack gap={12}>
         {h("style", null, RRM_CSS)}
+        {/* ── 0.8.1 病危表现：**只有**一条红色 Alert 警告条（文档流内）。
+            绝不用闪烁 / 半透明 / 遮罩 —— 那是 0.8.0 崩 UI 的根因。───── */}
+        {critical ? (
+          <Alert
+            tone="danger"
+            message={`${visual.critical_emoji || "🩸"} ${t("visual.critical")}`}
+          />
+        ) : null}
         {titleBar}
         {directorConsole}
-        <div className={`rrm-stage-${stage} ${critical ? "rrm-critical" : ""}`}>
-          <Stack gap={12}>
-            {/* ① 顶部状态条 */}
-            <Card>
-              <Inline gap={8} wrap align="center">
-                <StatusBadge
-                  tone={PHASE_TONE[state.phase || ""] || "default"}
-                  label={t(`phase.${state.phase || "honeymoon"}`)}
-                />
-                <StatusBadge tone="default" label={t("panel.day", { day: state.day })} />
-                <StatusBadge
-                  tone="default"
-                  label={t("panel.mode", { mode: state.mode_name || state.mode || "" })}
-                />
-                <StatusBadge
-                  tone="default"
-                  label={t("panel.to_settle", { ticks: state.ticks_to_settle })}
-                />
-                <StatusBadge tone="default" label={t("panel.tick", { tick: state.tick })} />
-                {/* P7：病危标记 + 家道档位 */}
-                {critical ? (
-                  <StatusBadge
-                    tone="danger"
-                    label={`${visual.critical_emoji || "🩸"} ${t("visual.critical")}`}
-                  />
-                ) : null}
-                <StatusBadge tone="default" label={stageLabel} />
-              </Inline>
-            </Card>
-
-            {/* ② 财务三卡 + ③ 明日账单条 */}
-            <Grid cols={3} gap={12}>
-              <StatCard
-                label={`${cashLabel}${critical ? ` ${visual.critical_emoji || "🩸"}` : ""}`}
-                value={money(state.cash)}
-              />
-              <StatCard label={t("panel.total_assets")} value={money(state.total_assets)} />
-              <StatCard
-                label={t("panel.distance_to_kill")}
-                value={
-                  state.distance_to_kill === null || state.distance_to_kill === undefined
-                    ? "—"
-                    : money(state.distance_to_kill)
-                }
-              />
-            </Grid>
-
-            {(state.bill_gap || 0) > 0 ? (
-              <Alert
+        {/* ① 顶部状态条 */}
+        <Card>
+          <Inline gap={8} wrap align="center">
+            <StatusBadge
+              tone={PHASE_TONE[state.phase || ""] || "default"}
+              label={t(`phase.${state.phase || "honeymoon"}`)}
+            />
+            <StatusBadge tone="default" label={t("panel.day", { day: state.day })} />
+            <StatusBadge
+              tone="default"
+              label={t("panel.mode", { mode: state.mode_name || state.mode || "" })}
+            />
+            <StatusBadge
+              tone="default"
+              label={t("panel.to_settle", { ticks: state.ticks_to_settle })}
+            />
+            <StatusBadge tone="default" label={t("panel.tick", { tick: state.tick })} />
+            {/* P7：病危标记 + 家道档位 */}
+            {critical ? (
+              <StatusBadge
                 tone="danger"
-                message={t("panel.bill_warn", {
-                  gap: money(state.bill_gap),
-                  next: money(state.next_bill),
-                  cash: money(state.cash),
-                  missed: state.missed_bills || 0,
-                })}
+                label={`${visual.critical_emoji || "🩸"} ${t("visual.critical")}`}
               />
+            ) : null}
+            <StatusBadge tone="default" label={stageLabel} />
+          </Inline>
+        </Card>
+
+        {/* ② 财务三卡 + ③ 明日账单条 */}
+        <Grid cols={3} gap={12}>
+          {/* 0.8.1：病危时**只把数字染红**，其余样式完全沿用宿主 StatCard。 */}
+          {critical ? (
+            h(
+              "div",
+              { className: "neko-stat" },
+              h(
+                "span",
+                { className: "neko-stat-label" },
+                `${cashLabel} ${visual.critical_emoji || "🩸"}`
+              ),
+              h(
+                "strong",
+                { className: "neko-stat-value", style: { color: "var(--danger)" } },
+                money(state.cash)
+              )
+            )
+          ) : (
+            <StatCard label={cashLabel} value={money(state.cash)} />
+          )}
+          <StatCard label={t("panel.total_assets")} value={money(state.total_assets)} />
+          <StatCard
+            label={t("panel.distance_to_kill")}
+            value={
+              state.distance_to_kill === null || state.distance_to_kill === undefined
+                ? "—"
+                : money(state.distance_to_kill)
+            }
+          />
+        </Grid>
+
+        {(state.bill_gap || 0) > 0 ? (
+          <Alert
+            tone="danger"
+            message={t("panel.bill_warn", {
+              gap: money(state.bill_gap),
+              next: money(state.next_bill),
+              cash: money(state.cash),
+              missed: state.missed_bills || 0,
+            })}
+          />
+        ) : (
+          <Alert
+            tone="success"
+            message={t("panel.bill_ok", { next: money(state.next_bill), cash: money(state.cash) })}
+          />
+        )}
+
+        {/* ④ 持仓列表 + ⑤ 集中度条 */}
+        <Card title={t("panel.positions")}>
+          <Stack gap={12}>
+            <Progress
+              label={t("panel.concentration", { value: percent(state.concentration) })}
+              value={Math.round((state.concentration || 0) * 100)}
+            />
+            {positions.length === 0 ? (
+              <Text>{t("panel.no_positions")}</Text>
             ) : (
-              <Alert
-                tone="success"
-                message={t("panel.bill_ok", { next: money(state.next_bill), cash: money(state.cash) })}
-              />
-            )}
-
-            {/* ④ 持仓列表 + ⑤ 集中度条 */}
-            <Card title={t("panel.positions")}>
-              <Stack gap={12}>
-                <Progress
-                  label={t("panel.concentration", { value: percent(state.concentration) })}
-                  value={Math.round((state.concentration || 0) * 100)}
-                />
-                {positions.length === 0 ? (
-                  <Text>{t("panel.no_positions")}</Text>
-                ) : (
-                  <DataTable<Position>
-                    data={positions}
-                    rowKey="stock_id"
-                    emptyText={t("panel.no_positions")}
-                    columns={[
-                      { key: "name", label: t("panel.stock") },
-                      { key: "amount", label: t("panel.amount") },
-                      { key: "avg_cost", label: t("panel.cost"), render: (row) => money(row.avg_cost) },
-                      { key: "price", label: t("panel.price"), render: (row) => money(row.price) },
-                      {
-                        key: "unrealized_pnl",
-                        label: t("panel.pnl"),
-                        render: (row) => money(row.unrealized_pnl),
-                      },
-                      { key: "sellable", label: t("panel.sellable") },
-                      {
-                        key: "weight",
-                        label: t("panel.weight"),
-                        render: (row) => percent(row.weight),
-                      },
-                      {
-                        key: "tag",
-                        label: t("panel.tag"),
-                        render: (row) => (
-                          <StatusBadge
-                            tone={row.tag === "explosive" ? "danger" : row.tag === "stable" ? "success" : "default"}
-                            label={row.tag_label}
-                          />
-                        ),
-                      },
-                    ]}
-                  />
-                )}
-              </Stack>
-            </Card>
-
-            {/* ⑥ 标的行情表 */}
-            <Card title={t("panel.market")}>
-              <DataTable<Stock>
-                data={stocks}
-                rowKey="id"
-                emptyText={t("panel.no_stocks")}
+              <DataTable<Position>
+                data={positions}
+                rowKey="stock_id"
+                emptyText={t("panel.no_positions")}
                 columns={[
                   { key: "name", label: t("panel.stock") },
+                  { key: "amount", label: t("panel.amount") },
+                  { key: "avg_cost", label: t("panel.cost"), render: (row) => money(row.avg_cost) },
                   { key: "price", label: t("panel.price"), render: (row) => money(row.price) },
                   {
-                    key: "change",
-                    label: t("panel.change"),
-                    render: (row) => percent(row.change),
+                    key: "unrealized_pnl",
+                    label: t("panel.pnl"),
+                    render: (row) => money(row.unrealized_pnl),
+                  },
+                  { key: "sellable", label: t("panel.sellable") },
+                  {
+                    key: "weight",
+                    label: t("panel.weight"),
+                    render: (row) => percent(row.weight),
                   },
                   {
                     key: "tag",
@@ -1059,304 +960,322 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                       />
                     ),
                   },
-                  {
-                    key: "alive",
-                    label: t("panel.status"),
-                    render: (row) =>
-                      row.alive ? (
-                        <StatusBadge tone="success" label={t("panel.alive")} />
-                      ) : (
-                        <StatusBadge tone="danger" label={t("panel.delisted")} />
-                      ),
-                  },
                 ]}
               />
-            </Card>
+            )}
+          </Stack>
+        </Card>
 
-            {/* ── P7 模块三 ①：社区名册 ─────────────────────────── */}
-            <Card title={t("visual.roster_title")}>
-              {rosterList.length === 0 ? (
-                <Text>{t("visual.roster_empty")}</Text>
-              ) : (
-                <Stack gap={8}>
-                  {rosterList.map((member) => (
-                    <Inline key={member.stock_id} gap={8} align="center" wrap>
-                      <StatusBadge tone="default" label={member.alias || ""} />
-                      <Text>{member.title || ""}</Text>
-                      <Text>{money(member.price)}</Text>
-                      <Text>{member.persona || ""}</Text>
-                    </Inline>
-                  ))}
-                </Stack>
-              )}
-            </Card>
+        {/* ⑥ 标的行情表 */}
+        <Card title={t("panel.market")}>
+          <DataTable<Stock>
+            data={stocks}
+            rowKey="id"
+            emptyText={t("panel.no_stocks")}
+            columns={[
+              { key: "name", label: t("panel.stock") },
+              { key: "price", label: t("panel.price"), render: (row) => money(row.price) },
+              {
+                key: "change",
+                label: t("panel.change"),
+                render: (row) => percent(row.change),
+              },
+              {
+                key: "tag",
+                label: t("panel.tag"),
+                render: (row) => (
+                  <StatusBadge
+                    tone={row.tag === "explosive" ? "danger" : row.tag === "stable" ? "success" : "default"}
+                    label={row.tag_label}
+                  />
+                ),
+              },
+              {
+                key: "alive",
+                label: t("panel.status"),
+                render: (row) =>
+                  row.alive ? (
+                    <StatusBadge tone="success" label={t("panel.alive")} />
+                  ) : (
+                    <StatusBadge tone="danger" label={t("panel.delisted")} />
+                  ),
+              },
+            ]}
+          />
+        </Card>
 
-            {/* ⑦ K 线（P6 档 2：局中载荷只带前 20 只，其余按需拉取） */}
-            <Card title={t("panel.kline")}>
-              <Stack gap={12}>
-                {stocks.length === 0 ? (
-                  <Text>{t("panel.kline_empty")}</Text>
-                ) : (
-                  <>
-                    <Inline gap={8} wrap align="center">
-                      <Select
-                        value={klineStockId}
-                        options={stockOptions}
-                        onChange={(value: any) => setSelectedStock(String(value))}
-                      />
-                      <ActionButton
-                        action={actionById("kline")}
-                        label={t("panel.kline_fetch")}
-                        values={{ stock_id: klineStockId }}
-                        onResult={(result: any) => {
-                          if (result) setKlineDetail(result as Record<string, any>)
-                        }}
-                        onError={(error: any) =>
-                          showToast(String((error && error.message) || error), "danger")
-                        }
-                      />
-                    </Inline>
-                    {/* P7 模块四 ③：濒死档的 K 线变心电图暗红 */}
-                    <Kline points={klinePoints} emptyText={t("panel.kline_empty")} ecg={stage === "dying"} />
-                    {klineStock ? (
-                      <Text>
-                        {t("panel.kline_hint", {
-                          name: klineStock.name,
-                          price: money(klineStock.price),
-                        })}
-                      </Text>
-                    ) : null}
-                  </>
-                )}
-              </Stack>
-            </Card>
+        {/* ── P7 模块三 ①：社区名册 ─────────────────────────── */}
+        <Card title={t("visual.roster_title")}>
+          {rosterList.length === 0 ? (
+            <Text>{t("visual.roster_empty")}</Text>
+          ) : (
+            <Stack gap={8}>
+              {rosterList.map((member) => (
+                <Inline key={member.stock_id} gap={8} align="center" wrap>
+                  <StatusBadge tone="default" label={member.alias || ""} />
+                  <Text>{member.title || ""}</Text>
+                  <Text>{money(member.price)}</Text>
+                  <Text>{member.persona || ""}</Text>
+                </Inline>
+              ))}
+            </Stack>
+          )}
+        </Card>
 
-            {/* ⑧ 操作区 */}
-            <Card title={t("panel.trade")}>
-              <Stack gap={12}>
+        {/* ⑦ K 线（P6 档 2：局中载荷只带前 20 只，其余按需拉取） */}
+        <Card title={t("panel.kline")}>
+          <Stack gap={12}>
+            {stocks.length === 0 ? (
+              <Text>{t("panel.kline_empty")}</Text>
+            ) : (
+              <>
                 <Inline gap={8} wrap align="center">
-                  <Text>{t("panel.stock")}</Text>
                   <Select
-                    value={effectiveStockId}
+                    value={klineStockId}
                     options={stockOptions}
                     onChange={(value: any) => setSelectedStock(String(value))}
                   />
-                </Inline>
-
-                <Inline gap={8} wrap align="center">
-                  <Text>{t("panel.amount")}</Text>
-                  <NumberInput
-                    value={buyAmount}
-                    min={0}
-                    step={1}
-                    onChange={(value: any) => setBuyAmount(value)}
-                  />
-                  {/* P7 模块二 ④：特制版里「梭哈」按钮会跑掉 */}
-                  <DriftButton
-                    action={actionById("buy")}
-                    label={t("action.buy")}
-                    tone="primary"
-                    values={{ stock_id: effectiveStockId, amount: Number(buyAmount) || 0 }}
-                    drift={driftEnabled}
-                    driftRate={0.05}
-                    onMiss={() => showToast(t("visual.drift_miss"), "warning")}
-                  />
-                </Inline>
-
-                <Inline gap={8} wrap align="center">
-                  <Text>{t("panel.sell_amount")}</Text>
-                  <Select
-                    value={effectiveSellStockId}
-                    options={positionOptions}
-                    onChange={(value: any) => setSellStock(String(value))}
-                  />
-                  <NumberInput
-                    value={sellAmount}
-                    min={0}
-                    step={1}
-                    onChange={(value: any) => setSellAmount(value)}
-                  />
                   <ActionButton
-                    action={actionById("sell")}
-                    label={t("action.sell")}
-                    values={{ stock_id: effectiveSellStockId, amount: Number(sellAmount) || 0 }}
-                  />
-                </Inline>
-
-                <Divider />
-
-                <Inline gap={8} wrap align="center">
-                  <ActionButton
-                    action={actionById("analyze")}
-                    label={t("action.analyze")}
-                    values={{ stock_id: effectiveStockId }}
+                    action={actionById("kline")}
+                    label={t("panel.kline_fetch")}
+                    values={{ stock_id: klineStockId }}
                     onResult={(result: any) => {
-                      if (result) setAnalysis(result as AnalysisResult)
+                      if (result) setKlineDetail(result as Record<string, any>)
                     }}
                     onError={(error: any) =>
                       showToast(String((error && error.message) || error), "danger")
                     }
                   />
-                  <Text>{t("panel.analyses_left", { count: state.analyses_left || 0 })}</Text>
                 </Inline>
-
-                <Inline gap={8} wrap align="center">
-                  <ActionButton action={actionById("daily_claim")} label={t("daily.claim")} />
-                  <DriftButton
-                    action={actionById("daily_loan")}
-                    label={t("daily.loan")}
-                    tone="danger"
-                    drift={driftEnabled}
-                    driftRate={0.05}
-                    onMiss={() => showToast(t("visual.drift_miss"), "warning")}
-                  />
-                  <ActionButton action={actionById("daily_reject")} label={t("panel.reject")} />
-                  {/* P5.5 改动 6：跳过本日（无限模式专用，经典模式入口会报错） */}
-                  <ActionButton
-                    action={actionById("skip_day")}
-                    label={t("panel.skip_day")}
-                    onError={(error: any) =>
-                      showToast(String((error && error.message) || error), "danger")
-                    }
-                  />
-                </Inline>
-
-                {analysis ? (
-                  <Card title={t("panel.analysis_result")}>
-                    <Stack gap={8}>
-                      <Inline gap={8} wrap align="center">
-                        <StatusBadge
-                          tone={RATING_TONE[analysis.rating] || "default"}
-                          label={t(`analysis.${analysis.rating}`)}
-                        />
-                        <Text>
-                          {analysis.name} · {money(analysis.price)}
-                        </Text>
-                      </Inline>
-                      <KeyValue
-                        items={[
-                          { key: "chasing", label: t("panel.chasing"), value: analysis.chasing ? t("common.yes") : t("common.no") },
-                          { key: "weight", label: t("panel.weight"), value: percent(analysis.position_weight) },
-                          { key: "left", label: t("panel.analyses_left", { count: analysis.analyses_left }) },
-                        ]}
-                      />
-                      {analysis.market_note ? (
-                        <Alert tone="warning" message={analysis.market_note} />
-                      ) : null}
-                      <Text>{analysis.note}</Text>
-                    </Stack>
-                  </Card>
-                ) : null}
-              </Stack>
-            </Card>
-
-            {/* ⑨ 猫娘公开状态 */}
-            {catgirl ? (
-              <Card title={t("panel.catgirl")}>
-                <KeyValue
-                  items={[
-                    {
-                      key: "alive",
-                      label: t("catgirl.alive"),
-                      value: catgirl.alive ? t("catgirl.alive") : t("catgirl.dead"),
-                    },
-                    { key: "cash", label: t("catgirl.cash"), value: money(catgirl.cash) },
-                    {
-                      key: "holdings",
-                      label: t("catgirl.holdings"),
-                      value: t("catgirl.holdings_value", {
-                        value: money(catgirl.positions_value),
-                        count: catgirl.position_count,
-                      }),
-                    },
-                    {
-                      key: "days",
-                      label: t("catgirl.survived_days"),
-                      value: catgirl.days_survived,
-                    },
-                    { key: "action", label: t("panel.today_action"), value: catgirl.today_action },
-                  ]}
-                />
-              </Card>
-            ) : null}
-
-            {/* ⑩ 当天新闻（局中只有中性分类，标题正文要点开才给） */}
-            <Card title={t("panel.news")}>
-              <Stack gap={8}>
-                {news.length === 0 ? (
-                  <Text>{t("panel.news_empty")}</Text>
-                ) : (
-                  <List<NewsItem>
-                    items={news}
-                    render={(item) => (
-                      <Inline gap={8} align="center" wrap>
-                        <StatusBadge tone="default" label={item.kind_label} />
-                        <Text>{t("panel.news_hint")}</Text>
-                        <ActionButton
-                          action={actionById("news_detail")}
-                          label={t("panel.news_detail")}
-                          values={{ news_id: item.id }}
-                          onResult={(result: any) => {
-                            if (result) setNewsDetail(result as Record<string, any>)
-                          }}
-                        />
-                      </Inline>
-                    )}
-                  />
-                )}
-                {newsDetail ? (
-                  <Card title={t("panel.news_detail")}>
-                    <Stack gap={8}>
-                      <Inline gap={8} align="center">
-                        <StatusBadge tone="default" label={newsDetail.kind_label} />
-                        <Text>{newsDetail.headline}</Text>
-                      </Inline>
-                      {newsDetail.roster_alias ? (
-                        <Inline gap={8} align="center" wrap>
-                          <StatusBadge tone="default" label={newsDetail.roster_alias} />
-                          <Text>{newsDetail.roster_title || ""}</Text>
-                        </Inline>
-                      ) : null}
-                      <Text>{newsDetail.content}</Text>
-                      <Text>{t("news.truth_note")}</Text>
-                    </Stack>
-                  </Card>
-                ) : null}
-              </Stack>
-            </Card>
-
-            {/* ⑪ 二道贩子弹窗（方案 A：引擎零改动，面板弹窗征求同意） */}
-            {showPawnbroker && pending ? (
-              <Card title={t("panel.pawnbroker")}>
-                <Stack gap={8}>
+                <Kline points={klinePoints} emptyText={t("panel.kline_empty")} />
+                {klineStock ? (
                   <Text>
-                    {t("panel.pawnbroker_hint", {
-                      amount: pending.amount || 0,
-                      reason: pending.reason || "",
+                    {t("panel.kline_hint", {
+                      name: klineStock.name,
+                      price: money(klineStock.price),
                     })}
                   </Text>
-                  <Inline gap={8}>
-                    <ActionButton
-                      action={actionById("daily_reject")}
-                      label={t("panel.pawnbroker_reject")}
-                      tone="danger"
-                      onResult={() => setDismissedProposal(proposalKey)}
+                ) : null}
+              </>
+            )}
+          </Stack>
+        </Card>
+
+        {/* ⑧ 操作区 */}
+        <Card title={t("panel.trade")}>
+          <Stack gap={12}>
+            <Inline gap={8} wrap align="center">
+              <Text>{t("panel.stock")}</Text>
+              <Select
+                value={effectiveStockId}
+                options={stockOptions}
+                onChange={(value: any) => setSelectedStock(String(value))}
+              />
+            </Inline>
+
+            <Inline gap={8} wrap align="center">
+              <Text>{t("panel.amount")}</Text>
+              <NumberInput
+                value={buyAmount}
+                min={0}
+                step={1}
+                onChange={(value: any) => setBuyAmount(value)}
+              />
+              {/* 0.8.1：按钮漂移已回滚（自定义包裹会破坏宿主按钮组的布局），
+                  统一用宿主原生 ActionButton。 */}
+              <ActionButton
+                action={actionById("buy")}
+                label={t("action.buy")}
+                tone="primary"
+                values={{ stock_id: effectiveStockId, amount: Number(buyAmount) || 0 }}
+              />
+            </Inline>
+
+            <Inline gap={8} wrap align="center">
+              <Text>{t("panel.sell_amount")}</Text>
+              <Select
+                value={effectiveSellStockId}
+                options={positionOptions}
+                onChange={(value: any) => setSellStock(String(value))}
+              />
+              <NumberInput
+                value={sellAmount}
+                min={0}
+                step={1}
+                onChange={(value: any) => setSellAmount(value)}
+              />
+              <ActionButton
+                action={actionById("sell")}
+                label={t("action.sell")}
+                values={{ stock_id: effectiveSellStockId, amount: Number(sellAmount) || 0 }}
+              />
+            </Inline>
+
+            <Divider />
+
+            <Inline gap={8} wrap align="center">
+              <ActionButton
+                action={actionById("analyze")}
+                label={t("action.analyze")}
+                values={{ stock_id: effectiveStockId }}
+                onResult={(result: any) => {
+                  if (result) setAnalysis(result as AnalysisResult)
+                }}
+                onError={(error: any) =>
+                  showToast(String((error && error.message) || error), "danger")
+                }
+              />
+              <Text>{t("panel.analyses_left", { count: state.analyses_left || 0 })}</Text>
+            </Inline>
+
+            <Inline gap={8} wrap align="center">
+              <ActionButton action={actionById("daily_claim")} label={t("daily.claim")} />
+              <ActionButton action={actionById("daily_loan")} label={t("daily.loan")} tone="danger" />
+              <ActionButton action={actionById("daily_reject")} label={t("panel.reject")} />
+              {/* P5.5 改动 6：跳过本日（无限模式专用，经典模式入口会报错） */}
+              <ActionButton
+                action={actionById("skip_day")}
+                label={t("panel.skip_day")}
+                onError={(error: any) =>
+                  showToast(String((error && error.message) || error), "danger")
+                }
+              />
+            </Inline>
+
+            {analysis ? (
+              <Card title={t("panel.analysis_result")}>
+                <Stack gap={8}>
+                  <Inline gap={8} wrap align="center">
+                    <StatusBadge
+                      tone={RATING_TONE[analysis.rating] || "default"}
+                      label={t(`analysis.${analysis.rating}`)}
                     />
-                    {/* 「接受」不需要调任何入口 —— 不撤销就是默认接受，
-                        强制卖出照常执行（P5 契约 §3.4 方案 A：引擎零改动）。 */}
-                    <Button
-                      onClick={() => {
-                        setDismissedProposal(proposalKey)
-                      }}
-                    >
-                      {t("panel.pawnbroker_accept")}
-                    </Button>
+                    <Text>
+                      {analysis.name} · {money(analysis.price)}
+                    </Text>
                   </Inline>
+                  <KeyValue
+                    items={[
+                      { key: "chasing", label: t("panel.chasing"), value: analysis.chasing ? t("common.yes") : t("common.no") },
+                      { key: "weight", label: t("panel.weight"), value: percent(analysis.position_weight) },
+                      { key: "left", label: t("panel.analyses_left", { count: analysis.analyses_left }) },
+                    ]}
+                  />
+                  {analysis.market_note ? (
+                    <Alert tone="warning" message={analysis.market_note} />
+                  ) : null}
+                  <Text>{analysis.note}</Text>
                 </Stack>
               </Card>
             ) : null}
           </Stack>
-        </div>
+        </Card>
+
+        {/* ⑨ 猫娘公开状态 */}
+        {catgirl ? (
+          <Card title={t("panel.catgirl")}>
+            <KeyValue
+              items={[
+                {
+                  key: "alive",
+                  label: t("catgirl.alive"),
+                  value: catgirl.alive ? t("catgirl.alive") : t("catgirl.dead"),
+                },
+                { key: "cash", label: t("catgirl.cash"), value: money(catgirl.cash) },
+                {
+                  key: "holdings",
+                  label: t("catgirl.holdings"),
+                  value: t("catgirl.holdings_value", {
+                    value: money(catgirl.positions_value),
+                    count: catgirl.position_count,
+                  }),
+                },
+                {
+                  key: "days",
+                  label: t("catgirl.survived_days"),
+                  value: catgirl.days_survived,
+                },
+                { key: "action", label: t("panel.today_action"), value: catgirl.today_action },
+              ]}
+            />
+          </Card>
+        ) : null}
+
+        {/* ⑩ 当天新闻（局中只有中性分类，标题正文要点开才给） */}
+        <Card title={t("panel.news")}>
+          <Stack gap={8}>
+            {news.length === 0 ? (
+              <Text>{t("panel.news_empty")}</Text>
+            ) : (
+              <List<NewsItem>
+                items={news}
+                render={(item) => (
+                  <Inline gap={8} align="center" wrap>
+                    <StatusBadge tone="default" label={item.kind_label} />
+                    <Text>{t("panel.news_hint")}</Text>
+                    <ActionButton
+                      action={actionById("news_detail")}
+                      label={t("panel.news_detail")}
+                      values={{ news_id: item.id }}
+                      onResult={(result: any) => {
+                        if (result) setNewsDetail(result as Record<string, any>)
+                      }}
+                    />
+                  </Inline>
+                )}
+              />
+            )}
+            {newsDetail ? (
+              <Card title={t("panel.news_detail")}>
+                <Stack gap={8}>
+                  <Inline gap={8} align="center">
+                    <StatusBadge tone="default" label={newsDetail.kind_label} />
+                    <Text>{newsDetail.headline}</Text>
+                  </Inline>
+                  {newsDetail.roster_alias ? (
+                    <Inline gap={8} align="center" wrap>
+                      <StatusBadge tone="default" label={newsDetail.roster_alias} />
+                      <Text>{newsDetail.roster_title || ""}</Text>
+                    </Inline>
+                  ) : null}
+                  <Text>{newsDetail.content}</Text>
+                  <Text>{t("news.truth_note")}</Text>
+                </Stack>
+              </Card>
+            ) : null}
+          </Stack>
+        </Card>
+
+        {/* ⑪ 二道贩子弹窗（方案 A：引擎零改动，面板弹窗征求同意） */}
+        {showPawnbroker && pending ? (
+          <Card title={t("panel.pawnbroker")}>
+            <Stack gap={8}>
+              <Text>
+                {t("panel.pawnbroker_hint", {
+                  amount: pending.amount || 0,
+                  reason: pending.reason || "",
+                })}
+              </Text>
+              <Inline gap={8}>
+                <ActionButton
+                  action={actionById("daily_reject")}
+                  label={t("panel.pawnbroker_reject")}
+                  tone="danger"
+                  onResult={() => setDismissedProposal(proposalKey)}
+                />
+                {/* 「接受」不需要调任何入口 —— 不撤销就是默认接受，
+                    强制卖出照常执行（P5 契约 §3.4 方案 A：引擎零改动）。 */}
+                <Button
+                  onClick={() => {
+                    setDismissedProposal(proposalKey)
+                  }}
+                >
+                  {t("panel.pawnbroker_accept")}
+                </Button>
+              </Inline>
+            </Stack>
+          </Card>
+        ) : null}
         {danmakuOverlay}
         {loanModal}
       </Stack>

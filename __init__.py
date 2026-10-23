@@ -151,7 +151,7 @@ __all__ = ["ReverseRichSimPlugin"]
 PLUGIN_ID = "reverse_rich_sim"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.8.0"
+PLUGIN_VERSION = "0.8.1"
 
 #: 「无为而治」称号的解锁天数（P5.5 改动 6）。
 #:
