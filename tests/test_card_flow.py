@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from conftest import run
-from plugins.juliumei_market.cards import (
+from plugins.reverse_rich_sim.cards import (
     CARD_KINDS,
     TAUNT_TRIGGERS,
     pick_taunt,

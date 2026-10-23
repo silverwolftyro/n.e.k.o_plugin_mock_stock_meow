@@ -28,7 +28,7 @@ from typing import Any
 import pytest
 
 from conftest import run
-from plugins.juliumei_market.storage.repo import Repo
+from plugins.reverse_rich_sim.storage.repo import Repo
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 _I18N_PATH = _PLUGIN_ROOT / "i18n" / "zh-CN.json"
@@ -110,7 +110,7 @@ def test_broke_achievement_unlocks_for_a_living_broke_player(plugin) -> None:
 
 def test_achievements_still_has_eight_entries(plugin) -> None:
     """改口径后图鉴**仍然是 8 个**（不新增）。"""
-    from plugins.juliumei_market.cards import ACHIEVEMENTS
+    from plugins.reverse_rich_sim.cards import ACHIEVEMENTS
 
     assert len(ACHIEVEMENTS) == 8
     run(plugin.join(mode="infinite", seed=7202))
@@ -251,7 +251,7 @@ def test_github_workflows_exist() -> None:
     release = _PLUGIN_ROOT / ".github" / "workflows" / "release.yml"
     assert verify.is_file(), "缺 .github/workflows/verify.yml"
     assert release.is_file(), "缺 .github/workflows/release.yml"
-    assert "juliumei_market" in verify.read_text(encoding="utf-8")
+    assert "reverse_rich_sim" in verify.read_text(encoding="utf-8")
 
 
 def test_ruff_config_and_vscode_exist() -> None:
@@ -283,7 +283,7 @@ def test_origin_uses_the_market_naming_convention() -> None:
     )
     assert result.returncode == 0, "没有配置 origin"
     url = result.stdout.strip()
-    assert url.rstrip("/").endswith("n.e.k.o_plugin_juliumei_market.git"), url
+    assert url.rstrip("/").endswith("n.e.k.o_plugin_reverse_rich_sim.git"), url
 
 
 def test_gitattributes_pins_lf() -> None:
@@ -309,21 +309,21 @@ def test_worktree_has_no_crlf_files() -> None:
 
 
 def test_version_is_0_7_4() -> None:
-    """版本号 = 0.7.4。
+    """版本号 = 0.8.0。
 
     版本史：
 
     * 0.7.1 —— 删掉 ``plugin.sdk.shared.core`` 私有导入；
     * 0.7.2 —— 去掉运行时**不存在**的 ``CardSubmissionError``；
     * 0.7.3 —— 真机上"表从未建成"（懒建表自愈 + 拉配置重试）；
-    * 0.7.4 —— 真机上"tick 不推进"（运行时能力对齐 + 清单兜底 +
-      卡片能力探测）。
+    * 0.7.4 —— 真机上"tick 不推进"（运行时能力对齐 + 清单兜底 + 卡片能力探测）；
+    * 0.8.0 —— P7：改名 ``reverse_rich_sim`` + 双版本（导演模式）。
     """
-    from plugins.juliumei_market import PLUGIN_VERSION
+    from plugins.reverse_rich_sim import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.7.4"
+    assert PLUGIN_VERSION == "0.8.0"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.7.4"' in toml
+    assert 'version = "0.8.0"' in toml
 
 
 # ------------------------------------------------- ⑥ 面板文案全走 i18n

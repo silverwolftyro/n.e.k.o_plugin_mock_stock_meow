@@ -1,4 +1,4 @@
-"""久留美式收割模拟器（N.E.K.O. 插件 · 第一层外壳）。
+"""反向暴富模拟器（N.E.K.O. 插件 · 第一层外壳）。
 
 架构定位
 --------
@@ -112,11 +112,12 @@ from .engine.heat import (
     position_concentration,
     update_heat,
 )
-from .engine.market import advance_market, create_market
+from .engine.market import advance_market, apply_jump, create_market
 from .engine.models import HeatEventContext, MarketState, Player, Position
 from .engine.news import news_kind
 from .engine.rng import derive_rng, derive_stream_rng
 from .engine.settlement import (
+    apply_death,
     build_settlement_report,
     buy_fee,
     check_inaction,
@@ -144,13 +145,13 @@ from .storage.session import (
     save_snapshot,
 )
 
-__all__ = ["JuliumeiMarketPlugin"]
+__all__ = ["ReverseRichSimPlugin"]
 
 #: 插件 ID，与 [plugin].id 保持一致。
-PLUGIN_ID = "juliumei_market"
+PLUGIN_ID = "reverse_rich_sim"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.7.4"
+PLUGIN_VERSION = "0.8.0"
 
 #: 「无为而治」称号的解锁天数（P5.5 改动 6）。
 #:
@@ -215,6 +216,12 @@ _ENGINE_CONFIG_TTL = 5.0
 
 #: 每多少次心跳打一条"心跳体检"日志（1 秒心跳 → 每分钟一条）。
 _HEARTBEAT_LOG_EVERY = 60
+
+#: 猫娘弹幕在内存里最多留多少条。
+_DANMAKU_MAX = 20
+
+#: 面板载荷里最多带多少条弹幕（限流：载荷上限 512 KiB）。
+_DANMAKU_PAYLOAD_MAX = 8
 
 #: 结算页固定反诈文案（**不可通过配置关闭**）。
 ANTI_FRAUD_NOTICE = (
@@ -332,8 +339,8 @@ class _TickJournal:
 
 
 @neko_plugin
-class JuliumeiMarketPlugin(NekoPluginBase):
-    """久留美式收割模拟器插件外壳（P2：持久化 + 宿主入口）。
+class ReverseRichSimPlugin(NekoPluginBase):
+    """反向暴富模拟器插件外壳（P2：持久化 + 宿主入口）。
 
     本层只做三件事：
 
@@ -364,6 +371,12 @@ class JuliumeiMarketPlugin(NekoPluginBase):
         #: 引擎配置缓存（心跳每秒都读配置太浪费）。
         self._engine_config_cache: EngineConfig | None = None
         self._engine_config_cached_at: float = 0.0
+        #: 业务配置缓存（``config.example.toml`` 的那些段；P7 的
+        #: ``[director]`` / ``[visual]`` 从这里读）。
+        self._business_config_cache: dict[str, Any] | None = None
+        self._business_config_cached_at: float = 0.0
+        #: 导演模式开关的缓存（面板载荷是同步的，要能直接读）。
+        self._director_enabled_cache: bool = False
         #: 最近一次玩家 id（P5：局终后 ``market_state.player_id`` 被清空，
         #: 面板要靠它去找归档的结算报告）。
         self._last_player_id: str = ""
@@ -371,6 +384,22 @@ class JuliumeiMarketPlugin(NekoPluginBase):
         self._catgirl_daily: dict[str, Any] | None = None
         #: 猫娘上一次日终时的累计成交笔数（用来算"今天她动没动手"）。
         self._catgirl_trades_seen: int | None = None
+        #: ── P7：社区名册 ──────────────────────────────────────────────
+        #: 社区名册（群友人设 + 抽象新闻池）。从 ``community_roster.json``
+        #: 读取；读不到就退化成空名册（插件照常跑，只是没有彩蛋）。
+        self._roster: list[dict[str, Any]] = []
+        self._roster_loaded = False
+        #: ── P7：猫娘弹幕 ──────────────────────────────────────────────
+        #: 猫娘实时嘴臭的弹幕队列（**只在内存里**：弹幕是"此刻"的装饰，
+        #: 重启后清空是合理的）。新条目追加在末尾，面板取最新的几条。
+        self._danmaku: list[dict[str, Any]] = []
+        #: 弹幕序号（面板靠它判断"这条是不是新的"）。
+        self._danmaku_seq = 0
+        #: ── P7：导演模式（直播特制版）────────────────────────────────
+        #: 导演指令队列：面板点一下 → 插件排一条指令 → 下个 tick 执行。
+        #: **只存在于特制版**；纯净版下 ``director.enabled`` 恒为 False，
+        #: 导演入口一律直接报错。
+        self._director_queue: list[dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -1008,6 +1037,16 @@ class JuliumeiMarketPlugin(NekoPluginBase):
         trade_id = await self._persist_trade(session, trade, stock_id)
         # P5：连续补仓 ≥3 次 → 猫娘嘲讽。
         await self._maybe_add_down_taunt(session, stock_id, market)
+        # ── P7：猫娘弹幕 ────────────────────────────────────────────
+        # 运行时**没有卡片 API** ⇒ 猫娘在局中的嘲讽改走面板的弹幕悬浮窗
+        # （外加宿主 showToast 兜底）。文案来自 i18n 的 taunt.buy.* 键族。
+        self._push_danmaku(
+            pick_taunt(
+                "buy",
+                seed=player.trade_count,
+                params={"stock": stock.name, "amount": amount, "price": price},
+            )
+        )
         position = player.positions.get(stock_id)
         return Ok(
             {
@@ -1144,6 +1183,14 @@ class JuliumeiMarketPlugin(NekoPluginBase):
         total_fee = sell_fee(notional, engine_config.fees)
         stamp_tax = notional * engine_config.fees.stamp_tax_rate
         remaining = player.positions.get(stock_id)
+        # ── P7：猫娘弹幕（见 buy 里的说明）─────────────────────────
+        self._push_danmaku(
+            pick_taunt(
+                "sell",
+                seed=player.trade_count,
+                params={"stock": stock.name, "amount": amount, "price": trade.price},
+            )
+        )
         return Ok(
             {
                 "stock_id": stock_id,
@@ -1342,6 +1389,8 @@ class JuliumeiMarketPlugin(NekoPluginBase):
             if item.id != news_id:
                 continue
             kind = news_kind(item)
+            # ── P7：名册群友的抽象新闻 ──────────────────────────────
+            headline, roster_alias, roster_title = self._roster_news_headline(item)
             return Ok(
                 {
                     "id": item.id,
@@ -1349,8 +1398,11 @@ class JuliumeiMarketPlugin(NekoPluginBase):
                     "stock_id": item.stock_id,
                     "kind": kind,
                     "kind_label": _NEWS_KIND_LABELS.get(kind, "未知"),
-                    "headline": _news_headline(item.content),
+                    "headline": headline,
                     "content": item.content,
+                    # ── P7：名册彩蛋（群友信息）──────────────────────
+                    "roster_alias": roster_alias,
+                    "roster_title": roster_title,
                 }
             )
 
@@ -2464,6 +2516,14 @@ class JuliumeiMarketPlugin(NekoPluginBase):
         )
         market.day = market.tick // ticks_per_day + 1
 
+        # ── P7：导演暴跌（**只在特制版**，纯净版这里什么都不做）────
+        # 排在 advance_market 之后、模式层之前 —— 这样暴跌之后的集中度、
+        # 收割等后续反应**照常发生**，而不是硬改结果。引擎一行没改：
+        # 暴跌用的是引擎既有的纯函数 apply_jump。
+        crashed = self._apply_director_crashes(market, engine_config)
+        if crashed:
+            journal.touch_player(player)
+
         # ── 步 3：衰减上头指数（交易事件在成交时加，这里只做衰减）──
         prices = market.prices()
         concentration = position_concentration(player.positions, prices)
@@ -3060,6 +3120,14 @@ class JuliumeiMarketPlugin(NekoPluginBase):
             fresh, fresh_error = await self._session_or_error(engine_config)
             if fresh_error is not None:
                 return fresh_error
+            # ── P7：猫娘弹幕（跳过本日也算一次嘴臭）─────────────────
+            self._push_danmaku(
+                pick_taunt(
+                    "skip_day",
+                    seed=skip_day_value,
+                    params={"day": skip_day_value + 1},
+                )
+            )
             # 记下"今天已经跳过一次"（记的是**发起跳过时**的游戏日 = 规格说的
             # "当前游戏日"；``_commit_tick`` 不会写这一列，所以这里单独写）。
             #
@@ -3103,6 +3171,331 @@ class JuliumeiMarketPlugin(NekoPluginBase):
                     ),
                 }
             )
+
+    # ------------------------------------------------------------------
+    # 入口：导演台（P7 · 直播特制版）
+    # ------------------------------------------------------------------
+    #
+    # **只有一个入口**（而不是四个）：入口列表就是 AI 的工具列表，越短越好。
+    # 用 ``op`` 区分指令。
+    #
+    # **纯净版（默认）下这个入口恒报错** —— 开源版严格遵守原有数学概率，
+    # 插件层不做任何后台干预。
+    #
+    # 四条指令全部**复用引擎既有的函数**，引擎层（``engine/``）一行不改：
+    #   * ``crash``   → ``engine.market.apply_jump``（引擎已有的纯函数）
+    #   * ``loan``    → ``InfiniteConfig`` 的既有借贷参数
+    #   * ``welfare`` → 引擎既有的 ``welfare_neglect`` 死因线
+    #   * ``kill``    → ``engine.settlement.apply_death``
+
+    @ui.action(
+        id="director",
+        label="导演指令",
+        icon="chart",
+        tone="danger",
+        group="director",
+        order=90,
+    )
+    @plugin_entry(
+        id="director",
+        name="导演指令",
+        description=(
+            "**直播特制版专用**的导演台指令。开源纯净版下这个入口恒报错。"
+            "op=crash 让某只标的暴跌（要 stock_id）/ loan 强制发高利贷"
+            "（仅无限模式）/ welfare 强制断供 / kill 立即斩杀。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "op": {
+                    "type": "string",
+                    "enum": ["crash", "loan", "welfare", "kill"],
+                    "description": "导演指令类型。",
+                },
+                "stock_id": {
+                    "type": "string",
+                    "description": "crash 用的标的 id（FAKE-001 这种槽位 id）。",
+                },
+            },
+            "required": ["op"],
+        },
+    )
+    @_locked
+    async def director(self, op: str, stock_id: str = "") -> Ok:
+        """导演台指令（**纯净版恒报错**）。
+
+        这些干预**只发生在插件层**：暴跌复用引擎既有的 ``apply_jump``，
+        借贷复用引擎配置里的既有参数，斩杀复用引擎既有的 ``apply_death``。
+        引擎的公式与数值一个都没改。
+
+        暴跌是**排队制**：面板点一下就排一条，**下一个 tick** 施加 ——
+        这样暴跌之后集中度、收割等后续反应**照常发生**，而不是硬改结果。
+        """
+        engine_config = await self._engine_config()
+        # 刷新配置缓存再读开关（特制版要能即时打开/关闭）。
+        await self._business_config()
+        if not self._director_on():
+            return _err("director_disabled")
+        session, error = await self._session_or_error(engine_config)
+        if error is not None:
+            return error
+        if session is None:
+            return _err("not_joined")
+        if not session.player.alive:
+            return _err("director_dead_player")
+
+        if op == "crash":
+            stock = session.market.stocks.get(str(stock_id))
+            if stock is None:
+                return _err("director_stock_not_found")
+            self._director_queue.append({"op": "crash", "stock_id": stock.id})
+            return Ok(
+                {
+                    "action": "director",
+                    "op": "crash",
+                    "stock_id": stock.id,
+                    "stock_name": stock.name,
+                    "queued": True,
+                    "note": f"安排 {stock.name} 在下一个 tick 崩给你看。",
+                }
+            )
+        if op == "loan":
+            if session.mode != "infinite":
+                return _err("director_loan_classic_forbidden")
+            return await self._director_force_loan(session, engine_config)
+        if op == "welfare":
+            return await self._director_force_welfare(session, engine_config)
+        if op == "kill":
+            return await self._director_force_kill(session, engine_config)
+        return _err("director_bad_op")
+
+    async def _director_force_loan(
+        self, session: Session, engine_config: EngineConfig
+    ) -> Ok:
+        """导演强制放贷（**仅无限模式**）。
+
+        经典模式引擎里**没有还款路径**（``daily_settlement`` 的还贷只在无限
+        模式），在经典模式硬塞一笔就是白送钱 —— 所以直接拒绝。
+
+        金额与"每天限借一次"之外的规则**照常**：到手 500，次日还 600。
+        限借一次会被**绕过**（导演要的就是"再逼一次"），但经济账一分不变。
+        """
+        infinite = engine_config.infinite
+        player = session.player
+        player.cash += infinite.loan_amount
+        player.loan_debt += infinite.loan_repay
+        player.loan_taken_day = player.day
+        now = time.time()
+        try:
+            await self._repo.transaction(
+                [
+                    (
+                        "UPDATE players SET cash = ?, loan_debt = ?, loan_taken_day = ?, "
+                        "updated_at = ? WHERE id = ?",
+                        (
+                            player.cash,
+                            player.loan_debt,
+                            player.loan_taken_day,
+                            now,
+                            player.id,
+                        ),
+                    )
+                ]
+            )
+        except (DbUnavailableError, sqlite3.Error) as db_error:
+            return _err("db_unavailable", db_error)
+        self._push_danmaku(
+            pick_taunt(
+                "loan",
+                seed=player.trade_count,
+                params={"amount": infinite.loan_amount, "repay": infinite.loan_repay},
+            )
+            or "钱到账了。利息也到账了，只是它不会告诉你。"
+        )
+        return Ok(
+            {
+                "action": "director",
+                "op": "loan",
+                "cash": round(player.cash, 6),
+                "loan_debt": round(player.loan_debt, 6),
+                "note": "魔爪契约已生效。明天记得还，忘了就当你签的是遗嘱。",
+            }
+        )
+
+    async def _director_force_welfare(
+        self, session: Session, engine_config: EngineConfig
+    ) -> Ok:
+        """导演强制断供（把连续未领天数拉过引擎的斩杀线）。
+
+        用的是引擎**既有的** ``welfare_neglect`` 死因 —— 引擎只管判死，
+        怎么走到那条线是插件层的事。
+        """
+        player = session.player
+        limit = int(getattr(engine_config.infinite, "welfare_claim_limit_days", 7))
+        player.welfare_missed_days = limit + 1
+        now = time.time()
+        try:
+            await self._repo.transaction(
+                [
+                    (
+                        "UPDATE players SET welfare_missed_days = ?, updated_at = ? "
+                        "WHERE id = ?",
+                        (player.welfare_missed_days, now, player.id),
+                    )
+                ]
+            )
+        except (DbUnavailableError, sqlite3.Error) as db_error:
+            return _err("db_unavailable", db_error)
+        return Ok(
+            {
+                "action": "director",
+                "op": "welfare",
+                "welfare_missed_days": player.welfare_missed_days,
+                "note": "恭喜，你已经连续七天没去领那份不该领的东西了。",
+            }
+        )
+
+    async def _director_force_kill(
+        self, session: Session, engine_config: EngineConfig
+    ) -> Ok:
+        """导演立即斩杀（复用引擎既有的 ``apply_death``）。"""
+        player = session.player
+        apply_death(player, "harvested")
+        self._override_death_title(player)
+        now = time.time()
+        try:
+            await self._repo.transaction(
+                [
+                    (
+                        "UPDATE players SET alive = 0, death_reason = ?, death_title = ?, "
+                        "updated_at = ? WHERE id = ?",
+                        (player.death_reason, player.death_title, now, player.id),
+                    )
+                ]
+            )
+        except (DbUnavailableError, sqlite3.Error) as db_error:
+            return _err("db_unavailable", db_error)
+        return Ok(
+            {
+                "action": "director",
+                "op": "kill",
+                "death_reason": player.death_reason,
+                "note": "收工。",
+            }
+        )
+
+    @ui.action(
+        id="declare_bankrupt",
+        label="宣布破产",
+        icon="close",
+        tone="danger",
+        group="daily",
+        order=5,
+    )
+    @plugin_entry(
+        id="declare_bankrupt",
+        name="宣布破产",
+        description=(
+            "交不起下一顿饭时的最后一条路：当场结束这一局（死因：交不起账单），"
+            "并给出结算报告。经典模式没有高利贷，弹窗上就只剩这一条路。"
+        ),
+    )
+    @_locked
+    async def declare_bankrupt(self) -> Ok:
+        """宣布破产（面板「赛博网贷广告」弹窗的唯一出路）。
+
+        走的是**引擎既有的** ``apply_death(player, "starved")`` —— 死因文案
+        仍然是引擎那一套，引擎层一行不改。归档路径与 ``settle`` 入口**完全
+        复用**（结算报告 + 归档 JSON + 清空 ``market_state.player_id``）。
+        """
+        engine_config = await self._engine_config()
+        session, error = await self._session_or_error(engine_config)
+        if error is not None:
+            return error
+        if session is None:
+            return _err("no_active_game")
+        player = session.player
+        if not player.alive:
+            return _err("director_dead_player")
+
+        apply_death(player, "starved")
+        self._override_death_title(player)
+        payload = await self._build_settlement_payload(session, engine_config)
+
+        now = time.time()
+        try:
+            await self._repo.transaction(
+                [
+                    (
+                        "UPDATE players SET alive = 0, death_reason = ?, death_title = ?, "
+                        "updated_at = ? WHERE id = ?",
+                        (player.death_reason, player.death_title, now, player.id),
+                    ),
+                    (
+                        "UPDATE market_state SET player_id = '', updated_at = ? WHERE id = 1",
+                        (now,),
+                    ),
+                ]
+            )
+        except (DbUnavailableError, sqlite3.Error) as db_error:
+            return _err("db_unavailable", db_error)
+        self._archive_settlement(payload, session)
+        self._push_danmaku("你按了破产。放心，天台的风是免费送你的。")
+        return Ok(payload)
+
+    def _roster_news_headline(self, item: Any) -> tuple[str, str | None, str | None]:
+        """名册群友的抽象新闻标题。
+
+        返回 ``(标题, 群友别名, 群友称号)``。
+
+        **只换标题**：正文（``item.content``）是引擎给的**方向信号**，
+        换掉它就破坏了 P4 §11 的反泄露铁律 —— 所以这里一个字都不动它。
+        """
+        roster = self._roster_for_stock(getattr(item, "stock_id", None))
+        if roster is None:
+            return _news_headline(item.content), None, None
+        alias = str(roster.get("alias") or "")
+        title = str(roster.get("title") or "")
+        abstract = self._roster_pick_headline(
+            roster, seed=sum(ord(ch) for ch in str(item.id))
+        )
+        headline = f"{alias}：{abstract}" if abstract else _news_headline(item.content)
+        return headline, alias, title
+
+    def _apply_director_crashes(
+        self, market: MarketState, engine_config: EngineConfig
+    ) -> int:
+        """把排队的导演暴跌施加到市场上（**下一个 tick 生效**）。
+
+        复用引擎既有的纯函数 ``apply_jump`` —— **引擎一行不改**，而且暴跌
+        之后集中度、收割等后续反应**照常发生**。
+        """
+        if not self._director_on() or not self._director_queue:
+            return 0
+        crashes = [item for item in self._director_queue if item.get("op") == "crash"]
+        if not crashes:
+            return 0
+        self._director_queue = [
+            item for item in self._director_queue if item.get("op") != "crash"
+        ]
+        raw = self._business_config_cache or {}
+        director = raw.get("director")
+        director = director if isinstance(director, dict) else {}
+        scale = float(director.get("crash_severity_scale", 1.0) or 1.0)
+        applied = 0
+        for item in crashes:
+            stock = market.stocks.get(str(item.get("stock_id")))
+            if stock is None or not stock.alive:
+                continue
+            severity = min(0.9, max(0.05, (0.15 + 0.25 * scale)))
+            stock.prev_price = stock.price
+            stock.price = apply_jump(stock.price, severity=severity)
+            stock.kline.append((market.tick, stock.price))
+            window = int(getattr(engine_config.market, "kline_window", 60) or 60)
+            if len(stock.kline) > window:
+                del stock.kline[: len(stock.kline) - window]
+            applied += 1
+        return applied
 
     async def _claim_welfare(self, session: Session, engine_config: EngineConfig) -> Ok:
         """主动领取工资（P4 · P5.5 改成「打工工资」的叙事）。
@@ -3439,6 +3832,8 @@ class JuliumeiMarketPlugin(NekoPluginBase):
                     "pending_action": {},
                     "pending_event": None,
                     "analyses_left": 0,
+                    # ── P7：终局页也要有视觉块（Emoji 海 / 降级档位）──
+                    "visual": self._visual_block(None, engine_config),
                     "settlement": settlement,
                     # ── P5.5 改动 5/7：称号图鉴（**只在结算页**）────
                     # 局中载荷**不带** achievements —— 图鉴是"打完才看"的东西。
@@ -3457,6 +3852,30 @@ class JuliumeiMarketPlugin(NekoPluginBase):
     # 内部工具（以下方法以 _ 开头，不会被宿主收集为入口）
     # ------------------------------------------------------------------
 
+    async def _business_config(self) -> dict[str, Any]:
+        """读宿主下发的**业务配置**（``config.example.toml`` 里那些段）。
+
+        P7 的 ``[director]`` / ``[visual]`` 都在这里读。带 5 秒缓存 ——
+        和引擎配置**共用同一次 dump**，不额外打扰宿主。
+        """
+        now = time.time()
+        cached = self._business_config_cache
+        if cached is not None and now - self._business_config_cached_at < _ENGINE_CONFIG_TTL:
+            return cached
+        try:
+            raw = await self.config.dump()
+        except Exception:  # noqa: BLE001 - 配置不可用时退回空配置
+            raw = {}
+        self._apply_runtime_config(raw)
+        self._business_config_cache = raw if isinstance(raw, dict) else {}
+        self._business_config_cached_at = now
+        # 导演模式的开关顺手缓存一份（面板载荷是同步的，要能直接读）。
+        director = self._business_config_cache.get("director")
+        self._director_enabled_cache = bool(
+            director.get("enabled", False) if isinstance(director, dict) else False
+        )
+        return self._business_config_cache
+
     async def _engine_config(self) -> EngineConfig:
         """读取宿主配置并装配成引擎配置。
 
@@ -3471,15 +3890,181 @@ class JuliumeiMarketPlugin(NekoPluginBase):
         cached = self._engine_config_cache
         if cached is not None and now - self._engine_config_cached_at < _ENGINE_CONFIG_TTL:
             return cached
-        try:
-            raw = await self.config.dump()
-        except Exception:  # noqa: BLE001 - 配置不可用时退回引擎默认值
-            raw = {}
-        self._apply_runtime_config(raw)
-        config = build_engine_config(raw if isinstance(raw, dict) else {})
+        raw = await self._business_config()
+        config = build_engine_config(raw)
         self._engine_config_cache = config
         self._engine_config_cached_at = now
         return config
+
+    # ------------------------------------------------------------------
+    # P7：社区名册 / 导演模式 / 猫娘弹幕 / 视觉降级
+    #
+    # 这一整节都是**表现层**：
+    #   * 社区名册 = 群友人设与抽象新闻（纯数据，来自 community_roster.json）；
+    #   * 导演模式 = 直播特制版的开关，**默认关**；
+    #   * 猫娘弹幕 = 局中的嘲讽，取代发不出去的卡片；
+    #   * 视觉降级 = 三档 UI 的档位判定。
+    # 这里算出来的任何东西都**不参与游戏规则**，也不改引擎数值。
+    # ------------------------------------------------------------------
+
+    def _roster_members(self) -> list[dict[str, Any]]:
+        """社区名册（群友人设 + 抽象新闻池）。
+
+        从 ``community_roster.json`` 读；**读不到就退化成空名册** ——
+        插件照常跑，只是没有彩蛋。名册是**数据**：加群友只改那个文件。
+        """
+        if self._roster_loaded:
+            return self._roster
+        self._roster_loaded = True
+        try:
+            path = Path(__file__).resolve().parent / "community_roster.json"
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:  # pragma: no cover - 名册缺失不影响主流程
+            self._roster = []
+            return self._roster
+        members = data.get("members") if isinstance(data, dict) else None
+        if isinstance(members, list):
+            self._roster = [item for item in members if isinstance(item, dict)]
+        return self._roster
+
+    def _roster_for_stock(self, stock_id: str | None) -> dict[str, Any] | None:
+        """某个标的是不是名册里的群友（是的话返回名册条目）。"""
+        if not stock_id:
+            return None
+        for member in self._roster_members():
+            if member.get("stock_id") == stock_id:
+                return member
+        return None
+
+    def _roster_pick_headline(self, member: dict[str, Any], seed: int) -> str:
+        """按 seed **稳定**地给群友挑一句抽象新闻（可复现）。"""
+        headlines = member.get("headlines")
+        if not isinstance(headlines, list) or not headlines:
+            return ""
+        ticker = str(member.get("ticker") or member.get("alias") or "")
+        index = seed % len(headlines)
+        text = str(headlines[index])
+        if ticker and ticker not in text:
+            text = f"{ticker}{text}"
+        return text
+
+    async def _director_settings(self) -> dict[str, Any]:
+        """导演模式的开关与参数（**默认全关**）。"""
+        raw = await self._business_config()
+        section = raw.get("director")
+        return section if isinstance(section, dict) else {}
+
+    def _director_on(self) -> bool:
+        """导演模式是否开启（同步读缓存）。
+
+        **默认 False** —— 开源纯净版严格遵守原有数学概率，插件层不做任何
+        后台干预。开启后只有面板的「导演台」能用，且指令**只改观感与剧情**，
+        不改引擎公式。
+        """
+        return bool(self._director_enabled_cache)
+
+    def _visual_settings(self) -> dict[str, Any]:
+        """视觉降级的表现层参数（阈值来自 ``config.example.toml``）。"""
+        raw = self._business_config_cache or {}
+        section = raw.get("visual")
+        return section if isinstance(section, dict) else {}
+
+    def _push_danmaku(self, text: str, kind: str = "cat") -> None:
+        """记一条猫娘弹幕（面板的「赛博弹幕悬浮窗」用）。
+
+        运行时没有卡片 API ⇒ 猫娘在局中的嘲讽改走面板弹幕（外加宿主的
+        ``showToast`` 兜底）。弹幕**只在内存里**：它是"此刻"的装饰。
+        """
+        if not text:
+            return
+        self._danmaku_seq += 1
+        self._danmaku.append(
+            {
+                "id": self._danmaku_seq,
+                "kind": kind,
+                "text": text,
+                "at": time.time(),
+            }
+        )
+        if len(self._danmaku) > _DANMAKU_MAX:
+            del self._danmaku[: len(self._danmaku) - _DANMAKU_MAX]
+
+    def _visual_block(
+        self, session: Session | None, engine_config: EngineConfig
+    ) -> dict[str, Any]:
+        """面板载荷的 ``visual`` 块：三档档位 + 弹幕 + 导演台开关 + 名册。
+
+        **纯表现层**：这里判定的东西不参与任何游戏规则。
+        """
+        settings = self._visual_settings()
+        broke_day = int(settings.get("broke_day_threshold", 3) or 3)
+        dying_assets = float(settings.get("dying_assets_threshold", 20.0) or 20.0)
+        panic_distance = float(settings.get("panic_distance", 40.0) or 40.0)
+        emoji_sea_size = max(50, int(settings.get("emoji_sea_size", 60) or 60))
+
+        player = session.player if session is not None else None
+        market = session.market if session is not None else None
+        day = int(player.day) if player is not None else 0
+        cash = float(player.cash) if player is not None else 0.0
+        alive = bool(player.alive) if player is not None else True
+        mode = session.mode if session is not None else ""
+        total_assets = cash
+        distance: float | None = None
+        if player is not None and market is not None:
+            prices = market.prices()
+            # 用引擎自己的口径算总资产（不另起一套算法）。
+            total_assets = player.total_asset(prices)
+            distance = self._distance_to_death(session, engine_config)
+
+        # 病危：现金为负、或者离斩杀只差一步、或者已经死了。
+        critical = bool(
+            cash < 0
+            or (distance is not None and distance <= panic_distance)
+            or not alive
+        )
+
+        # 三档：濒死 > 断供 > 富二代。
+        stage = "rich"
+        if mode == "infinite" or critical or total_assets <= dying_assets:
+            stage = "dying"
+        elif day >= broke_day:
+            stage = "broke"
+
+        # 名册里"这一局在场"的群友。
+        roster: list[dict[str, Any]] = []
+        if market is not None:
+            for member in self._roster_members():
+                stock = market.stocks.get(str(member.get("stock_id") or ""))
+                if stock is None:
+                    continue
+                roster.append(
+                    {
+                        "stock_id": stock.id,
+                        "alias": str(member.get("alias") or ""),
+                        "ticker": str(member.get("ticker") or ""),
+                        "title": str(member.get("title") or ""),
+                        "persona": str(member.get("persona") or ""),
+                        "price": round(float(stock.price), 4),
+                    }
+                )
+
+        return {
+            "stage": stage,
+            "critical": critical,
+            "critical_emoji": "💀" if not alive else "🩸",
+            "stage_thresholds": {
+                "broke_day": broke_day,
+                "dying_assets": dying_assets,
+                "panic_distance": panic_distance,
+            },
+            "emoji_sea_size": emoji_sea_size,
+            "danmaku": list(self._danmaku[-_DANMAKU_PAYLOAD_MAX:]),
+            "director": {
+                "enabled": self._director_on(),
+                "queued": len(self._director_queue),
+            },
+            "roster": roster,
+        }
 
     async def _session_or_error(self, engine_config: EngineConfig):
         """加载当前会话；数据库不可用时返回错误结果。"""
@@ -3760,6 +4345,10 @@ class JuliumeiMarketPlugin(NekoPluginBase):
             "pending_action": self._public_pending_action(player.pending_action or {}),
             "pending_event": self._pending_event,
             "analyses_left": self._analyses_left(player),
+            # ── P7：视觉降级档位 / 猫娘弹幕 / 导演台开关 / 社区名册 ────
+            # **纯表现层**：不含任何隐藏信息（heat / seed / 反转日 /
+            # 新闻真假一概没有）。
+            "visual": self._visual_block(session, engine_config),
             "settlement": None,
             "notice": "",
         }

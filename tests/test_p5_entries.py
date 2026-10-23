@@ -37,6 +37,9 @@ EXPECTED_ACTIONS = (
     "news_detail",
     "skip_day",
     "kline",
+    # ── P7：导演台（特制版）与破产宣告 ────────────────────────────
+    "director",
+    "declare_bankrupt",
 )
 
 #: 局中**不能出现的方向词**（细节 5）。

@@ -2,7 +2,7 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "N.E.K.O: check juliumei_market",
+      "label": "N.E.K.O: check reverse_rich_sim",
       "type": "shell",
       "command": "uv run neko-plugin check \"${workspaceFolder}\"",
       "options": {
@@ -11,7 +11,7 @@
       "problemMatcher": []
     },
     {
-      "label": "N.E.K.O: sync juliumei_market",
+      "label": "N.E.K.O: sync reverse_rich_sim",
       "type": "shell",
       "command": "uv run neko-plugin sync \"${workspaceFolder}\" --clean",
       "options": {
@@ -20,7 +20,7 @@
       "problemMatcher": []
     },
     {
-      "label": "N.E.K.O: check -r juliumei_market",
+      "label": "N.E.K.O: check -r reverse_rich_sim",
       "type": "shell",
       "command": "uv run neko-plugin check -r \"${workspaceFolder}\"",
       "options": {
@@ -29,7 +29,7 @@
       "problemMatcher": []
     },
     {
-      "label": "N.E.K.O: build juliumei_market",
+      "label": "N.E.K.O: build reverse_rich_sim",
       "type": "shell",
       "command": "uv run neko-plugin build \"${workspaceFolder}\"",
       "options": {

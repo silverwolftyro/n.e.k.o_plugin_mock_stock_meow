@@ -6,5 +6,5 @@ def test_plugin_manifest_exists() -> None:
     manifest = root / "plugin.toml"
     assert manifest.is_file()
     text = manifest.read_text(encoding="utf-8")
-    assert 'id = "juliumei_market"' in text
-    assert 'entry = "plugin.plugins.juliumei_market:JuliumeiMarketPlugin"' in text
+    assert 'id = "reverse_rich_sim"' in text
+    assert 'entry = "plugin.plugins.reverse_rich_sim:ReverseRichSimPlugin"' in text

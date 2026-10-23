@@ -4,7 +4,7 @@
 
 插件 0.7.0 在真实 N.E.K.O 宿主里启动即崩：
 
-    Plugin 'juliumei_market' lifecycle event 'startup' failed:
+    Plugin 'reverse_rich_sim' lifecycle event 'startup' failed:
     Process crashed: No module named 'plugin.sdk.shared.core.cards'
 
 根因是插件直接 import 了宿主**内部实现** ``plugin.sdk.shared.core.cards``。
@@ -365,7 +365,7 @@ def test_plugin_imports_without_the_private_shared_subpackage() -> None:
         del sys.modules[name]
 
     plugin_names = [
-        name for name in sys.modules if name.startswith("plugins.juliumei_market")
+        name for name in sys.modules if name.startswith("plugins.reverse_rich_sim")
     ]
     saved_plugin = {name: sys.modules[name] for name in plugin_names}
     for name in plugin_names:
@@ -382,9 +382,9 @@ def test_plugin_imports_without_the_private_shared_subpackage() -> None:
     blocker = _BlockPrivateShared()
     sys.meta_path.insert(0, blocker)
     try:
-        module = importlib.import_module("plugins.juliumei_market")
+        module = importlib.import_module("plugins.reverse_rich_sim")
         assert module.PLUGIN_VERSION
-        assert module.JuliumeiMarketPlugin is not None
+        assert module.ReverseRichSimPlugin is not None
     except ModuleNotFoundError as error:  # pragma: no cover - 回归时才会走到
         raise AssertionError(
             f"插件在只有公开门面的宿主环境里 import 失败：{error}"
@@ -393,7 +393,7 @@ def test_plugin_imports_without_the_private_shared_subpackage() -> None:
         sys.meta_path.remove(blocker)
         # 还原现场，不污染其它测试
         for name in list(sys.modules):
-            if name.startswith("plugins.juliumei_market"):
+            if name.startswith("plugins.reverse_rich_sim"):
                 del sys.modules[name]
         sys.modules.update(saved_plugin)
         sys.modules.update(saved_private)

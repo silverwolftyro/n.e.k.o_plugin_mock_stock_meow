@@ -42,8 +42,8 @@ from engine.market import advance_market, create_market
 from engine.models import MarketState, Player, Position
 from engine.rng import derive_rng
 from engine.settlement import claim_welfare, execute_buy, execute_sell
-from plugins.juliumei_market.modes import get_mode
-from plugins.juliumei_market.modes.shared import (
+from plugins.reverse_rich_sim.modes import get_mode
+from plugins.reverse_rich_sim.modes.shared import (
     ModeContext,
     classic_initial_days,
     classic_living_cost_range,
@@ -450,7 +450,7 @@ def report(results: list[dict], *, title: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="久留美式收割模拟器 · 批量模拟")
+    parser = argparse.ArgumentParser(description="反向暴富模拟器 · 批量模拟")
     parser.add_argument("--games", type=int, default=50, help="每种口径的局数")
     parser.add_argument(
         "--strategy",

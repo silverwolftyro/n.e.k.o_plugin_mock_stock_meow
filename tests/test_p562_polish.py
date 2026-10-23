@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 
 from conftest import run
-from plugins.juliumei_market.storage.repo import Repo
+from plugins.reverse_rich_sim.storage.repo import Repo
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 _I18N_PATH = _PLUGIN_ROOT / "i18n" / "zh-CN.json"
@@ -189,7 +189,7 @@ def test_death_scene_has_no_internal_fields(plugin) -> None:
 
 def test_epitaphs_cover_every_death_reason() -> None:
     """每种死因都有叙事句（插件层映射表，引擎不动）。"""
-    from plugins.juliumei_market.cards import EPITAPHS
+    from plugins.reverse_rich_sim.cards import EPITAPHS
 
     for reason in (
         "starved",
@@ -276,7 +276,7 @@ def test_achievements_payload_splits_unlocked_and_locked(plugin) -> None:
 
 def test_inaction_hint_is_the_only_one_with_huo(plugin) -> None:
     """「无为而治」的 hint 是**唯一**带「活」字的（发现隐藏结局的线索）。"""
-    from plugins.juliumei_market.cards import ACHIEVEMENTS
+    from plugins.reverse_rich_sim.cards import ACHIEVEMENTS
 
     with_huo = [item for item in ACHIEVEMENTS if "活" in str(item["hint"])]
     assert len(with_huo) == 1
@@ -423,13 +423,13 @@ def test_inaction_unlock_uses_the_engine_exemption(plugin) -> None:
     """口径：豁免开局卖掉基准股票那一笔（与 ``check_inaction`` 一致）。"""
     from engine.settlement import check_inaction
 
-    from plugins.juliumei_market import JuliumeiMarketPlugin
+    from plugins.reverse_rich_sim import ReverseRichSimPlugin
 
     # 卖出基准股票 → trade_count = 1，但那是**豁免**的。
     assert check_inaction(
         type("P", (), {"trade_count": 1})(), max_trades=0, exempt_trades=1
     )
-    assert JuliumeiMarketPlugin is not None
+    assert ReverseRichSimPlugin is not None
 
 
 # ---------------------------------------------------------------- ④ 改动 7
@@ -438,7 +438,7 @@ def test_inaction_unlock_uses_the_engine_exemption(plugin) -> None:
 def test_panel_has_the_achievements_block() -> None:
     """面板新增第 12 区块（称号图鉴），可折叠。"""
     assert "panel.achievements" in _PANEL_SOURCE
-    assert "jmm.achievements_open" in _PANEL_SOURCE
+    assert "rrm.achievements_open" in _PANEL_SOURCE
     assert "achievementsOpen" in _PANEL_SOURCE
 
 

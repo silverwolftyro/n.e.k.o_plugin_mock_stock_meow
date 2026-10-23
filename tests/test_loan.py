@@ -13,7 +13,7 @@ from __future__ import annotations
 from conftest import run
 from engine.models import Player
 from engine.settlement import daily_settlement
-from plugins.juliumei_market.storage.repo import Repo
+from plugins.reverse_rich_sim.storage.repo import Repo
 
 
 def _error_code(result) -> str:

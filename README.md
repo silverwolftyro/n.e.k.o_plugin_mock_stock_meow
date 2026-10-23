@@ -1,4 +1,4 @@
-# 久留美式收割模拟器（纯虚构 · 反诈沙盘）
+# 反向暴富模拟器（纯虚构 · 反诈沙盘）
 
 > ⚠️ 本项目是一个纯虚构、纯娱乐的反诈教学游戏。所有股票、价格、代币均为虚构，
 > 无现金价值，不提供充值、提现、兑换、真实行情对接、投资建议或任何金融服务。
@@ -47,7 +47,7 @@ P6 完成仓库化收口：独立 git 仓库 + CI 工作流、错误码全量走
 ## 目录结构
 
 ```text
-plugin/plugins/juliumei_market/
+plugin/plugins/reverse_rich_sim/
 ├── plugin.toml            # 插件清单：身份、入口、能力开关、Hosted UI 声明
 ├── __init__.py            # 第一层：宿主事件 ↔ 第二层调用 的翻译层
 ├── cards.py               # P5：9 种事件卡片 + 猫娘嘲讽文案 + 死亡叙事（只产数据，不投递）
@@ -75,14 +75,14 @@ plugin/plugins/juliumei_market/
 在 N.E.K.O 源码树根目录（`N.E.K.O-main`）执行：
 
 ```bash
-uv run neko-plugin check "D:\项目\N.E.K.O\neko-猫娘股市\plugin\plugins\juliumei_market"
+uv run neko-plugin check "D:\项目\N.E.K.O\neko-猫娘股市\plugin\plugins\reverse_rich_sim"
 ```
 
 发布预检（**只做校验，不发布**）：
 
 ```bash
-uv run neko-plugin check --release "D:\项目\N.E.K.O\neko-猫娘股市\plugin\plugins\juliumei_market"
-uv run neko-plugin check --release --market-release "D:\项目\N.E.K.O\neko-猫娘股市\plugin\plugins\juliumei_market"
+uv run neko-plugin check --release "D:\项目\N.E.K.O\neko-猫娘股市\plugin\plugins\reverse_rich_sim"
+uv run neko-plugin check --release --market-release "D:\项目\N.E.K.O\neko-猫娘股市\plugin\plugins\reverse_rich_sim"
 ```
 
 > Windows 中文环境提示：CLI 内部有一处未指定 `encoding` 的文件读取，
@@ -113,7 +113,7 @@ N.E.K.O 源码树根，因此本地校验用临时迷你仓库进行（源码树
 `sys.path` 上）能 import 过去，打包进真实宿主就启动即崩：
 
 ```
-Plugin 'juliumei_market' lifecycle event 'startup' failed:
+Plugin 'reverse_rich_sim' lifecycle event 'startup' failed:
 Process crashed: No module named 'plugin.sdk.shared.core.cards'
 ```
 
@@ -163,7 +163,7 @@ Steam 版宿主（0.9.0）实测：插件进程启动时 `ctx._effective_config`
 
 * schema 改成**懒建表**（`Repo.ensure_schema`）——第一次真正用数据库时补建，
   失败也不放弃；`tests/test_db_bootstrap.py` 锁死这条性质。
-* **运行时能力对齐**（`JuliumeiMarketPlugin._effective_runtime_config`）：
+* **运行时能力对齐**（`ReverseRichSimPlugin._effective_runtime_config`）：
   把**宿主缓存 > 读到的配置 > 插件自己的 `plugin.toml` 清单**合成一份完整
   配置再喂给 `refresh_runtime_config`。清单兜底的合法性来自 SDK 自己的话：
   *"plugin.toml manifest metadata is authoritative"*；宿主**显式**给过的值
@@ -175,7 +175,7 @@ Steam 版宿主（0.9.0）实测：插件进程启动时 `ctx._effective_config`
 ## CI
 
 `.github/workflows/verify.yml` 与 `.github/workflows/release.yml` 由官方
-`neko-plugin setup-repo juliumei_market --github-actions` 生成，Market 发布走
+`neko-plugin setup-repo reverse_rich_sim --github-actions` 生成，Market 发布走
 标准 release 工作流。
 
 仓库行尾统一 LF（`.gitattributes` + `core.autocrlf=false`）。

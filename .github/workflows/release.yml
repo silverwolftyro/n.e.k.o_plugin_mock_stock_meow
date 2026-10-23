@@ -15,6 +15,6 @@ jobs:
   release:
     uses: Project-N-E-K-O/N.E.K.O/.github/workflows/plugin-market-release.yml@main
     with:
-      plugin-id: juliumei_market
+      plugin-id: reverse_rich_sim
       neko-repository: Project-N-E-K-O/N.E.K.O
       neko-ref: main
