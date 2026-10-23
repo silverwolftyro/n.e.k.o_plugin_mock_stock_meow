@@ -309,7 +309,7 @@ def test_worktree_has_no_crlf_files() -> None:
 
 
 def test_version_is_0_7_4() -> None:
-    """版本号 = 0.8.0。
+    """版本号 = 0.8.2。
 
     版本史：
 
@@ -321,9 +321,9 @@ def test_version_is_0_7_4() -> None:
     """
     from plugins.reverse_rich_sim import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.8.1"
+    assert PLUGIN_VERSION == "0.8.2"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.8.1"' in toml
+    assert 'version = "0.8.2"' in toml
 
 
 # ------------------------------------------------- ⑥ 面板文案全走 i18n

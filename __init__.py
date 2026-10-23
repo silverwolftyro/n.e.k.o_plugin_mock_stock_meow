@@ -151,7 +151,7 @@ __all__ = ["ReverseRichSimPlugin"]
 PLUGIN_ID = "reverse_rich_sim"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.8.1"
+PLUGIN_VERSION = "0.8.2"
 
 #: 「无为而治」称号的解锁天数（P5.5 改动 6）。
 #:
@@ -222,6 +222,9 @@ _DANMAKU_MAX = 20
 
 #: 面板载荷里最多带多少条弹幕（限流：载荷上限 512 KiB）。
 _DANMAKU_PAYLOAD_MAX = 8
+
+#: P7.2：每个标的的**走势小折线**带多少个点（降采样，别把载荷撑爆）。
+_PANEL_SPARK_POINTS = 18
 
 #: 结算页固定反诈文案（**不可通过配置关闭**）。
 ANTI_FRAUD_NOTICE = (
@@ -400,6 +403,11 @@ class ReverseRichSimPlugin(NekoPluginBase):
         #: **只存在于特制版**；纯净版下 ``director.enabled`` 恒为 False，
         #: 导演入口一律直接报错。
         self._director_queue: list[dict[str, Any]] = []
+        #: ── P7.2：导演台的「赛博弹窗轰炸」──────────────────────────────
+        #: 轰炸**截止时间戳**（秒）与**小丑数量**。面板据此弹出无法关闭的
+        #: Emoji 海，并在倒计时里封锁操作。纯表现层，不影响任何数值。
+        self._director_boom_until: float = 0.0
+        self._director_boom_count: int = 50
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -1322,6 +1330,16 @@ class ReverseRichSimPlugin(NekoPluginBase):
         except (DbUnavailableError, sqlite3.Error) as db_error:
             return _err("db_unavailable", db_error)
 
+        # ── P7.2：花钱买分析也要挨骂（每一次点击都必有一句嘴臭）──────
+        self._push_danmaku(
+            pick_taunt(
+                "analyze",
+                seed=player.analyses_used * 13 + int(player.day),
+                params={"stock": stock.name},
+            )
+            or i18n_text("taunt.analyze.1", "花钱买建议？我这儿的建议不值这个价。")
+        )
+
         return Ok(
             {
                 "stock_id": stock.id,
@@ -1390,7 +1408,10 @@ class ReverseRichSimPlugin(NekoPluginBase):
                 continue
             kind = news_kind(item)
             # ── P7：名册群友的抽象新闻 ──────────────────────────────
-            headline, roster_alias, roster_title = self._roster_news_headline(item)
+            # P7.2：按**本局的绑定**认领群友（群友按波动率落在真实槽位上）。
+            headline, roster_alias, roster_title = self._roster_news_headline(
+                item, market
+            )
             return Ok(
                 {
                     "id": item.id,
@@ -3209,7 +3230,7 @@ class ReverseRichSimPlugin(NekoPluginBase):
             "properties": {
                 "op": {
                     "type": "string",
-                    "enum": ["crash", "loan", "welfare", "kill"],
+                    "enum": ["crash", "loan", "welfare", "kill", "boom"],
                     "description": "导演指令类型。",
                 },
                 "stock_id": {
@@ -3273,7 +3294,39 @@ class ReverseRichSimPlugin(NekoPluginBase):
             return await self._director_force_welfare(session, engine_config)
         if op == "kill":
             return await self._director_force_kill(session, engine_config)
+        if op == "boom":
+            return await self._director_force_boom()
         return _err("director_bad_op")
+
+    async def _director_force_boom(self) -> Ok:
+        """导演「赛博弹窗轰炸」（P7.2）。
+
+        纯表现层：在玩家的屏幕上盖一层**关不掉**的小丑海，并在倒计时里
+        封锁操作。**不碰任何数值** —— 引擎的公式、结算、收割全部照常。
+
+        参数走 ``config.example.toml`` 的 ``[director]`` 段：
+        ``boom_seconds``（默认 5 秒）与 ``boom_emoji_count``（默认 50 个）。
+        """
+        settings = await self._director_settings()
+        seconds = max(1.0, min(30.0, float(settings.get("boom_seconds", 5) or 5)))
+        count = max(1, min(200, int(settings.get("boom_emoji_count", 50) or 50)))
+        self._director_boom_until = time.time() + seconds
+        self._director_boom_count = count
+        return Ok(
+            {
+                "action": "director",
+                "op": "boom",
+                "count": count,
+                "seconds": int(seconds),
+                "note": _fill_text(
+                    i18n_text(
+                        "director.note.boom",
+                        "屏幕已经被 {count} 个小丑占领 {seconds} 秒。",
+                    ),
+                    {"count": count, "seconds": int(seconds)},
+                ),
+            }
+        )
 
     async def _director_force_loan(
         self, session: Session, engine_config: EngineConfig
@@ -3464,15 +3517,20 @@ class ReverseRichSimPlugin(NekoPluginBase):
         )
         return Ok(payload)
 
-    def _roster_news_headline(self, item: Any) -> tuple[str, str | None, str | None]:
+    def _roster_news_headline(
+        self, item: Any, market: Any = None
+    ) -> tuple[str, str | None, str | None]:
         """名册群友的抽象新闻标题。
 
         返回 ``(标题, 群友别名, 群友称号)``。
 
         **只换标题**：正文（``item.content``）是引擎给的**方向信号**，
         换掉它就破坏了 P4 §11 的反泄露铁律 —— 所以这里一个字都不动它。
+
+        给了 ``market`` 就按**本局的绑定**认领群友（P7.2：群友按波动率落到
+        真实槽位上）；不给就退回名册文件里的默认槽位。
         """
-        roster = self._roster_for_stock(getattr(item, "stock_id", None))
+        roster = self._roster_for_stock(getattr(item, "stock_id", None), market)
         if roster is None:
             return _news_headline(item.content), None, None
         alias = str(roster.get("alias") or "")
@@ -3566,6 +3624,16 @@ class ReverseRichSimPlugin(NekoPluginBase):
             )
         except (DbUnavailableError, sqlite3.Error) as db_error:
             return _err("db_unavailable", db_error)
+
+        # ── P7.2：领工资也要挨骂（每一次点击都必有一句嘴臭）─────────
+        self._push_danmaku(
+            pick_taunt(
+                "claim",
+                seed=player.trade_count * 31 + int(player.day),
+                params={"days": int(player.day)},
+            )
+            or i18n_text("taunt.claim.1", "领了？领了也是白领。")
+        )
 
         return Ok(
             {
@@ -3773,6 +3841,15 @@ class ReverseRichSimPlugin(NekoPluginBase):
                 )
             ]
         )
+        # ── P7.2：拒绝二道贩子也要挨骂（每一次点击都必有一句嘴臭）────
+        self._push_danmaku(
+            pick_taunt(
+                "reject",
+                seed=player.trade_count * 17 + int(player.day),
+                params={"stock": str(legs[0].get("stock_id", ""))},
+            )
+            or i18n_text("taunt.reject.1", "硬气。硬气不能当饭吃。")
+        )
         return Ok(
             {
                 "action": "reject",
@@ -3960,14 +4037,99 @@ class ReverseRichSimPlugin(NekoPluginBase):
             self._roster = [item for item in members if isinstance(item, dict)]
         return self._roster
 
-    def _roster_for_stock(self, stock_id: str | None) -> dict[str, Any] | None:
-        """某个标的是不是名册里的群友（是的话返回名册条目）。"""
+    def _roster_binding(self, market: Any) -> dict[str, dict[str, Any]]:
+        """把名册群友绑到本局的**真实槽位**上（**数值零改动**）。
+
+        引擎按种子给每个槽位算了一个 ``sigma``（波动率），而且**整局不变**
+        （``advance_market`` 只读它、不改它）。所以可以按波动率排名来绑：
+
+        * 带 ``stable`` / ``anchor`` 标签的群友（星辰）→ 绑到波动率**最低**的槽位；
+        * 带 ``explosive`` / ``chaotic`` 标签的群友（Wehos）→ 绑到波动率**最高**的槽位；
+        * 其余群友（老王 / 小明 / 熬夜怪 / 潜水员）→ 按波动率升序依次取剩下的槽位。
+
+        于是「星辰走势平稳如老狗」「Wehos 极高波动」**永远成立**，而引擎的
+        sigma、价格、结算公式**一个字节都没动**（P7.2 硬要求：数值零改动，
+        500 局基线必须逐位一致）。绑定只影响**显示名**与群友新闻。
+        """
+        members = self._roster_members()
+        if not members:
+            return {}
+        stocks = getattr(market, "stocks", None)
+        if not stocks:
+            return {}
+        ordered = sorted(
+            stocks.values(),
+            key=lambda stock: (
+                float(getattr(stock, "sigma", 0.0) or 0.0),
+                str(getattr(stock, "id", "")),
+            ),
+        )
+        slot_ids = [str(getattr(stock, "id", "")) for stock in ordered]
+        binding: dict[str, dict[str, Any]] = {}
+        used: set[str] = set()
+
+        def _take(candidates: list[str]) -> str | None:
+            for slot in candidates:
+                if slot not in used:
+                    used.add(slot)
+                    return slot
+            return None
+
+        # 1) 必须最稳的 → 波动率升序
+        for member in members:
+            tags = {str(tag) for tag in (member.get("tags") or [])}
+            if not tags & {"stable", "anchor"}:
+                continue
+            slot = _take(slot_ids)
+            if slot is None:
+                break
+            binding[slot] = member
+        # 2) 必须最野的 → 波动率降序
+        for member in members:
+            tags = {str(tag) for tag in (member.get("tags") or [])}
+            if not tags & {"explosive", "chaotic"}:
+                continue
+            slot = _take(list(reversed(slot_ids)))
+            if slot is None:
+                break
+            binding[slot] = member
+        # 3) 其余的 → 剩下的槽位按波动率升序
+        for member in members:
+            if any(bound is member for bound in binding.values()):
+                continue
+            slot = _take(slot_ids)
+            if slot is None:
+                break
+            binding[slot] = member
+        return binding
+
+    def _roster_for_stock(
+        self, stock_id: str | None, market: Any = None
+    ) -> dict[str, Any] | None:
+        """某个标的是不是名册里的群友（是的话返回名册条目）。
+
+        给了 ``market`` 就用**本局的绑定**（群友按波动率落到真实槽位上）；
+        不给就退回名册文件里的**默认槽位**（纯数据口径，测试也走这条）。
+        """
         if not stock_id:
             return None
+        if market is not None:
+            bound = self._roster_binding(market).get(str(stock_id))
+            if bound is not None:
+                return bound
         for member in self._roster_members():
             if member.get("stock_id") == stock_id:
                 return member
         return None
+
+    @staticmethod
+    def _roster_display_name(member: dict[str, Any]) -> str:
+        """群友在**面板上**显示的名字（如「星辰·定海神针股」）。"""
+        alias = str(member.get("alias") or "")
+        title = str(member.get("title") or "")
+        if alias and title:
+            return f"{alias}·{title}"
+        return alias or title
 
     def _roster_pick_headline(self, member: dict[str, Any], seed: int) -> str:
         """按 seed **稳定**地给群友挑一句抽象新闻（可复现）。"""
@@ -4063,11 +4225,11 @@ class ReverseRichSimPlugin(NekoPluginBase):
         elif day >= broke_day:
             stage = "broke"
 
-        # 名册里"这一局在场"的群友。
+        # 名册里"这一局在场"的群友（P7.2：按**波动率排名**绑定到真实槽位）。
         roster: list[dict[str, Any]] = []
         if market is not None:
-            for member in self._roster_members():
-                stock = market.stocks.get(str(member.get("stock_id") or ""))
+            for slot_id, member in self._roster_binding(market).items():
+                stock = market.stocks.get(slot_id)
                 if stock is None:
                     continue
                 roster.append(
@@ -4078,8 +4240,13 @@ class ReverseRichSimPlugin(NekoPluginBase):
                         "title": str(member.get("title") or ""),
                         "persona": str(member.get("persona") or ""),
                         "price": round(float(stock.price), 4),
+                        "display_name": self._roster_display_name(member),
                     }
                 )
+
+        # 导演台的「赛博弹窗轰炸」：还没到点就是 inactive。
+        boom_left = max(0.0, float(self._director_boom_until) - time.time())
+        boom_active = bool(self._director_on() and boom_left > 0)
 
         return {
             "stage": stage,
@@ -4095,6 +4262,12 @@ class ReverseRichSimPlugin(NekoPluginBase):
             "director": {
                 "enabled": self._director_on(),
                 "queued": len(self._director_queue),
+            },
+            "boom": {
+                "active": boom_active,
+                "count": int(self._director_boom_count) if boom_active else 0,
+                "seconds_left": int(boom_left) + 1 if boom_active else 0,
+                "until": round(float(self._director_boom_until), 3),
             },
             "roster": roster,
         }
@@ -4293,15 +4466,22 @@ class ReverseRichSimPlugin(NekoPluginBase):
         kline_set = set(kline_ids)
 
         positions: list[dict[str, Any]] = []
+        roster_binding = self._roster_binding(market)
         for stock_id, position in player.positions.items():
             stock = market.stocks.get(stock_id)
             price = prices.get(stock_id, 0.0)
             market_value = position.market_value(price)
             tag = stock.tag if stock is not None else "neutral"
+            member = roster_binding.get(stock_id)
             positions.append(
                 {
                     "stock_id": stock_id,
                     "name": stock.name if stock is not None else stock_id,
+                    "display_name": (
+                        self._roster_display_name(member)
+                        if member is not None
+                        else (stock.name if stock is not None else stock_id)
+                    ),
                     "amount": round(position.amount, 6),
                     "avg_cost": round(position.avg_cost, 6),
                     "price": round(price, 6),
@@ -4326,9 +4506,17 @@ class ReverseRichSimPlugin(NekoPluginBase):
                 if stock.prev_price
                 else 0.0
             )
+            member = roster_binding.get(stock.id)
             entry: dict[str, Any] = {
                 "id": stock.id,
                 "name": stock.name,
+                "display_name": (
+                    self._roster_display_name(member)
+                    if member is not None
+                    else stock.name
+                ),
+                "roster_alias": str(member.get("alias") or "") if member else "",
+                "roster_title": str(member.get("title") or "") if member else "",
                 "price": round(stock.price, 6),
                 "prev_price": round(stock.prev_price, 6),
                 "change": round(change, 6),
@@ -4336,6 +4524,11 @@ class ReverseRichSimPlugin(NekoPluginBase):
                 "tag_label": _TAG_LABELS.get(stock.tag, "未知"),
                 "tag_color": _TAG_COLORS.get(stock.tag, "amber"),
                 "alive": stock.alive,
+                # P7.2：走势小折线的数据（**降采样**过，别把载荷撑爆）。
+                "spark": [
+                    [int(tick), round(float(value), 4)]
+                    for tick, value in stock.kline[-_PANEL_SPARK_POINTS:]
+                ],
             }
             if stock.id in kline_set:
                 entry["kline"] = [
@@ -4361,6 +4554,9 @@ class ReverseRichSimPlugin(NekoPluginBase):
             # ── 财务 ──────────────────────────────────────────────────
             "cash": round(player.cash, 6),
             "total_assets": round(total_assets, 6),
+            # P7.2：玩家自己的开局钱（**不是**隐藏信号，join 早就返回了），
+            # 面板拿它算「到现在为止赚/亏了多少」——傻子版的第一屏大数字。
+            "initial_cash": round(float(player.initial_cash), 6),
             "living_cost": round(living_cost, 6),
             "next_bill": round(next_cost, 6),
             "bill_gap": round(max(0.0, next_cost - player.cash), 6),

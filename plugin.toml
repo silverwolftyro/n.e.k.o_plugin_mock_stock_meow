@@ -1,7 +1,7 @@
 [plugin]
 id = "reverse_rich_sim"
 name = "反向暴富模拟器"
-version = "0.8.1"
+version = "0.8.2"
 entry = "plugin.plugins.reverse_rich_sim:ReverseRichSimPlugin"
 description = "纯虚构反诈沙盘：养套杀 + 每日账单斩杀"
 type = "plugin"

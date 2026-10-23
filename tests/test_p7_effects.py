@@ -280,7 +280,11 @@ def test_roster_news_detail_reports_the_alias(plugin) -> None:
     if detail["roster_alias"] is None:
         assert detail["headline"]
     else:
-        assert detail["roster_alias"] in {"星辰", "Wehos", "老王", "小明"}
+        # P7.2：名册扩到 6 个人（多了「熬夜修仙股」「水群概念股」），
+        # 所以这里**按名册文件**取别名集合，不写死。
+        roster = json.loads(_ROSTER_FILE.read_text(encoding="utf-8"))
+        aliases = {member["alias"] for member in roster["members"]}
+        assert detail["roster_alias"] in aliases
 
 
 # ---------------------------------------------------------------- 猫娘弹幕

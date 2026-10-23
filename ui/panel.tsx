@@ -1,4 +1,4 @@
-// 反向暴富模拟器 · 市场面板（P5 完整版 + P7 节目效果版）
+// 反向暴富模拟器 · 市场面板（P7.2 极简重构版）
 //
 // Hosted TSX 规则（.agent/skills/neko-plugin/references/hosted-ui-authoring.md）：
 //   * 只从 `@neko/plugin-ui` 导入；不引 npm 包；不引外部裸模块；
@@ -10,24 +10,30 @@
 //
 // 三条**渲染器限制**直接决定了本文件的写法：
 //   1. 宿主用 `document.createElement()` 建元素 → **画不了真 SVG**，
-//      所以 K 线是用 div 拼出来的（见 `Kline`）。
+//      所以 K 线是用 div 拼出来的（见 `Kline`），小折线用 `<canvas>` 画
+//      （宿主渲染器支持 `canvas`，且 `ref` 会挂到真实 DOM 节点上）。
 //   2. `CommonProps` 里**没有** `style` → 需要内联样式的地方直接用
 //      导出的 `h()`（它的 props 是 `any`）。
 //   3. `style` 传的是**对象**（运行时逐键写 `dom.style[key]`），
 //      **不是** CSS 字符串；CSS 自定义属性（`--x`）用 `setProperty` 也支持。
 //
-// 0.8.1 的**硬规矩**（Steam 宿主 0.9.0 上 0.8.0 把面板 UI 整个搞崩了）：
+// 0.8.1 起的**硬规矩**（Steam 宿主 0.9.0 上 0.8.0 把面板 UI 整个搞崩了）：
 //   * 面板**只用宿主组件的默认样式** —— 不碰 opacity / filter / animation /
 //     position / 背景 / 伪元素；
 //   * 卡片必须是 `Stack` 的**直接** flex item（和 P6 已验证的骨架一致），
 //     中间**不许**再塞 `<div>` 包裹层；
-//   * 自定义 CSS 只剩「盒模型 + 溢出收敛」这类不改变布局的声明（见 RRM_CSS）；
+//   * 自定义 CSS 只剩「盒模型 + 溢出收敛 + 关掉入场动画 + 字体档位」这类
+//     **不改变布局**的声明（见 RRM_CSS）；
 //   * 「病危」只有两种表现：面板顶部一条红色 `Alert` + 关键数字染红。
 //
-// 仍然保留的 P7 能力（都不涉及 CSS 特效）：
-//   * 荒诞弹窗：赛博网贷广告（`Modal` 关不掉，只能借款或破产）；
-//   * Emoji 海结算：终局铺满 🤡 / 🪦（纯 `Grid` 内容，无背景无定位）；
-//   * 社区名册 + 猫娘弹幕（`Card` / `Alert`）+ 家道档位的**文案**变化。
+// P7.2 的**极简重构**（先做减法，再塞抽象文案）：
+//   * K 线搬到**面板最上方**，占满全宽，当主视觉；
+//   * 行情表删掉成本价 / 可卖 / 占比 / 标签，只留「名称 + 走势小折线 +
+//     现价 + 超大红绿涨跌」；
+//   * 持仓表删掉数量 / 均价 / 可卖 / 占比 / 标签，只留「名称 + 当前市值 +
+//     大号红绿盈亏」；
+//   * 操作区改成**一键梭哈 / 一键割肉**（输入框、下拉框全部收掉）；
+//   * 猫娘弹幕变成**常驻在面板底部**的固定框（文档流，不悬浮）。
 //
 // 局中隐藏（P4 §14 / P5 方案 B）：本面板**不显示** heat、反转日、新闻真假。
 // 载荷里没有的东西，面板也拿不到 —— 面板只渲染 `state` 里的白名单字段。
@@ -43,12 +49,9 @@ import {
   KeyValue,
   List,
   Modal,
-  NumberInput,
   Page,
-  Progress,
   Select,
   Stack,
-  StatCard,
   StatusBadge,
   Text,
   h,
@@ -66,6 +69,10 @@ type KlinePoint = [number, number]
 type Stock = {
   id: string
   name: string
+  /** P7.2：名册群友在面板上的显示名（「星辰·定海神针股」）。 */
+  display_name?: string
+  roster_alias?: string
+  roster_title?: string
   price: number
   prev_price: number
   change: number
@@ -74,11 +81,14 @@ type Stock = {
   tag_color: string
   alive: boolean
   kline?: KlinePoint[]
+  /** P7.2：走势小折线的数据（降采样过）。 */
+  spark?: KlinePoint[]
 }
 
 type Position = {
   stock_id: string
   name: string
+  display_name?: string
   amount: number
   avg_cost: number
   price: number
@@ -143,6 +153,15 @@ type RosterMember = {
   title?: string
   persona?: string
   price?: number
+  display_name?: string
+}
+
+/** P7.2：导演台的「赛博弹窗轰炸」。 */
+type Boom = {
+  active?: boolean
+  count?: number
+  seconds_left?: number
+  until?: number
 }
 
 /** P7：视觉降级三档 + 弹幕 + 导演台 + 名册（**纯表现层**）。 */
@@ -158,6 +177,7 @@ type Visual = {
   emoji_sea_size?: number
   danmaku?: Danmaku[]
   director?: { enabled?: boolean; queued?: number }
+  boom?: Boom
   roster?: RosterMember[]
 }
 
@@ -173,6 +193,8 @@ type State = {
   alive?: boolean
   cash?: number
   total_assets?: number
+  /** P7.2：玩家自己的开局钱（用来算「到现在赚/亏了多少」）。 */
+  initial_cash?: number
   living_cost?: number
   next_bill?: number
   bill_gap?: number
@@ -226,42 +248,40 @@ const PHASE_TONE: Record<string, Tone> = {
   slaughter: "danger",
 }
 
+/** 涨绿跌红（和 K 线、结算卡片一个口径）。 */
+const TREND_UP = "#15803d"
+const TREND_DOWN = "#b91c1c"
+
 /**
- * P7 自定义样式。
- *
- * 宿主运行时用 `document.createElement` 建元素，`style` 走**对象**逐键赋值，
- * CSS 自定义属性用 `setProperty`。这里注入一份 `<style>`（`h("style", null, css)`
- * —— 子节点会变成 text node），拿到 keyframes 与伪元素。
- */
-/**
- * 0.8.1 防御性基线 —— **只做收敛，绝不做任何视觉效果**。
+ * 0.8.1 防御性基线 + P7.2 字体档位 —— **只做收敛，绝不做任何视觉效果**。
  *
  * 0.8.0 在 Steam 宿主（0.9.0）上把面板 UI 整个搞崩了，根因有**五**条：
  *
- *   1. `.rrm-stage-dying .neko-card::after` —— `position:absolute; inset:0`
- *      加两条对角 `linear-gradient` ⇒ 面板上出现**巨大的交叉 X 线条**，
- *      直接盖在表格和卡片上。
- *   2. `.rrm-stage-dying` 的 `rrm-glitch` 动画改的是**祖先容器的 opacity**
- *      （掉到 0.30 / 0.45）⇒ 整个面板泛白半透明，文字数字全看不清。
- *   3. `.rrm-stage-broke` 的 `filter: grayscale(...)` ⇒ filter 会给祖先
- *      建立 containing block，宿主的 flex / grid 布局随之错位。
- *   4. P7 新加的 `<div className="rrm-stage-*">` 包裹层把卡片从
- *      `Stack` 的 flex item 变成了嵌套 block ⇒ 间距消失、挤成一团。
- *   5. **宿主自己的** `.neko-page` / `.neko-card` 都带
- *      `animation: neko-fade-up 240ms ease both`，而 `neko-fade-up` 从
- *      `opacity: 0` 起步。宿主每次刷新上下文都会**重建 iframe**，
- *      于是这段入场动画**每次都从头重放** —— 面板长期停在半透明状态，
- *      文字数字几乎看不清。
+ *   1. `.neko-card::after` 的 `position:absolute; inset:0` 加两条对角
+ *      `linear-gradient` ⇒ 面板上出现**巨大的交叉 X 线条**，直接盖在表格上。
+ *   2. 祖先容器上的动画改的是**祖先容器的 opacity** ⇒ 整个面板泛白半透明。
+ *   3. 祖先容器上的 `filter: grayscale(...)` ⇒ filter 会给祖先建立
+ *      containing block，宿主的 flex / grid 布局随之错位。
+ *   4. 自定义的 `<div>` 包裹层把卡片从 `Stack` 的 flex item 变成了嵌套
+ *      block ⇒ 间距消失、挤成一团。
+ *   5. **宿主自己的** `.neko-page` / `.neko-card` 都带入场动画（从
+ *      `opacity: 0` 起步），而宿主每次刷新上下文都会**重建 iframe**，
+ *      于是这段入场动画**每次都从头重放** —— 面板长期停在半透明状态。
  *      宿主的 `styles.css` 里其实留了官方逃生口
  *      （`@media (prefers-reduced-motion: reduce)` → `animation: none !important`），
  *      这里照搬它的口径，但**限定在本面板的根节点内**。
  *
- * 因此 0.8.1 的规矩改成：
+ * 因此这里的规矩是：
  *   * 面板**只用宿主组件的默认样式**，不碰 opacity / filter / 动画 /
  *     position / 背景 / 伪元素；
- *   * 自定义 CSS 只允许「盒模型 + 溢出收敛 + 关掉入场动画」这类
- *     **不会改变布局**的声明；
+ *   * 自定义 CSS 只允许「盒模型 + 溢出收敛 + 关掉入场动画 + 字体档位」
+ *     这类**不会改变布局**的声明；
  *   * 卡片必须是 `Stack` 的**直接** flex item（和 P6 已验证的骨架一致）。
+ *
+ * P7.2 新增的三档字体（**只改字体，不改布局**）：
+ *   * 富二代 → 圆润体（幼圆 / YouYuan，缺了自动回退系统字体）；
+ *   * 断供   → 细体（font-weight: 300）；
+ *   * 濒死   → 中等字重（数字另有「偶尔闪红」，见 `flashOn`）。
  *
  * 宿主 `styles.css` 里本来就有 `* { box-sizing: border-box }` 与
  * `.neko-card { overflow: hidden }`，这里再声明一次是为了不依赖宿主版本。
@@ -271,6 +291,9 @@ const RRM_CSS = `
 .rrm-root, .rrm-root *, .rrm-root *::before, .rrm-root *::after { animation: none !important; }
 .rrm-root .neko-stack > *, .rrm-root .neko-card-body > * { min-width: 0; }
 .rrm-root .neko-key-value-value { overflow-wrap: anywhere; }
+.rrm-font-rich { font-family: "YouYuan", "Yuanti SC", "Hiragino Maru Gothic ProN", "Microsoft YaHei UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+.rrm-font-broke { font-weight: 300; }
+.rrm-font-dying { font-weight: 500; }
 `
 
 function money(value: number | undefined | null): string {
@@ -281,6 +304,155 @@ function money(value: number | undefined | null): string {
 function percent(value: number | undefined | null): string {
   if (value === undefined || value === null) return "—"
   return `${(Number(value) * 100).toFixed(1)}%`
+}
+
+/** 涨跌数字：带正负号，交给样式表上色。 */
+function changeText(value: number | undefined | null): string {
+  if (value === undefined || value === null) return "—"
+  const pct = Number(value) * 100
+  const sign = pct > 0 ? "+" : ""
+  return `${sign}${pct.toFixed(2)}%`
+}
+
+/** 涨绿跌红。 */
+function changeColor(value: number | undefined | null): string {
+  const pct = Number(value || 0) * 100
+  if (pct > 0.001) return "var(--success)"
+  if (pct < -0.001) return "var(--danger)"
+  return "var(--muted)"
+}
+
+/**
+ * P7.2：**超大号**的统计数字。
+ *
+ * 宿主 `StatCard` **不透传 style**（见 runtime.js），所以要自己拼一个
+ * `.neko-stat`（沿用宿主自己的类，样式还是宿主的）。
+ */
+function BigStat(props: {
+  label: string
+  value: string
+  hint?: string
+  color?: string
+  size?: number
+}) {
+  return h(
+    "div",
+    { className: "neko-stat" },
+    h("span", { className: "neko-stat-label" }, props.label),
+    h(
+      "strong",
+      {
+        className: "neko-stat-value",
+        style: {
+          fontSize: `${props.size || 34}px`,
+          color: props.color,
+          lineHeight: "1.15",
+        },
+      },
+      props.value
+    ),
+    props.hint
+      ? h("span", { style: { fontSize: "12px", color: "var(--muted)" } }, props.hint)
+      : null
+  )
+}
+
+/**
+ * P7.2：走势小折线（Sparkline）。
+ *
+ * 宿主渲染器画不了真 SVG，但 **canvas 是可以用的**（`document.createElement`
+ * 建出来的是真 canvas，`ref` 也会挂到真实 DOM 节点上）。所以这里用 canvas
+ * 画一条折线；万一宿主环境拿不到 2D 上下文，就**降级成柱子**（纯 div，
+ * 不依赖任何定位 / 动画），绝不抛错、绝不崩面板。
+ */
+function Sparkline(props: { points: number[]; up: boolean }) {
+  const canvasRef = useRef<any>(null)
+  const [broken, setBroken] = useState(false)
+  const values = props.points || []
+  const signature = values.join(",")
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) {
+      setBroken(true)
+      return
+    }
+    let ctx: any = null
+    try {
+      ctx = canvas.getContext("2d")
+    } catch (error) {
+      ctx = null
+    }
+    if (!ctx) {
+      setBroken(true)
+      return
+    }
+    try {
+      const width = Number(canvas.width) || 84
+      const height = Number(canvas.height) || 26
+      ctx.clearRect(0, 0, width, height)
+      if (values.length === 0) return
+      let max = values[0]
+      let min = values[0]
+      for (const value of values) {
+        if (value > max) max = value
+        if (value < min) min = value
+      }
+      const span = max - min || 1
+      const pad = 2
+      const step = values.length > 1 ? (width - pad * 2) / (values.length - 1) : 0
+      ctx.strokeStyle = props.up ? TREND_UP : TREND_DOWN
+      ctx.lineWidth = 1.6
+      ctx.beginPath()
+      values.forEach((value, index) => {
+        const x = pad + step * index
+        const y = height - pad - ((value - min) / span) * (height - pad * 2)
+        if (index === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+      })
+      ctx.stroke()
+    } catch (error) {
+      setBroken(true)
+    }
+  }, [signature, props.up])
+
+  if (broken) {
+    // 兜底：画不了 canvas 就用柱子（纯 div，无背景无定位）。
+    const last = values.slice(-12)
+    const max = last.length ? Math.max.apply(null, last) : 0
+    const min = last.length ? Math.min.apply(null, last) : 0
+    const span = max - min || 1
+    const bars = last.map((value, index) => {
+      const previous = index > 0 ? last[index - 1] : value
+      return h("div", {
+        key: index,
+        style: {
+          width: "3px",
+          height: `${Math.max(2, Math.round(((value - min) / span) * 18))}px`,
+          marginRight: "1px",
+          background: value >= previous ? TREND_UP : TREND_DOWN,
+        },
+      })
+    })
+    return h(
+      "div",
+      {
+        style: {
+          display: "flex",
+          alignItems: "flex-end",
+          height: "20px",
+        },
+      },
+      ...bars
+    )
+  }
+
+  return h("canvas", {
+    ref: canvasRef,
+    width: 84,
+    height: 26,
+    style: { display: "block" },
+  })
 }
 
 /** K 线：用 div 拼出来的迷你蜡烛图（宿主画不了 SVG）。 */
@@ -296,25 +468,28 @@ function Kline(props: {
   const max = Math.max.apply(null, prices)
   const min = Math.min.apply(null, prices)
   const span = max - min || 1
-  const height = 116
+  // P7.2：K 线是**主视觉**，所以更高、而且自适应铺满全宽。
+  const height = 190
   // 0.8.1：不再按档位改 K 线颜色（家道中落的视觉降级已回滚，见 RRM_CSS 注释）。
-  const up = "#15803d"
-  const down = "#b91c1c"
+  const up = TREND_UP
+  const down = TREND_DOWN
   const bars = points.map((point, index) => {
     const tick = point[0]
     const price = point[1]
-    const barHeight = Math.max(2, Math.round(((price - min) / span) * (height - 10)))
+    const barHeight = Math.max(2, Math.round(((price - min) / span) * (height - 16)))
     const previous = index > 0 ? points[index - 1][1] : price
     const color = price >= previous ? up : down
     return h("div", {
       key: tick,
       title: `tick ${tick} · ${price.toFixed(4)}`,
       style: {
-        width: "4px",
+        flex: "1 1 0",
+        minWidth: "3px",
+        maxWidth: "16px",
         height: `${barHeight}px`,
-        marginRight: "1px",
+        marginRight: "2px",
         background: color,
-        borderRadius: "1px",
+        borderRadius: "2px",
       },
     })
   })
@@ -325,7 +500,7 @@ function Kline(props: {
         display: "flex",
         alignItems: "flex-end",
         height: `${height}px`,
-        padding: "4px 0",
+        padding: "6px 0",
         overflowX: "auto",
       },
     },
@@ -338,8 +513,6 @@ export default function Panel(props: PluginSurfaceProps<State>) {
 
   const [selectedStock, setSelectedStock] = useLocalState<string>("rrm.selected_stock", "")
   const [sellStock, setSellStock] = useLocalState<string>("rrm.sell_stock", "")
-  const [buyAmount, setBuyAmount] = useState<number | "">("")
-  const [sellAmount, setSellAmount] = useState<number | "">("")
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null)
   const [newsDetail, setNewsDetail] = useState<Record<string, any> | null>(null)
   const [dismissedProposal, setDismissedProposal] = useState<string>("")
@@ -352,11 +525,15 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     "rrm.achievements_open",
     "0"
   )
-  // ── P7：导演台（长按标题栏）、网贷弹窗、弹幕 ──────────────────────
+  // ── P7：导演台（长按标题栏）、网贷弹窗 ──────────────────────────
   const [directorOpen, setDirectorOpen] = useState(false)
   const [holdHint, setHoldHint] = useState(false)
   const [loanModalOpen, setLoanModalOpen] = useState(false)
   const [loanModalDay, setLoanModalDay] = useState<number>(-1)
+  // ── P7.2：濒死档「数字偶尔闪红」（**JS 定时器**，不用 CSS 动画）──
+  const [flashOn, setFlashOn] = useState(false)
+  // ── P7.2：弹窗轰炸的倒计时心跳（用来把 5 秒倒计时画出来）─────────
+  const [, setBoomTick] = useState(0)
   const holdTimer = useRef<any>(null)
 
   const visual = state.visual || {}
@@ -365,6 +542,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   const directorEnabled = Boolean((visual.director || {}).enabled)
   const danmakuList = visual.danmaku || []
   const rosterList = visual.roster || []
+  const boom = visual.boom || {}
 
   // 三屏自动推进：第一屏停 3 秒（黑屏），之后每屏 2 秒。
   const deathScene = (state.settlement && state.settlement.death_scene) || null
@@ -405,6 +583,34 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   }
   useEffect(() => () => endHold(), [])
 
+  // ── P7.2：濒死档「数字偶尔闪红」 ────────────────────────────────
+  // **不用 CSS 动画**（0.8.0 的崩溃根因之一）：用 JS 定时器把颜色切一下。
+  useEffect(() => {
+    if (stage !== "dying") {
+      setFlashOn(false)
+      return
+    }
+    let hideTimer: any = 0
+    const timer = setInterval(() => {
+      setFlashOn(true)
+      hideTimer = setTimeout(() => setFlashOn(false), 320)
+    }, 2600)
+    return () => {
+      clearInterval(timer)
+      clearTimeout(hideTimer)
+    }
+  }, [stage])
+
+  // ── P7.2：弹窗轰炸的倒计时（面板自己算秒数，5 秒后自动收工）──────
+  const boomUntil = Number(boom.until || 0)
+  useEffect(() => {
+    if (!boomUntil) return
+    const timer = setInterval(() => setBoomTick((count) => count + 1), 300)
+    return () => clearInterval(timer)
+  }, [boomUntil])
+  const boomLeft = Math.max(0, boomUntil - Date.now() / 1000)
+  const boomActive = Boolean(boom.active) && boomLeft > 0
+
   const stocks = state.stocks || []
   const positions = state.positions || []
   const news = state.news_today || []
@@ -417,14 +623,14 @@ export default function Panel(props: PluginSurfaceProps<State>) {
 
   const stockOptions = stocks
     .filter((stock) => stock.alive)
-    .map((stock) => ({ value: stock.id, label: `${stock.name}（${stock.id}）` }))
+    .map((stock) => ({
+      value: stock.id,
+      label: stock.display_name || stock.name,
+    }))
 
   const positionOptions = positions.map((position) => ({
     value: position.stock_id,
-    label: t("panel.position_sellable", {
-      name: position.name,
-      sellable: position.sellable,
-    }),
+    label: position.display_name || position.name,
   }))
 
   // 没选过就默认第一只活着的标的。
@@ -470,12 +676,48 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       : stage === "broke"
         ? t("visual.cash_broke")
         : t("visual.cash_rich")
+  // P7.2：总资产按档位换名字（零花钱 / 家底 / 棺材本）。
+  const assetsLabel =
+    stage === "dying"
+      ? t("visual.assets_dying")
+      : stage === "broke"
+        ? t("visual.assets_broke")
+        : t("visual.assets_rich")
+  // P7.2：档位提示语（老爸给的钱 / 要交房租了 / 下顿饭的钱）。
+  const stageHint =
+    stage === "dying"
+      ? t("visual.hint_dying")
+      : stage === "broke"
+        ? t("visual.hint_broke")
+        : t("visual.hint_rich")
   const stageLabel =
     stage === "dying"
       ? t("visual.stage_dying")
       : stage === "broke"
         ? t("visual.stage_broke")
         : t("visual.stage_rich")
+  // P7.2：字体档位（只改字体，不改布局）。
+  const stageClass =
+    stage === "dying" ? "rrm-font-dying" : stage === "broke" ? "rrm-font-broke" : "rrm-font-rich"
+
+  // ── P7.2：傻子版的第一屏数字 ────────────────────────────────────
+  const totalAssets = Number(state.total_assets || 0)
+  const initialCash = Number(state.initial_cash || 0)
+  const pnl = totalAssets - initialCash
+  const pnlColor = pnl > 0.001 ? "var(--success)" : pnl < -0.001 ? "var(--danger)" : "var(--muted)"
+  const pnlHint =
+    pnl > 0.001 ? t("visual.pnl_up") : pnl < -0.001 ? t("visual.pnl_down") : t("visual.pnl_flat")
+  // 濒死档：数字**偶尔闪红**（用 JS 定时器切颜色，不用 CSS 动画）。
+  const flashColor = flashOn ? "var(--danger)" : undefined
+
+  // ── P7.2：一键梭哈 / 一键割肉的数量 ─────────────────────────────
+  const selectedStockRow = stocks.find((stock) => stock.id === effectiveStockId)
+  const buyAllAmount =
+    selectedStockRow && selectedStockRow.price > 0
+      ? Math.floor((Math.max(0, Number(state.cash || 0)) * 0.995) / selectedStockRow.price)
+      : 0
+  const selectedPosition = positions.find((item) => item.stock_id === effectiveSellStockId)
+  const sellAllAmount = selectedPosition ? Number(selectedPosition.sellable || 0) : 0
 
   // ── P7：终局 Emoji 海 ───────────────────────────────────────────
   const emojiSea = useMemo(() => {
@@ -486,6 +728,38 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     }
     return items
   }, [visual.emoji_sea_size])
+
+  // ── P7.2：赛博弹窗轰炸（关不掉，5 秒）───────────────────────────
+  const boomModal = boomActive
+    ? h(Modal, {
+        open: true,
+        title: t("visual.boom_title"),
+        // **点遮罩 / 按 ESC 都关不掉** —— 只能等它自己倒计时结束。
+        closeOnBackdrop: false,
+        closeOnEscape: false,
+        size: "lg",
+        children: h(
+          Stack,
+          { gap: 8 },
+          h(Text, null, t("visual.boom_body", { count: boom.count || 50 })),
+          h(Alert, {
+            tone: "warning",
+            message: t("visual.boom_countdown", { seconds: Math.ceil(boomLeft) }),
+          }),
+          h(
+            Grid,
+            { cols: 10, gap: 2 },
+            Array.from({ length: Number(boom.count || 50) }, (_item, index) =>
+              h(
+                "span",
+                { key: index, style: { fontSize: "22px", lineHeight: "1.1" } },
+                "🤡"
+              )
+            )
+          )
+        ),
+      })
+    : null
 
   // ── P7：标题栏（长按露出导演台）─────────────────────────────────
   // 0.8.1：**只保留布局**，不再有背景 / 边框 / 圆角 —— 那层深色半透明底
@@ -577,6 +851,15 @@ export default function Panel(props: PluginSurfaceProps<State>) {
               onError: (error: any) =>
                 showToast(String((error && error.message) || error), "danger"),
             }),
+            // P7.2：赛博弹窗轰炸（关不掉的 Emoji 海 + 封锁操作 5 秒）。
+            h(ActionButton, {
+              action: actionById("director"),
+              label: t("visual.director_boom"),
+              tone: "danger",
+              values: { op: "boom" },
+              onError: (error: any) =>
+                showToast(String((error && error.message) || error), "danger"),
+            }),
             h(Button, {
               onClick: () => setDirectorOpen(false),
               children: [t("visual.director_closed")],
@@ -586,18 +869,32 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       )
     : null
 
-  // ── P7：猫娘弹幕 ────────────────────────────────────────────────
-  // 0.8.1：原来是「position: sticky + z-index + 入场动画」的悬浮窗 ——
-  // sticky 会给祖先建立滚动容器，动画会改 opacity，这两条在宿主 iframe 里
-  // 都可能导致面板错位。现在改成**普通文档流里的宿主 Alert**：
-  // 不定位、不动画、不覆盖任何内容。
-  const danmakuOverlay =
-    danmakuList.length > 0
-      ? h(Alert, {
-          tone: "warning",
-          message: `${t("visual.danmaku_title")}：${danmakuList[danmakuList.length - 1].text || ""}`,
-        })
-      : null
+  // ── P7.2：猫娘实时弹幕框（**常驻面板底部**，文档流、不悬浮）─────
+  const danmakuCard = h(
+    Card,
+    { title: t("visual.danmaku_title") },
+    h(
+      Stack,
+      { gap: 6 },
+      h(Text, null, t("visual.danmaku_hint")),
+      danmakuList.length === 0
+        ? h(Text, null, t("visual.danmaku_empty"))
+        : h(
+            Stack,
+            { gap: 4 },
+            danmakuList
+              .slice(-3)
+              .reverse()
+              .map((item) =>
+                h(
+                  "span",
+                  { key: item.id, style: { fontSize: "13px", lineHeight: "1.6" } },
+                  item.text || ""
+                )
+              )
+          )
+    )
+  )
 
   // ── 局终：展示归档的结算报告 ─────────────────────────────────────
   if (state.stage === "finished" && state.settlement) {
@@ -630,7 +927,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                 </Inline>
               </Stack>
             </Card>
-            {danmakuOverlay}
+            {danmakuCard}
           </Stack>
         </Page>
       )
@@ -767,7 +1064,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
               </Stack>
             </Card>
           ) : null}
-          {danmakuOverlay}
+          {danmakuCard}
         </Stack>
       </Page>
     )
@@ -780,13 +1077,14 @@ export default function Panel(props: PluginSurfaceProps<State>) {
         <Stack gap={12}>
           {h("style", null, RRM_CSS)}
           {titleBar}
+          {boomModal}
           <Card>
             <Stack gap={12}>
               <Alert tone="info" message={state.notice || t("panel.idle")} />
               <Text>{t("panel.idle_hint")}</Text>
             </Stack>
           </Card>
-          {danmakuOverlay}
+          {danmakuCard}
         </Stack>
       </Page>
     )
@@ -831,7 +1129,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
 
   return (
     <Page className="rrm-root" title={t("panel.title")} subtitle={t("panel.subtitle")}>
-      <Stack gap={12}>
+      <Stack className={stageClass} gap={12}>
         {h("style", null, RRM_CSS)}
         {/* ── 0.8.1 病危表现：**只有**一条红色 Alert 警告条（文档流内）。
             绝不用闪烁 / 半透明 / 遮罩 —— 那是 0.8.0 崩 UI 的根因。───── */}
@@ -843,188 +1141,36 @@ export default function Panel(props: PluginSurfaceProps<State>) {
         ) : null}
         {titleBar}
         {directorConsole}
-        {/* ① 顶部状态条 */}
-        <Card>
-          <Inline gap={8} wrap align="center">
-            <StatusBadge
-              tone={PHASE_TONE[state.phase || ""] || "default"}
-              label={t(`phase.${state.phase || "honeymoon"}`)}
-            />
-            <StatusBadge tone="default" label={t("panel.day", { day: state.day })} />
-            <StatusBadge
-              tone="default"
-              label={t("panel.mode", { mode: state.mode_name || state.mode || "" })}
-            />
-            <StatusBadge
-              tone="default"
-              label={t("panel.to_settle", { ticks: state.ticks_to_settle })}
-            />
-            <StatusBadge tone="default" label={t("panel.tick", { tick: state.tick })} />
-            {/* P7：病危标记 + 家道档位 */}
-            {critical ? (
-              <StatusBadge
-                tone="danger"
-                label={`${visual.critical_emoji || "🩸"} ${t("visual.critical")}`}
-              />
-            ) : null}
-            <StatusBadge tone="default" label={stageLabel} />
-          </Inline>
-        </Card>
+        {boomModal}
 
-        {/* ② 财务三卡 + ③ 明日账单条 */}
-        <Grid cols={3} gap={12}>
-          {/* 0.8.1：病危时**只把数字染红**，其余样式完全沿用宿主 StatCard。 */}
-          {critical ? (
-            h(
-              "div",
-              { className: "neko-stat" },
-              h(
-                "span",
-                { className: "neko-stat-label" },
-                `${cashLabel} ${visual.critical_emoji || "🩸"}`
-              ),
-              h(
-                "strong",
-                { className: "neko-stat-value", style: { color: "var(--danger)" } },
-                money(state.cash)
-              )
-            )
-          ) : (
-            <StatCard label={cashLabel} value={money(state.cash)} />
-          )}
-          <StatCard label={t("panel.total_assets")} value={money(state.total_assets)} />
-          <StatCard
-            label={t("panel.distance_to_kill")}
-            value={
-              state.distance_to_kill === null || state.distance_to_kill === undefined
-                ? "—"
-                : money(state.distance_to_kill)
-            }
+        {/* ── P7.2 ⓪：状态条（压缩成一行徽标，别占地方）────────────── */}
+        <Inline gap={8} wrap align="center">
+          <StatusBadge
+            tone={PHASE_TONE[state.phase || ""] || "default"}
+            label={t(`phase.${state.phase || "honeymoon"}`)}
           />
-        </Grid>
-
-        {(state.bill_gap || 0) > 0 ? (
-          <Alert
-            tone="danger"
-            message={t("panel.bill_warn", {
-              gap: money(state.bill_gap),
-              next: money(state.next_bill),
-              cash: money(state.cash),
-              missed: state.missed_bills || 0,
-            })}
+          <StatusBadge tone="default" label={t("panel.day", { day: state.day })} />
+          <StatusBadge
+            tone="default"
+            label={t("panel.mode", { mode: state.mode_name || state.mode || "" })}
           />
-        ) : (
-          <Alert
-            tone="success"
-            message={t("panel.bill_ok", { next: money(state.next_bill), cash: money(state.cash) })}
+          <StatusBadge
+            tone="default"
+            label={t("panel.to_settle", { ticks: state.ticks_to_settle })}
           />
-        )}
+          <StatusBadge tone="default" label={t("panel.tick", { tick: state.tick })} />
+          <StatusBadge tone="default" label={stageLabel} />
+          <Text>
+            {t("panel.distance_to_kill")}:{" "}
+            {state.distance_to_kill === null || state.distance_to_kill === undefined
+              ? "—"
+              : money(state.distance_to_kill)}
+          </Text>
+        </Inline>
 
-        {/* ④ 持仓列表 + ⑤ 集中度条 */}
-        <Card title={t("panel.positions")}>
-          <Stack gap={12}>
-            <Progress
-              label={t("panel.concentration", { value: percent(state.concentration) })}
-              value={Math.round((state.concentration || 0) * 100)}
-            />
-            {positions.length === 0 ? (
-              <Text>{t("panel.no_positions")}</Text>
-            ) : (
-              <DataTable<Position>
-                data={positions}
-                rowKey="stock_id"
-                emptyText={t("panel.no_positions")}
-                columns={[
-                  { key: "name", label: t("panel.stock") },
-                  { key: "amount", label: t("panel.amount") },
-                  { key: "avg_cost", label: t("panel.cost"), render: (row) => money(row.avg_cost) },
-                  { key: "price", label: t("panel.price"), render: (row) => money(row.price) },
-                  {
-                    key: "unrealized_pnl",
-                    label: t("panel.pnl"),
-                    render: (row) => money(row.unrealized_pnl),
-                  },
-                  { key: "sellable", label: t("panel.sellable") },
-                  {
-                    key: "weight",
-                    label: t("panel.weight"),
-                    render: (row) => percent(row.weight),
-                  },
-                  {
-                    key: "tag",
-                    label: t("panel.tag"),
-                    render: (row) => (
-                      <StatusBadge
-                        tone={row.tag === "explosive" ? "danger" : row.tag === "stable" ? "success" : "default"}
-                        label={row.tag_label}
-                      />
-                    ),
-                  },
-                ]}
-              />
-            )}
-          </Stack>
-        </Card>
-
-        {/* ⑥ 标的行情表 */}
-        <Card title={t("panel.market")}>
-          <DataTable<Stock>
-            data={stocks}
-            rowKey="id"
-            emptyText={t("panel.no_stocks")}
-            columns={[
-              { key: "name", label: t("panel.stock") },
-              { key: "price", label: t("panel.price"), render: (row) => money(row.price) },
-              {
-                key: "change",
-                label: t("panel.change"),
-                render: (row) => percent(row.change),
-              },
-              {
-                key: "tag",
-                label: t("panel.tag"),
-                render: (row) => (
-                  <StatusBadge
-                    tone={row.tag === "explosive" ? "danger" : row.tag === "stable" ? "success" : "default"}
-                    label={row.tag_label}
-                  />
-                ),
-              },
-              {
-                key: "alive",
-                label: t("panel.status"),
-                render: (row) =>
-                  row.alive ? (
-                    <StatusBadge tone="success" label={t("panel.alive")} />
-                  ) : (
-                    <StatusBadge tone="danger" label={t("panel.delisted")} />
-                  ),
-              },
-            ]}
-          />
-        </Card>
-
-        {/* ── P7 模块三 ①：社区名册 ─────────────────────────── */}
-        <Card title={t("visual.roster_title")}>
-          {rosterList.length === 0 ? (
-            <Text>{t("visual.roster_empty")}</Text>
-          ) : (
-            <Stack gap={8}>
-              {rosterList.map((member) => (
-                <Inline key={member.stock_id} gap={8} align="center" wrap>
-                  <StatusBadge tone="default" label={member.alias || ""} />
-                  <Text>{member.title || ""}</Text>
-                  <Text>{money(member.price)}</Text>
-                  <Text>{member.persona || ""}</Text>
-                </Inline>
-              ))}
-            </Stack>
-          )}
-        </Card>
-
-        {/* ⑦ K 线（P6 档 2：局中载荷只带前 20 只，其余按需拉取） */}
+        {/* ── P7.2 ①：K 线 —— 面板最上方的**主视觉**，占满全宽 ─────── */}
         <Card title={t("panel.kline")}>
-          <Stack gap={12}>
+          <Stack gap={8}>
             {stocks.length === 0 ? (
               <Text>{t("panel.kline_empty")}</Text>
             ) : (
@@ -1046,69 +1192,235 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                       showToast(String((error && error.message) || error), "danger")
                     }
                   />
+                  {klineStock ? (
+                    <Text>
+                      {t("panel.kline_hint", {
+                        name: klineStock.display_name || klineStock.name,
+                        price: money(klineStock.price),
+                      })}
+                    </Text>
+                  ) : null}
                 </Inline>
                 <Kline points={klinePoints} emptyText={t("panel.kline_empty")} />
-                {klineStock ? (
-                  <Text>
-                    {t("panel.kline_hint", {
-                      name: klineStock.name,
-                      price: money(klineStock.price),
-                    })}
-                  </Text>
-                ) : null}
               </>
             )}
           </Stack>
         </Card>
 
-        {/* ⑧ 操作区 */}
+        {/* ── P7.2 ②：傻子版第一屏 —— 三块超大数字 ─────────────────── */}
+        <Grid cols={3} gap={12}>
+          <BigStat
+            label={assetsLabel}
+            value={money(totalAssets)}
+            hint={stageHint}
+            color={flashColor}
+            size={36}
+          />
+          <BigStat
+            label={t("visual.pnl_title")}
+            value={`${pnl > 0 ? "+" : ""}${money(pnl)}`}
+            hint={`${t("visual.total_pnl")} · ${pnlHint}`}
+            color={pnlColor}
+            size={36}
+          />
+          <BigStat label={cashLabel} value={money(state.cash)} size={28} />
+        </Grid>
+
+        {/* ── P7.2 ③：明日账单（交不起就是红色警告）────────────────── */}
+        {(state.bill_gap || 0) > 0 ? (
+          <Alert
+            tone="danger"
+            message={t("panel.bill_warn", {
+              gap: money(state.bill_gap),
+              next: money(state.next_bill),
+              cash: money(state.cash),
+              missed: state.missed_bills || 0,
+            })}
+          />
+        ) : (
+          <Alert
+            tone="success"
+            message={t("panel.bill_ok", { next: money(state.next_bill), cash: money(state.cash) })}
+          />
+        )}
+
+        {/* ── P7.2 ④：行情列表（极简 + 走势小折线 + 超大涨跌）───────── */}
+        <Card title={t("visual.market_title")}>
+          <DataTable<Stock>
+            data={stocks}
+            rowKey="id"
+            emptyText={t("panel.no_stocks")}
+            columns={[
+              {
+                key: "name",
+                label: t("panel.stock"),
+                render: (row) =>
+                  h(
+                    "span",
+                    { style: { fontWeight: 700, fontSize: "14px" } },
+                    row.display_name || row.name
+                  ),
+              },
+              {
+                key: "spark",
+                label: t("visual.trend_title"),
+                render: (row) =>
+                  h(Sparkline, {
+                    points: (row.spark || []).map((point) => point[1]),
+                    up: Number(row.change || 0) >= 0,
+                  }),
+              },
+              {
+                key: "price",
+                label: t("visual.price_title"),
+                render: (row) =>
+                  h(
+                    "span",
+                    { style: { fontWeight: 700, fontSize: "15px" } },
+                    money(row.price)
+                  ),
+              },
+              {
+                key: "change",
+                label: t("visual.change_title"),
+                render: (row) =>
+                  h(
+                    "span",
+                    {
+                      style: {
+                        fontSize: "26px",
+                        fontWeight: 800,
+                        color: changeColor(row.change),
+                        whiteSpace: "nowrap",
+                      },
+                    },
+                    changeText(row.change)
+                  ),
+              },
+            ]}
+          />
+        </Card>
+
+        {/* ── P7.2 ⑤：持仓列表（只留名称 / 市值 / 大号盈亏）───────── */}
+        <Card title={t("visual.holdings_title")}>
+          <Stack gap={12}>
+            {positions.length === 0 ? (
+              <Text>{t("panel.no_positions")}</Text>
+            ) : (
+              <DataTable<Position>
+                data={positions}
+                rowKey="stock_id"
+                emptyText={t("panel.no_positions")}
+                columns={[
+                  {
+                    key: "name",
+                    label: t("panel.stock"),
+                    render: (row) =>
+                      h(
+                        "span",
+                        { style: { fontWeight: 700, fontSize: "14px" } },
+                        row.display_name || row.name
+                      ),
+                  },
+                  {
+                    key: "market_value",
+                    label: t("visual.price_title"),
+                    render: (row) =>
+                      h(
+                        "span",
+                        { style: { fontWeight: 700, fontSize: "18px" } },
+                        money(row.market_value)
+                      ),
+                  },
+                  {
+                    key: "unrealized_pnl",
+                    label: t("visual.pnl_title"),
+                    render: (row) =>
+                      h(
+                        "span",
+                        {
+                          style: {
+                            fontSize: "26px",
+                            fontWeight: 800,
+                            color:
+                              Number(row.unrealized_pnl || 0) > 0.001
+                                ? "var(--success)"
+                                : Number(row.unrealized_pnl || 0) < -0.001
+                                  ? "var(--danger)"
+                                  : "var(--muted)",
+                            whiteSpace: "nowrap",
+                          },
+                        },
+                        `${Number(row.unrealized_pnl || 0) > 0 ? "+" : ""}${money(
+                          row.unrealized_pnl
+                        )}`
+                      ),
+                  },
+                ]}
+              />
+            )}
+            {(state.concentration || 0) > 0.6 ? (
+              <Alert
+                tone="warning"
+                message={t("visual.concentration_warn", {
+                  value: percent(state.concentration),
+                })}
+              />
+            ) : null}
+          </Stack>
+        </Card>
+
+        {/* ── P7.2 ⑥：操作区（一键梭哈 / 一键割肉）─────────────────── */}
         <Card title={t("panel.trade")}>
           <Stack gap={12}>
             <Inline gap={8} wrap align="center">
-              <Text>{t("panel.stock")}</Text>
               <Select
                 value={effectiveStockId}
                 options={stockOptions}
                 onChange={(value: any) => setSelectedStock(String(value))}
               />
+              {buyAllAmount > 0 ? (
+                <ActionButton
+                  action={actionById("buy")}
+                  label={t("visual.buy_all")}
+                  tone="primary"
+                  values={{ stock_id: effectiveStockId, amount: buyAllAmount }}
+                />
+              ) : (
+                <Button
+                  onClick={() => {
+                    showToast(t("visual.no_money"), "warning")
+                  }}
+                >
+                  {t("visual.buy_all")}
+                </Button>
+              )}
+              <Text>{t("visual.buy_all_hint")}</Text>
             </Inline>
 
             <Inline gap={8} wrap align="center">
-              <Text>{t("panel.amount")}</Text>
-              <NumberInput
-                value={buyAmount}
-                min={0}
-                step={1}
-                onChange={(value: any) => setBuyAmount(value)}
-              />
-              {/* 0.8.1：按钮漂移已回滚（自定义包裹会破坏宿主按钮组的布局），
-                  统一用宿主原生 ActionButton。 */}
-              <ActionButton
-                action={actionById("buy")}
-                label={t("action.buy")}
-                tone="primary"
-                values={{ stock_id: effectiveStockId, amount: Number(buyAmount) || 0 }}
-              />
-            </Inline>
-
-            <Inline gap={8} wrap align="center">
-              <Text>{t("panel.sell_amount")}</Text>
               <Select
                 value={effectiveSellStockId}
                 options={positionOptions}
                 onChange={(value: any) => setSellStock(String(value))}
               />
-              <NumberInput
-                value={sellAmount}
-                min={0}
-                step={1}
-                onChange={(value: any) => setSellAmount(value)}
-              />
-              <ActionButton
-                action={actionById("sell")}
-                label={t("action.sell")}
-                values={{ stock_id: effectiveSellStockId, amount: Number(sellAmount) || 0 }}
-              />
+              {sellAllAmount > 0 ? (
+                <ActionButton
+                  action={actionById("sell")}
+                  label={t("visual.sell_all")}
+                  tone="danger"
+                  values={{ stock_id: effectiveSellStockId, amount: sellAllAmount }}
+                />
+              ) : (
+                <Button
+                  onClick={() => {
+                    showToast(t("visual.nothing_to_sell"), "warning")
+                  }}
+                >
+                  {t("visual.sell_all")}
+                </Button>
+              )}
+              <Text>{t("visual.sell_all_hint")}</Text>
             </Inline>
 
             <Divider />
@@ -1171,37 +1483,25 @@ export default function Panel(props: PluginSurfaceProps<State>) {
           </Stack>
         </Card>
 
-        {/* ⑨ 猫娘公开状态 */}
-        {catgirl ? (
-          <Card title={t("panel.catgirl")}>
-            <KeyValue
-              items={[
-                {
-                  key: "alive",
-                  label: t("catgirl.alive"),
-                  value: catgirl.alive ? t("catgirl.alive") : t("catgirl.dead"),
-                },
-                { key: "cash", label: t("catgirl.cash"), value: money(catgirl.cash) },
-                {
-                  key: "holdings",
-                  label: t("catgirl.holdings"),
-                  value: t("catgirl.holdings_value", {
-                    value: money(catgirl.positions_value),
-                    count: catgirl.position_count,
-                  }),
-                },
-                {
-                  key: "days",
-                  label: t("catgirl.survived_days"),
-                  value: catgirl.days_survived,
-                },
-                { key: "action", label: t("panel.today_action"), value: catgirl.today_action },
-              ]}
-            />
-          </Card>
-        ) : null}
+        {/* ── P7.2 ⑦：社区名册（群友的专属标的）──────────────────── */}
+        <Card title={t("visual.roster_title")}>
+          {rosterList.length === 0 ? (
+            <Text>{t("visual.roster_empty")}</Text>
+          ) : (
+            <Stack gap={8}>
+              {rosterList.map((member) => (
+                <Inline key={member.stock_id} gap={8} align="center" wrap>
+                  <StatusBadge tone="default" label={member.alias || ""} />
+                  <Text>{member.title || ""}</Text>
+                  <Text>{money(member.price)}</Text>
+                  <Text>{member.persona || ""}</Text>
+                </Inline>
+              ))}
+            </Stack>
+          )}
+        </Card>
 
-        {/* ⑩ 当天新闻（局中只有中性分类，标题正文要点开才给） */}
+        {/* ── P7.2 ⑧：当天新闻（局中只有中性分类，标题正文要点开才给）─ */}
         <Card title={t("panel.news")}>
           <Stack gap={8}>
             {news.length === 0 ? (
@@ -1246,16 +1546,49 @@ export default function Panel(props: PluginSurfaceProps<State>) {
           </Stack>
         </Card>
 
-        {/* ⑪ 二道贩子弹窗（方案 A：引擎零改动，面板弹窗征求同意） */}
+        {/* ── ⑨ 猫娘公开状态 ─────────────────────────────────────── */}
+        {catgirl ? (
+          <Card title={t("panel.catgirl")}>
+            <KeyValue
+              items={[
+                {
+                  key: "alive",
+                  label: t("catgirl.alive"),
+                  value: catgirl.alive ? t("catgirl.alive") : t("catgirl.dead"),
+                },
+                { key: "cash", label: t("catgirl.cash"), value: money(catgirl.cash) },
+                {
+                  key: "holdings",
+                  label: t("catgirl.holdings"),
+                  value: t("catgirl.holdings_value", {
+                    value: money(catgirl.positions_value),
+                    count: catgirl.position_count,
+                  }),
+                },
+                {
+                  key: "days",
+                  label: t("catgirl.survived_days"),
+                  value: catgirl.days_survived,
+                },
+                { key: "action", label: t("panel.today_action"), value: catgirl.today_action },
+              ]}
+            />
+          </Card>
+        ) : null}
+
+        {/* ── ⑩ 二道贩子弹窗（方案 A：引擎零改动，面板弹窗征求同意）─ */}
         {showPawnbroker && pending ? (
           <Card title={t("panel.pawnbroker")}>
             <Stack gap={8}>
-              <Text>
-                {t("panel.pawnbroker_hint", {
-                  amount: pending.amount || 0,
-                  reason: pending.reason || "",
-                })}
-              </Text>
+              <Inline gap={8} align="center" wrap>
+                <StatusBadge tone="danger" label={t("visual.force_liquid")} />
+                <Text>
+                  {t("panel.pawnbroker_hint", {
+                    amount: pending.amount || 0,
+                    reason: pending.reason || "",
+                  })}
+                </Text>
+              </Inline>
               <Inline gap={8}>
                 <ActionButton
                   action={actionById("daily_reject")}
@@ -1276,7 +1609,9 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             </Stack>
           </Card>
         ) : null}
-        {danmakuOverlay}
+
+        {/* ── P7.2 ⑪：猫娘实时弹幕框（**永远在面板最后**）────────── */}
+        {danmakuCard}
         {loanModal}
       </Stack>
     </Page>
