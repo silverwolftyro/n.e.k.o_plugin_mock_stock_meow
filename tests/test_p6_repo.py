@@ -8,9 +8,12 @@
    每个用到的错误码在 ``i18n/zh-CN.json`` 里都有条目；实际报错消息来自 i18n。
 3. **kline action（P6 档 2 第 6 项）**：按需拉任意标的的 K 线；局中隐藏规则照旧。
 4. **仓库化**：CI 工作流 / ruff 配置 / .gitignore / 独立 git 仓库 / origin 命名。
-5. **版本号** = 0.7.0。
+5. **版本号** = 0.7.1。
 6. **面板文案全走 i18n**：静态 / 动态键都必须在 i18n 里存在；
    面板代码（去注释后）零硬编码中文。
+
+> 0.7.1 修掉了 0.7.0 在**真实宿主**里启动即崩的私有 SDK 导入
+> （``plugin.sdk.shared.core.cards``）；边界守卫见 ``tests/test_sdk_boundary.py``。
 """
 
 from __future__ import annotations
@@ -305,13 +308,13 @@ def test_worktree_has_no_crlf_files() -> None:
 # ------------------------------------------------- ⑤ 版本号
 
 
-def test_version_is_0_7_0() -> None:
-    """版本号 = 0.7.0。"""
+def test_version_is_0_7_1() -> None:
+    """版本号 = 0.7.1（0.7.1 修掉了 0.7.0 在真实宿主里启动即崩的私有 SDK 导入）。"""
     from plugins.juliumei_market import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.7.0"
+    assert PLUGIN_VERSION == "0.7.1"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.7.0"' in toml
+    assert 'version = "0.7.1"' in toml
 
 
 # ------------------------------------------------- ⑥ 面板文案全走 i18n

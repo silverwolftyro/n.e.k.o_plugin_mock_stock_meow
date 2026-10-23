@@ -40,7 +40,7 @@ P6 完成仓库化收口：独立 git 仓库 + CI 工作流、错误码全量走
 | P5.5 | 体验打磨：打工工资 / 入场三选一 / 猫娘留白 / 天台三屏 / 称号图鉴 / 跳过本日 | ✅ 已完成 |
 | P6 | 仓库化收口：独立 git 仓库 / CI 工作流 / 错误码 i18n 查表 / 按需拉 K 线 / 官方 TSX 类型检查 | ✅ 已完成 |
 
-**当前版本 0.7.0**，单测 **447 例全绿**，`neko-plugin check` 0 error，
+**当前版本 0.7.1**，单测 **452 例全绿**，`neko-plugin check` 0 error，
 `check --release` 与 `check --release --market-release` 均通过，
 官方 `check-hosted-tsx` 类型检查通过。
 
@@ -58,7 +58,7 @@ plugin/plugins/juliumei_market/
 ├── engine/                # 第三层：纯标准库游戏引擎
 ├── modes/                 # 第二层：经典 / 无限 两种模式
 ├── storage/               # 持久化（DB 权威 + 状态缓存）
-└── tests/                 # 447 例单测（含自带 Hosted TSX lint）
+└── tests/                 # 452 例单测（含自带 Hosted TSX lint + SDK 导入边界守卫）
 ```
 
 三层架构规划：
@@ -98,6 +98,28 @@ N.E.K.O 源码树根，因此本地校验用临时迷你仓库进行（源码树
 
 本仓库内的 `tests/test_hosted_tsx.py` 只做自带 lint（不联网、不装依赖）；
 类型检查是发布前的独立环节。
+
+## 宿主 SDK 导入边界（**硬红线**）
+
+插件**只准**从公开门面导入宿主 SDK：
+
+| 允许 | 用途 |
+|:--|:--|
+| `plugin.sdk.plugin` | 插件开发主门面（`Ok` / `Err` / `SdkError` / 装饰器 / `CardSubmissionError` …） |
+| `plugin.sdk` | SDK 根命名空间（`EVENT_META_ATTR` 等常量） |
+| `plugin.sdk.adapter` | 适配器开发门面 |
+
+**`plugin.sdk.shared.*` 是宿主内部实现，插件一律不许直引** —— 开发机（源码树在
+`sys.path` 上）能 import 过去，打包进真实宿主就启动即崩：
+
+```
+Plugin 'juliumei_market' lifecycle event 'startup' failed:
+Process crashed: No module named 'plugin.sdk.shared.core.cards'
+```
+
+创建卡片走**公开 API** `await self.ctx.create_card(html=..., summary=..., css=..., actions=...)`。
+
+`tests/test_sdk_boundary.py` 用 AST 扫描全项目把这条红线固化成回归测试。
 
 ## CI
 

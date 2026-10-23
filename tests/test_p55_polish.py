@@ -124,12 +124,12 @@ def test_plugin_overrides_death_title_by_reason() -> None:
 
 
 def test_version_is_a_patch_bump() -> None:
-    """版本号 = 0.7.0（P6 仓库化收口；P5.5 的两版是 0.6.1 / 0.6.2）。"""
+    """版本号 = 0.7.1（P6 仓库化收口；P5.5 的两版是 0.6.1 / 0.6.2）。"""
     from plugins.juliumei_market import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.7.0"
+    assert PLUGIN_VERSION == "0.7.1"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.7.0"' in toml
+    assert 'version = "0.7.1"' in toml
 
 
 # ---------------------------------------------------------------- ① 改动 1

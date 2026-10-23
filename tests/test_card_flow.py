@@ -155,12 +155,11 @@ def test_pushed_cards_are_all_known_kinds(plugin, pushed) -> None:
 
 def test_card_push_failure_does_not_break_the_game(plugin, monkeypatch) -> None:
     """投递失败**不影响本局**（卡片只是锦上添花）。"""
-    import plugins.juliumei_market as plugin_module
-
     async def boom(*_args, **_kwargs):
         raise RuntimeError("卡片通道挂了")
 
-    monkeypatch.setattr(plugin_module, "create_card", boom)
+    # 卡片走公开 SDK API ``ctx.create_card(...)``（宿主内部实现不许直引）。
+    monkeypatch.setattr(plugin.ctx, "create_card", boom)
     run(plugin.join(mode="classic_beginner", seed=9205))
     run(plugin._run_one_tick())
     # tick 照常跑完：状态还在。

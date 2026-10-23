@@ -51,6 +51,7 @@ from typing import Any
 from uuid import uuid4
 
 from plugin.sdk.plugin import (
+    CardSubmissionError,
     Err,
     NekoPluginBase,
     Ok,
@@ -61,7 +62,6 @@ from plugin.sdk.plugin import (
     timer_interval,
     ui,
 )
-from plugin.sdk.shared.core.cards import CardSubmissionError, create_card
 
 from .cards import (
     ACHIEVEMENTS,
@@ -150,7 +150,7 @@ __all__ = ["JuliumeiMarketPlugin"]
 PLUGIN_ID = "juliumei_market"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.7.0"
+PLUGIN_VERSION = "0.7.1"
 
 #: 「无为而治」称号的解锁天数（P5.5 改动 6）。
 #:
@@ -1827,14 +1827,18 @@ class JuliumeiMarketPlugin(NekoPluginBase):
     async def _push_card(self, card: Card) -> None:
         """投递一张卡片到聊天频道。
 
-        卡片走 ``push_message``，**AI 看不到**（``ai_behavior="blind"``）。
-        投递失败**不影响本局** —— 游戏状态已经落库了，卡片只是"锦上添花"。
+        卡片走 ``ctx.create_card(...)``（**公开 SDK API**），**AI 看不到**
+        （``ai_behavior="blind"``）。投递失败**不影响本局** —— 游戏状态已经
+        落库了，卡片只是"锦上添花"。
+
+        严禁改回 ``plugin.sdk.shared.core.cards.create_card``：``shared`` 是宿主
+        **内部实现**，插件直引会导致在真实宿主里启动即崩
+        （``No module named 'plugin.sdk.shared.core.cards'``）。
         """
         if card is None:
             return
         try:
-            await create_card(
-                self.ctx,
+            await self.ctx.create_card(
                 html=card.html,
                 summary=card.summary,
                 css=CARD_CSS,

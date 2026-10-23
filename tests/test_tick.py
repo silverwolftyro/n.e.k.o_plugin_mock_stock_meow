@@ -77,7 +77,7 @@ def test_heartbeat_without_active_game_does_nothing(plugin) -> None:
 
 def test_heartbeat_entry_is_registered(plugin) -> None:
     """``market_tick`` 必须真的带 ``@timer_interval`` 的元数据。"""
-    from plugin.sdk.shared.constants import EVENT_META_ATTR
+    from plugin.sdk import EVENT_META_ATTR
 
     meta = getattr(type(plugin).market_tick, EVENT_META_ATTR, None)
     assert meta is not None
