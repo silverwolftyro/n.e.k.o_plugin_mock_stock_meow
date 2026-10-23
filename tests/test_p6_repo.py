@@ -308,13 +308,22 @@ def test_worktree_has_no_crlf_files() -> None:
 # ------------------------------------------------- ⑤ 版本号
 
 
-def test_version_is_0_7_1() -> None:
-    """版本号 = 0.7.1（0.7.1 修掉了 0.7.0 在真实宿主里启动即崩的私有 SDK 导入）。"""
+def test_version_is_0_7_4() -> None:
+    """版本号 = 0.7.4。
+
+    版本史：
+
+    * 0.7.1 —— 删掉 ``plugin.sdk.shared.core`` 私有导入；
+    * 0.7.2 —— 去掉运行时**不存在**的 ``CardSubmissionError``；
+    * 0.7.3 —— 真机上"表从未建成"（懒建表自愈 + 拉配置重试）；
+    * 0.7.4 —— 真机上"tick 不推进"（运行时能力对齐 + 清单兜底 +
+      卡片能力探测）。
+    """
     from plugins.juliumei_market import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.7.1"
+    assert PLUGIN_VERSION == "0.7.4"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.7.1"' in toml
+    assert 'version = "0.7.4"' in toml
 
 
 # ------------------------------------------------- ⑥ 面板文案全走 i18n

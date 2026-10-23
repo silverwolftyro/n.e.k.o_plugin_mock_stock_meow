@@ -217,6 +217,13 @@ class Repo:
 
     def __init__(self, db: Any) -> None:
         self._db = db
+        #: schema 是否已经建好（进程内缓存）。
+        #:
+        #: **懒建表**：宿主可能在插件实例构造**之后**才把有效配置下发到插件
+        #: 进程 —— 那时 ``db.enabled`` 还是 False，启动时的建表会失败。
+        #: 等配置到了、DB 能用了，必须**自动补建**，否则表永远缺着，
+        #: 之后每次查询都会撞 "no such table"，插件卡在降级状态出不来。
+        self._schema_ready = False
 
     @property
     def enabled(self) -> bool:
@@ -233,7 +240,11 @@ class Repo:
 
     @asynccontextmanager
     async def reader(self) -> AsyncIterator[Any]:
-        """只读会话；退出时自动关闭。"""
+        """只读会话；退出时自动关闭。
+
+        读之前**先确保 schema 存在**（懒建表自愈，见 ``ensure_schema``）。
+        """
+        await self.ensure_schema()
         session = await self._open_session()
         try:
             yield session
@@ -241,14 +252,34 @@ class Repo:
             await session.close()
 
     async def ensure_schema(self) -> None:
-        """幂等地建表建索引。每次启动都执行一遍，数据库被删也能自愈。"""
-        async with self.reader() as session:
+        """幂等地建表建索引；已建好就直接返回。
+
+        **懒建表 + 自愈**：
+
+        * 只在第一次真正用数据库时建表（``CREATE TABLE IF NOT EXISTS`` 开销是
+          毫秒级，用 ``_schema_ready`` 标记免掉后续每次读写的开销）；
+        * 宿主把有效配置补发下来之后，下一次读写会自动补建 schema ——
+          不再像"只在 startup 建一次"那样，失败一次就永远缺表；
+        * 数据库被删掉也能自愈（``CREATE TABLE IF NOT EXISTS``）。
+
+        **刻意不加锁**：宿主的定时器每次心跳都用 ``asyncio.run()`` 开一个
+        **新事件循环**，跨循环的 ``asyncio.Lock`` 不可靠；而这里的语句本身
+        就是幂等的（``CREATE TABLE IF NOT EXISTS``），并发补列的竞争由
+        ``_ensure_columns`` 自己吞掉。
+        """
+        if self._schema_ready:
+            return
+        session = await self._open_session()
+        try:
             for statement in SCHEMA_STATEMENTS:
                 await session.execute(statement)
             await self._ensure_columns(session, "players", _PLAYER_COLUMNS)
             await self._ensure_columns(session, "market_state", _MARKET_STATE_COLUMNS)
             await self._ensure_columns(session, "news_log", _NEWS_LOG_COLUMNS)
             await session.commit()
+        finally:
+            await session.close()
+        self._schema_ready = True
 
     @staticmethod
     async def _ensure_columns(
@@ -293,7 +324,10 @@ class Repo:
 
         返回每个语句产生的 cursor（最后一个 INSERT 的 ``lastrowid`` 即自增主键）。
         任何一步失败都会整体回滚。
+
+        写之前同样**先确保 schema 存在**（懒建表自愈）。
         """
+        await self.ensure_schema()
         session = await self._open_session()
         cursors: list[Any] = []
         try:

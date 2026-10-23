@@ -40,7 +40,7 @@ P6 完成仓库化收口：独立 git 仓库 + CI 工作流、错误码全量走
 | P5.5 | 体验打磨：打工工资 / 入场三选一 / 猫娘留白 / 天台三屏 / 称号图鉴 / 跳过本日 | ✅ 已完成 |
 | P6 | 仓库化收口：独立 git 仓库 / CI 工作流 / 错误码 i18n 查表 / 按需拉 K 线 / 官方 TSX 类型检查 | ✅ 已完成 |
 
-**当前版本 0.7.1**，单测 **452 例全绿**，`neko-plugin check` 0 error，
+**当前版本 0.7.4**，单测 **468 例全绿**，`neko-plugin check` 0 error，
 `check --release` 与 `check --release --market-release` 均通过，
 官方 `check-hosted-tsx` 类型检查通过。
 
@@ -58,7 +58,7 @@ plugin/plugins/juliumei_market/
 ├── engine/                # 第三层：纯标准库游戏引擎
 ├── modes/                 # 第二层：经典 / 无限 两种模式
 ├── storage/               # 持久化（DB 权威 + 状态缓存）
-└── tests/                 # 452 例单测（含自带 Hosted TSX lint + SDK 导入边界守卫）
+└── tests/                 # 468 例单测（含自带 Hosted TSX lint + SDK 导入边界守卫 + 数据库懒建表守卫 + 运行时能力对齐守卫）
 ```
 
 三层架构规划：
@@ -105,7 +105,7 @@ N.E.K.O 源码树根，因此本地校验用临时迷你仓库进行（源码树
 
 | 允许 | 用途 |
 |:--|:--|
-| `plugin.sdk.plugin` | 插件开发主门面（`Ok` / `Err` / `SdkError` / 装饰器 / `CardSubmissionError` …） |
+| `plugin.sdk.plugin` | 插件开发主门面（`Ok` / `Err` / `SdkError` / 装饰器 …） |
 | `plugin.sdk` | SDK 根命名空间（`EVENT_META_ATTR` 等常量） |
 | `plugin.sdk.adapter` | 适配器开发门面 |
 
@@ -117,9 +117,60 @@ Plugin 'juliumei_market' lifecycle event 'startup' failed:
 Process crashed: No module named 'plugin.sdk.shared.core.cards'
 ```
 
-创建卡片走**公开 API** `await self.ctx.create_card(html=..., summary=..., css=..., actions=...)`。
+创建卡片走**公开 API** `await self.ctx.create_card(html=..., summary=..., css=..., actions=...)`
+—— 但必须**按能力探测**地用（见下文「宿主可能压根没有卡片 API」）。
+
+### 门面导出的符号集随宿主版本而变 ⚠️
+
+**源码树里有，运行时未必有。** 已踩过三次：
+
+| 版本 | 症状 | 根因 |
+|:--|:--|:--|
+| 0.7.0 | `No module named 'plugin.sdk.shared.core.cards'` | 直引宿主**内部实现** `plugin.sdk.shared.*` |
+| 0.7.1 | `cannot import name 'CardSubmissionError' from 'plugin.sdk.plugin'` | 门面在 Steam 版运行时里**没导出**这个类 |
+| 0.7.4 | `'SdkContext' object has no attribute 'create_card'` | 宿主 0.9.0 的 ctx **没有**卡片方法（硬调就炸） |
+
+因此：
+
+1. **只 import 运行时验证存在的名字**（`tests/test_sdk_boundary.py` 里的
+   `RUNTIME_FACADE_NAMES` 白名单，依据是 Steam 版宿主实测）。
+2. **不要为具体的宿主异常类写 `except`** —— 一律 `except Exception` 兜底记日志。
+3. 门面上 `cannot import name` ⇒ **版本不匹配**，改用最保守的写法，不要死磕。
+4. **方法级 API 也要探测**：`create_card` 在 Steam 版宿主（0.9.0）的
+   `SdkContext` 上**根本不存在**（在冻结的 `projectneko_server.exe` 里扫过：
+   `create_card` / `ChatCard` / `PluginView` / `html_card` 全部 **0 次命中**）。
+   所以卡片走 `getattr(self.ctx, "create_card", None)` 探测：没有就降级成
+   一条纯文本聊天消息（`push_message`，0.9.0 里是有的）。
 
 `tests/test_sdk_boundary.py` 用 AST 扫描全项目把这条红线固化成回归测试。
+
+### 宿主可能在插件实例构造**之后**才下发有效配置
+
+Steam 版宿主（0.9.0）实测：插件进程启动时 `ctx._effective_config` 里**压根没有**
+`[plugin.database]` / `[plugin_state]` 段 → `self.db.enabled` 是 `False` →
+`on_startup` 建表失败。宿主补发配置后 DB 能开会话了，但**表从未建成**
+（0 字节的 `.db`），之后每次查询都撞 `no such table`，插件永远卡在
+"数据库不可用"。
+
+**更致命的是 0.7.4 才定位到的第二层**：即使宿主后来补发了配置，
+`refresh_runtime_config()` **不带参数**时只会重新解析插件进程里那份
+**缺能力段**的缓存 —— 于是"刷新"等于什么都没做，`db.enabled` 永远是
+`False`，**1 秒心跳每秒钟都撞在"数据库不可用"上，tick 永远不推进**
+（真机实测：手动调 `market_tick` 入口能推进 tick，说明 tick 流水线本身没坏，
+坏的是心跳读不到库）。
+
+修法（插件侧，不依赖宿主版本）：
+
+* schema 改成**懒建表**（`Repo.ensure_schema`）——第一次真正用数据库时补建，
+  失败也不放弃；`tests/test_db_bootstrap.py` 锁死这条性质。
+* **运行时能力对齐**（`JuliumeiMarketPlugin._effective_runtime_config`）：
+  把**宿主缓存 > 读到的配置 > 插件自己的 `plugin.toml` 清单**合成一份完整
+  配置再喂给 `refresh_runtime_config`。清单兜底的合法性来自 SDK 自己的话：
+  *"plugin.toml manifest metadata is authoritative"*；宿主**显式**给过的值
+  仍然优先（只在**缺段**时补，不覆盖）。
+* 降级路径会**主动拉一次最新有效配置**再重试；心跳读不到库时**刷新 + 重试**
+  一次，并且**不重置时间基线**（否则库恢复后时间差被抹平，市场永远追不上）。
+* `tests/test_runtime_config.py` 锁死这组性质（8 例）。
 
 ## CI
 

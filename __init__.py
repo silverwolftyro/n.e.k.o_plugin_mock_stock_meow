@@ -47,11 +47,11 @@ import random
 import sqlite3
 import threading
 import time
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from plugin.sdk.plugin import (
-    CardSubmissionError,
     Err,
     NekoPluginBase,
     Ok,
@@ -150,7 +150,7 @@ __all__ = ["JuliumeiMarketPlugin"]
 PLUGIN_ID = "juliumei_market"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.7.1"
+PLUGIN_VERSION = "0.7.4"
 
 #: 「无为而治」称号的解锁天数（P5.5 改动 6）。
 #:
@@ -212,6 +212,9 @@ _TAG_COLORS = {"stable": "green", "neutral": "amber", "explosive": "red"}
 
 #: 引擎配置缓存的存活时间（秒）。
 _ENGINE_CONFIG_TTL = 5.0
+
+#: 每多少次心跳打一条"心跳体检"日志（1 秒心跳 → 每分钟一条）。
+_HEARTBEAT_LOG_EVERY = 60
 
 #: 结算页固定反诈文案（**不可通过配置关闭**）。
 ANTI_FRAUD_NOTICE = (
@@ -352,6 +355,8 @@ class JuliumeiMarketPlugin(NekoPluginBase):
         #: 上一次推进 tick 的真实时间戳（秒）。**只在内存里**：重启后重新
         #: 记基线，避免"插件重启即跳盘"。
         self._last_tick_at = 0.0
+        #: 心跳计数（每 ``_HEARTBEAT_LOG_EVERY`` 次打一条体检日志）。
+        self._heartbeat_count = 0
         #: 二道贩子强制卖出的撤销窗口截止时间戳（秒）。
         self._daily_window_until = 0.0
         #: 最近一次收割事件（局中通知用；**不含 heat 数值**）。
@@ -377,12 +382,162 @@ class JuliumeiMarketPlugin(NekoPluginBase):
 
         数据库被用户或清理工具删掉也能自愈——``CREATE TABLE IF NOT EXISTS``
         的开销是毫秒级，不需要"只建一次"的逻辑。
+
+        **宿主时序（真机踩过的坑）**：宿主可能在插件实例构造**之后**才把
+        有效配置下发到插件进程 —— 那时 ``db.enabled`` 还是 False，建表必然
+        失败。这种情况下**不能放弃**：读到有效配置后由 ``Repo`` 的懒建表
+        自愈机制补建（``Repo.ensure_schema``），下一次读写会自动把表建好。
+
+        **0.7.4 真机复盘（关键）**：不先同步一次有效配置就建表，**必然**
+        失败——宿主给插件进程的有效配置里 ``plugin.database.enabled`` 可能
+        是 False，而 ``refresh_runtime_config()`` **不带参数**时只会重新
+        解析插件进程里那份（可能是空的）缓存，等于什么都没刷。所以这里
+        先 ``await self._refresh_runtime_capabilities()``（它会真的去拉
+        一份有效配置回来），再建表。
         """
+        # 先拉一次有效配置：让 db.enabled / state.backend 与宿主对齐。
+        await self._refresh_runtime_capabilities()
+        self._log_runtime_capabilities()
         try:
             await self._repo.ensure_schema()
         except (DbUnavailableError, sqlite3.Error) as error:
-            self.logger.warning(f"数据库不可用，插件以降级状态运行：{error}")
+            # 多半是宿主还没把有效配置下发到插件进程。拉一次最新配置再试。
+            await self._refresh_runtime_capabilities()
+            try:
+                await self._repo.ensure_schema()
+            except (DbUnavailableError, sqlite3.Error) as retry_error:
+                self.logger.warning(
+                    f"数据库暂不可用（{retry_error}；首次失败：{error}）；"
+                    "待宿主下发有效配置后会在首次读写时自动建表。"
+                )
         return Ok({"status": "ready", "stage": "p2-persistence"})
+
+    def _log_runtime_capabilities(self) -> None:
+        """打印宿主给到的运行时能力快照（排查宿主版本差异用）。"""
+        try:
+            effective = getattr(self.ctx, "_effective_config", None)
+            plugin_cfg = effective.get("plugin", {}) if isinstance(effective, dict) else {}
+            database_cfg = (
+                plugin_cfg.get("database", {}) if isinstance(plugin_cfg, dict) else {}
+            )
+            self.logger.info(
+                "运行时能力快照：db.enabled={} db.name={} state.backend={} "
+                "配置.database.enabled={}",
+                getattr(self.db, "enabled", None),
+                getattr(self.db, "db_name", None),
+                getattr(self.state, "backend", None),
+                database_cfg.get("enabled") if isinstance(database_cfg, dict) else None,
+            )
+        except Exception:  # pragma: no cover - 诊断日志，失败不影响启动
+            pass
+
+    def _manifest_capabilities(self) -> dict[str, Any]:
+        """读插件自己 ``plugin.toml`` 里的能力段（``[plugin.database]`` 等）。
+
+        **为什么要有兜底**：真机实测（Steam 版宿主 0.9.0）——宿主在插件进程
+        启动时给到的 ``ctx._effective_config`` 里**可能压根没有**
+        ``[plugin.database]`` / ``[plugin_state]`` 段，于是 ``db.enabled``
+        停在 False，心跳每秒钟都撞在"数据库不可用"上，tick 永远不推进。
+
+        而 SDK 自己写明了清单的地位：*"plugin.toml manifest metadata is
+        authoritative"*（见 SDK ``config.py`` 的 ``_PLUGIN_METADATA_WRITE_WARNING``）。
+        所以插件读自己的清单来兜底是**合规**的；宿主显式给过的值仍然优先
+        （只在**缺段**时补，不覆盖）。
+        """
+        try:
+            import tomllib
+        except Exception:  # pragma: no cover - Python < 3.11
+            return {}
+        try:
+            manifest_path = Path(__file__).resolve().parent / "plugin.toml"
+            data = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:  # pragma: no cover - 清单读不到就不兜底
+            return {}
+        out: dict[str, Any] = {}
+        plugin_section = data.get("plugin")
+        if isinstance(plugin_section, dict):
+            capabilities = {
+                key: plugin_section[key]
+                for key in ("database", "store")
+                if isinstance(plugin_section.get(key), dict)
+            }
+            if capabilities:
+                out["plugin"] = capabilities
+        state_section = data.get("plugin_state")
+        if isinstance(state_section, dict):
+            out["plugin_state"] = state_section
+        return out
+
+    def _effective_runtime_config(self, raw: object = None) -> dict[str, Any]:
+        """合成一份"带 ``plugin.*`` 能力段"的有效配置。
+
+        优先级：**宿主缓存 > 读到的配置 > 插件自己的清单**。
+
+        * 宿主缓存（``ctx._effective_config``）是宿主给的**权威**有效配置；
+        * 读到的配置（``config.dump()``）是插件自己的业务配置，用来补宿主
+          没给的业务键；
+        * 清单（``plugin.toml``）兜底补齐**两边都缺**的能力段。
+        """
+        cfg: dict[str, Any] = {}
+        if isinstance(raw, dict):
+            cfg.update(raw)
+        host_cfg = getattr(self.ctx, "_effective_config", None)
+        if isinstance(host_cfg, dict):
+            for key, value in host_cfg.items():
+                if isinstance(cfg.get(key), dict) and isinstance(value, dict):
+                    merged = dict(cfg[key])
+                    merged.update(value)
+                    cfg[key] = merged
+                else:
+                    cfg[key] = value
+        manifest = self._manifest_capabilities()
+        plugin_cfg = cfg.get("plugin")
+        plugin_cfg = dict(plugin_cfg) if isinstance(plugin_cfg, dict) else {}
+        for key, value in manifest.get("plugin", {}).items():
+            if key not in plugin_cfg:
+                plugin_cfg[key] = value
+        if plugin_cfg:
+            cfg["plugin"] = plugin_cfg
+        if "plugin_state" not in cfg and manifest.get("plugin_state"):
+            cfg["plugin_state"] = manifest["plugin_state"]
+        return cfg
+
+    def _apply_runtime_config(self, raw: object = None) -> None:
+        """把一份有效配置喂给宿主的 ``refresh_runtime_config``。
+
+        **必须传配置进去**：``refresh_runtime_config()`` 不带参数时只会重新
+        解析插件进程里的 ``ctx._effective_config`` 缓存，而那份缓存**可能
+        缺掉能力段**（见 :meth:`_manifest_capabilities`）——于是"刷新"等于
+        什么都没做，``db.enabled`` 永远是 False。
+
+        ``refresh_runtime_config`` 是**幂等**的（只是重新赋值几个开关），
+        所以每次读到配置都调一次没有任何副作用。
+        """
+        refresh = getattr(self, "refresh_runtime_config", None)
+        if not callable(refresh):
+            return
+        try:
+            refresh(self._effective_runtime_config(raw))
+        except Exception:  # pragma: no cover - 诊断路径，失败不影响主流程
+            pass
+
+    async def _refresh_runtime_capabilities(self) -> None:
+        """拉一次最新有效配置并刷新运行时能力（宿主补发配置后用得上）。
+
+        **0.7.4 真机复盘**：这里以前只调 ``refresh_runtime_config()``（不带
+        参数），等于重新解析插件进程里那份**缺能力段**的
+        ``ctx._effective_config`` ——``db.enabled`` 一直停在 False，心跳每秒
+        钟都撞在"数据库不可用"上，tick 永远不推进。
+
+        正确姿势：**先 ``await self.config.dump()``**（宿主拿到新配置时会
+        顺带刷新实例），**再把合成后的配置喂给** ``refresh_runtime_config``。
+        """
+        raw: object = None
+        try:
+            raw = await self.config.dump()
+        except Exception:  # pragma: no cover - 配置不可用时退回宿主缓存
+            raw = None
+        self._apply_runtime_config(raw)
 
     @lifecycle(id="shutdown")
     async def on_shutdown(self, **_):
@@ -1834,20 +1989,51 @@ class JuliumeiMarketPlugin(NekoPluginBase):
         严禁改回 ``plugin.sdk.shared.core.cards.create_card``：``shared`` 是宿主
         **内部实现**，插件直引会导致在真实宿主里启动即崩
         （``No module named 'plugin.sdk.shared.core.cards'``）。
+
+        同理**不要**为具体的卡片异常类写 ``except``：宿主不同版本导出的
+        门面符号集并不一致（0.7.1 引的 ``CardSubmissionError`` 在 Steam 版
+        运行时就**不存在** → ``cannot import name`` → 启动即崩）。
+        一律用 ``except Exception`` 兜底记日志。
+
+        **0.7.4 真机复盘**：Steam 版宿主（0.9.0）的 SDK 门面里**根本没有**
+        卡片 API ——``create_card`` / ``ChatCard`` / ``PluginView`` 全部
+        不存在（实测：运行时二进制里 ``create_card`` 出现 0 次）。所以这里
+        **按能力探测**：有 ``create_card`` 就用卡片；没有就降级成一条
+        **纯文本**聊天消息（``push_message`` 在 0.9.0 里是有的）。
         """
         if card is None:
             return
-        try:
-            await self.ctx.create_card(
-                html=card.html,
-                summary=card.summary,
-                css=CARD_CSS,
-                actions=card.action_spec(),
+        creator = getattr(self.ctx, "create_card", None)
+        if callable(creator):
+            try:
+                await creator(
+                    html=card.html,
+                    summary=card.summary,
+                    css=CARD_CSS,
+                    actions=card.action_spec(),
+                )
+                return
+            except Exception as error:  # pragma: no cover - 宿主侧异常
+                self.logger.warning(f"卡片投递失败（{card.kind}）：{error}")
+                return
+
+        # 宿主没有卡片 API（Steam 版 0.9.0）：降级成一条纯文本消息。
+        push = getattr(self.ctx, "push_message", None)
+        if not callable(push):
+            self.logger.info(
+                f"宿主未提供卡片 API（{card.kind}）：本次跳过卡片投递"
             )
-        except CardSubmissionError as error:
-            self.logger.warning(f"卡片投递失败（{card.kind}）：{error}")
+            return
+        try:
+            result = push(
+                visibility=["chat"],
+                ai_behavior="blind",
+                parts=[{"type": "text", "text": card.summary}],
+            )
+            if hasattr(result, "__await__"):
+                await result
         except Exception as error:  # pragma: no cover - 宿主侧异常
-            self.logger.warning(f"卡片投递异常（{card.kind}）：{error}")
+            self.logger.warning(f"卡片降级投递失败（{card.kind}）：{error}")
 
     async def _push_taunt(
         self, trigger: str, seed: int, params: dict[str, Any] | None = None
@@ -2136,10 +2322,27 @@ class JuliumeiMarketPlugin(NekoPluginBase):
             warn_ms = (await self._engine_config()).market.heartbeat_warn_ms
             if elapsed_ms > warn_ms:
                 self.logger.warning(f"市场心跳耗时 {elapsed_ms:.0f}ms，偏慢")
+        # 每分钟打一条心跳体检：真机上"tick 不推进"这类问题只能靠它定位
+        # （0.7.4 真机复盘）。
+        self._heartbeat_count += 1
+        if self._heartbeat_count % _HEARTBEAT_LOG_EVERY == 0:
+            since = time.time() - self._last_tick_at if self._last_tick_at > 0.0 else 0.0
+            self.logger.info(
+                f"市场心跳体检：{self._heartbeat_count} 次，本次到期 {due} 个，"
+                f"距上次推进 {since:.0f}s"
+            )
         return Ok({"status": "heartbeat", "due": due})
 
-    async def _due_ticks(self) -> int:
-        """算出这次心跳该补几个 tick（0 = 还没到期）。"""
+    async def _fetch_due_row(self) -> tuple[bool, Any]:
+        """读当前局的 ``player_id`` 与模式。
+
+        返回 ``(读到了, 行)``。**"读不到"和"没有这一局"是两回事**：
+
+        * 读不到 → 数据库不可用（宿主还没下发有效配置 / 库被删了），
+          要刷新运行时能力再重试，而且**不能**动 ``_last_tick_at`` 基线
+          ——否则库恢复后时间差被抹平，市场永远追不上；
+        * 读到了但没有行 → 确实没有开局，重置基线（防止"插件重启即跳盘"）。
+        """
         try:
             row = await self._repo.fetch_one(
                 "SELECT ms.player_id AS player_id, p.mode AS mode "
@@ -2147,13 +2350,30 @@ class JuliumeiMarketPlugin(NekoPluginBase):
                 "WHERE ms.id = 1"
             )
         except (DbUnavailableError, sqlite3.Error):
-            return 0
+            return False, None
+        return True, row
+
+    async def _due_ticks(self) -> int:
+        """算出这次心跳该补几个 tick（0 = 还没到期）。"""
+        # 先读一次配置：顺带把宿主补发的有效配置同步进运行时能力
+        # （``db.enabled`` / ``state.backend``），否则心跳会一直撞在
+        # "数据库不可用"上（0.7.4 真机复盘：tick 不推进的根因）。
+        engine_config = await self._engine_config()
+
+        readable, row = await self._fetch_due_row()
+        if not readable:
+            # 库读不到：拉一次最新有效配置再试一次。
+            await self._refresh_runtime_capabilities()
+            readable, row = await self._fetch_due_row()
+            if not readable:
+                # 库确实不可用：**保留基线**，等库恢复后按"补 tick"规则追赶。
+                return 0
+
         now = time.time()
         if row is None or not row["player_id"] or not row["mode"]:
             self._last_tick_at = now
             return 0
 
-        engine_config = await self._engine_config()
         difficulty = engine_config.difficulties.get(row["mode"])
         if difficulty is None:
             return 0
@@ -2209,8 +2429,15 @@ class JuliumeiMarketPlugin(NekoPluginBase):
                 self._repo, self.state, engine_config=engine_config
             )
         except (DbUnavailableError, sqlite3.Error) as error:
-            self.logger.warning(f"tick 跳过：数据库不可用（{error}）")
-            return
+            # 宿主补发有效配置后重试一次。
+            await self._refresh_runtime_capabilities()
+            try:
+                session = await load_session(
+                    self._repo, self.state, engine_config=engine_config
+                )
+            except (DbUnavailableError, sqlite3.Error):
+                self.logger.warning(f"tick 跳过：数据库不可用（{error}）")
+                return
         if session is None:
             return
 
@@ -3235,6 +3462,10 @@ class JuliumeiMarketPlugin(NekoPluginBase):
 
         带 5 秒缓存：1 秒心跳每次都去读宿主配置太浪费了，而配置改动
         5 秒内生效对游戏节奏完全无感。
+
+        **顺带同步运行时能力**：读到配置的同时把运行时能力（``db.enabled`` /
+        ``state.backend``）与宿主对齐 —— 宿主补发配置后，心跳不用等宿主再推
+        一次 ``CONFIG_UPDATE``（0.7.4 真机复盘：心跳不推进的根因）。
         """
         now = time.time()
         cached = self._engine_config_cache
@@ -3244,6 +3475,7 @@ class JuliumeiMarketPlugin(NekoPluginBase):
             raw = await self.config.dump()
         except Exception:  # noqa: BLE001 - 配置不可用时退回引擎默认值
             raw = {}
+        self._apply_runtime_config(raw)
         config = build_engine_config(raw if isinstance(raw, dict) else {})
         self._engine_config_cache = config
         self._engine_config_cached_at = now
@@ -3256,7 +3488,14 @@ class JuliumeiMarketPlugin(NekoPluginBase):
                 self._repo, self.state, engine_config=engine_config
             ), None
         except (DbUnavailableError, sqlite3.Error) as error:
-            return None, _err("db_unavailable", error)
+            # 宿主补发有效配置后重试一次（懒建表自愈也在这里生效）。
+            await self._refresh_runtime_capabilities()
+            try:
+                return await load_session(
+                    self._repo, self.state, engine_config=engine_config
+                ), None
+            except (DbUnavailableError, sqlite3.Error):
+                return None, _err("db_unavailable", error)
 
     async def _harvest_events(self, player_id: str) -> list[dict[str, Any]]:
         """收割时间线（**只有结算页能拿到**，含收割时刻的 heat 数值）。"""

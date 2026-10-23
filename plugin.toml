@@ -1,7 +1,7 @@
 [plugin]
 id = "juliumei_market"
 name = "久留美式收割模拟器"
-version = "0.7.1"
+version = "0.7.4"
 entry = "plugin.plugins.juliumei_market:JuliumeiMarketPlugin"
 description = "纯虚构反诈沙盘：养套杀 + 每日账单斩杀"
 type = "plugin"

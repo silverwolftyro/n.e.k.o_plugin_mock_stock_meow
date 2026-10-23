@@ -322,7 +322,14 @@ def test_buy_rejects_delisted_stock(plugin) -> None:
 
 
 def test_entries_report_db_unavailable_when_database_is_disabled(plugin) -> None:
-    """数据库不可用时统一返回 db_unavailable（而不是抛异常）。"""
+    """数据库不可用时统一返回 db_unavailable（而不是抛异常）。
+
+    模拟必须落在**配置级**：只把 ``plugin.db.enabled`` 翻成 False 只是改了一个
+    本地标记 —— 插件的降级路径会 ``refresh_runtime_config()`` 重新读宿主的有效
+    配置并把它改回来（这正是真机上"宿主晚下发配置"的修复机制）。
+    真正的"数据库不可用"必须体现在**有效配置**里。
+    """
+    plugin.ctx._effective_config["plugin"]["database"]["enabled"] = False
     plugin.db.enabled = False
     assert _error_code(run(plugin.status())) == "db_unavailable"
     assert _error_code(run(plugin.market())) == "db_unavailable"
