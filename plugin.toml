@@ -1,0 +1,39 @@
+[plugin]
+id = "juliumei_market"
+name = "久留美式收割模拟器"
+version = "0.7.0"
+entry = "plugin.plugins.juliumei_market:JuliumeiMarketPlugin"
+description = "纯虚构反诈沙盘：养套杀 + 每日账单斩杀"
+type = "plugin"
+
+[plugin_runtime]
+timeout = 30
+
+[plugin.store]
+enabled = true
+
+[plugin.database]
+enabled = true
+name = "juliumei_market.db"
+
+[plugin_state]
+backend = "file"
+persist_mode = "auto"
+
+[plugin.sdk]
+recommended = ">=0.1.0,<0.2.0"
+supported = ">=0.1.0,<0.3.0"
+
+[plugin.i18n]
+default_locale = "zh-CN"
+locales_dir = "i18n"
+
+[plugin.ui]
+enabled = true
+
+[[plugin.ui.panel]]
+id = "market"
+title = "久留美市场"
+entry = "ui/panel.tsx"
+context = "market"
+permissions = ["state:read", "action:call"]

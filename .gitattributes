@@ -1,0 +1,10 @@
+# 行尾统一为 LF：Windows 开发 + Linux CI 的经典组合。
+# 仓库内容与工作区都保持 LF，避免 CRLF 噪声淹没真正的 diff。
+* text=auto eol=lf
+
+# 二进制文件不参与行尾转换。
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.db binary
