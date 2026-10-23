@@ -186,6 +186,22 @@ def test_trade_area_is_one_click_only() -> None:
     assert "sellAllAmount" in code
 
 
+def test_kline_is_always_present_in_the_payload(plugin) -> None:
+    """K 线是**主视觉**：载荷里必须至少有一只标的带 K 线。
+
+    没有持仓、也没有爆炸标的时，如果不多带一只，K 线卡片一开局就是空的 ——
+    主视觉不能是空白。
+    """
+    _value(_run(plugin.join(mode="classic_arcade", seed=9305)))
+    # 走两个 tick，让 K 线真的有数据（第 0 tick 时所有标的都是空的）。
+    _run(plugin._tick_once())
+    _run(plugin._tick_once())
+    payload = _value(_run(plugin.market_context()))
+    assert payload["kline_stock_ids"], "载荷里必须有带 K 线的标的"
+    with_kline = [stock for stock in payload["stocks"] if stock.get("kline")]
+    assert with_kline, "至少要有一只标的带 K 线数据"
+
+
 # ---------------------------------------------------------------- 文案去金融化
 
 

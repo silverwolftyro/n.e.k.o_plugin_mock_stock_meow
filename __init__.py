@@ -4586,7 +4586,10 @@ class ReverseRichSimPlugin(NekoPluginBase):
     def _panel_kline_ids(session: Session, prices: dict[str, float]) -> list[str]:
         """哪些标的带 K 线（细节 2：限流，别让载荷爆掉）。
 
-        顺序：持仓（按市值从大到小）→ 爆炸标签的标的（按波动率从高到低）。
+        顺序：持仓（按市值从大到小）→ 爆炸标签的标的（按波动率从高到低）
+        → **第一只活着的标的**（P7.2：K 线是面板的**主视觉**，不能一开局就
+        画不出来 —— 没有持仓、也没有爆炸标的时，面板默认落在第一只标的上，
+        它必须带着 K 线）。
         总数上限 ``PANEL_KLINE_MAX``。
         """
         market = session.market
@@ -4617,6 +4620,14 @@ class ReverseRichSimPlugin(NekoPluginBase):
                 break
             seen.add(stock.id)
             picked.append(stock.id)
+
+        # P7.2：兜底给**第一只活着的标的**留一份 K 线（面板的默认视图）。
+        if len(picked) < PANEL_KLINE_MAX:
+            for stock in market.stocks.values():
+                if stock.alive and stock.id not in seen:
+                    seen.add(stock.id)
+                    picked.append(stock.id)
+                    break
         return picked
 
     def _panel_catgirl(
