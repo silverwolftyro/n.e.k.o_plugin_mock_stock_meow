@@ -309,7 +309,7 @@ def test_worktree_has_no_crlf_files() -> None:
 
 
 def test_version_is_0_7_4() -> None:
-    """版本号 = 0.8.3。
+    """版本号 = 0.8.4。
 
     版本史：
 
@@ -319,12 +319,13 @@ def test_version_is_0_7_4() -> None:
     * 0.7.4 —— 真机上"tick 不推进"（运行时能力对齐 + 清单兜底 + 卡片能力探测）；
     * 0.8.0 —— P7：改名 ``reverse_rich_sim`` + 双版本（导演模式）。
     * 0.8.3 —— P7.3：弹窗防死锁（网贷弹窗逃生通道 + 超时兜底 + 轰炸硬截止）。
+    * 0.8.4 —— P7.4：入口打通（面板开局按钮 + ``@llm_tool`` + 轮询自愈）。
     """
     from plugins.reverse_rich_sim import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.8.3"
+    assert PLUGIN_VERSION == "0.8.4"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.8.3"' in toml
+    assert 'version = "0.8.4"' in toml
 
 
 # ------------------------------------------------- ⑥ 面板文案全走 i18n

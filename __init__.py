@@ -57,6 +57,7 @@ from plugin.sdk.plugin import (
     Ok,
     SdkError,
     lifecycle,
+    llm_tool,
     neko_plugin,
     plugin_entry,
     timer_interval,
@@ -151,7 +152,7 @@ __all__ = ["ReverseRichSimPlugin"]
 PLUGIN_ID = "reverse_rich_sim"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.8.3"
+PLUGIN_VERSION = "0.8.4"
 
 #: 「无为而治」称号的解锁天数（P5.5 改动 6）。
 #:
@@ -238,6 +239,30 @@ _PANEL_SPARK_POINTS = 18
 #: 路）。前端自己也有一份倒计时，两边各管各的，谁先到谁生效；即便前端整个
 #: 冻住了，服务端这一条也能把玩家放出来。
 _LOAN_PROMPT_TIMEOUT_SECONDS = 30.0
+
+#: P7.4：LLM 工具注册的**自愈周期**（秒）。
+#:
+#: ``@llm_tool`` 的注册**只在插件启动时触发一次** —— 官方文档写得很死：
+#: 「helper **不**做的事：``main_server`` 重启后或首启竞态后的自动重注册。
+#: 注册仅在插件启动时触发一次；如果当时 ``main_server`` 不可达，工具会对
+#: 模型不可见」。
+#:
+#: 后果很直接：``main_server`` 一重启，猫娘就再也看不见本插件的工具了 ——
+#: 玩家在聊天框说「加入一局」，猫娘只会回一句「打深渊还是清委托？」。
+#:
+#: 这里每隔一段时间**重发**注册消息。``main_server`` 侧是**覆盖语义**
+#: （同名重复注册会覆盖旧的），所以重发是安全的；插件侧只发 IPC，不动本地
+#: 状态，也不需要 ``unregister``（避免中间出现「工具消失」的窗口）。
+_LLM_TOOL_REREGISTER_SECONDS = 60.0
+
+#: P7.4：``join`` 入口支持的模式（面板开局按钮与 LLM 工具共用）。
+JOIN_MODES = (
+    "classic_arcade",
+    "classic_beginner",
+    "classic_advanced",
+    "classic_hell",
+    "infinite",
+)
 
 #: 结算页固定反诈文案（**不可通过配置关闭**）。
 ANTI_FRAUD_NOTICE = (
@@ -432,6 +457,10 @@ class ReverseRichSimPlugin(NekoPluginBase):
         self._loan_prompt_at: float = 0.0
         #: 弹窗是在第几天弹出来的（跨天要重置计时）。
         self._loan_prompt_day: int = 0
+        #: ── P7.4：LLM 工具注册的**自愈计时** ─────────────────────────
+        #: 下次重发注册的时间点（epoch 秒）。``@llm_tool`` 只在启动时注册一次，
+        #: ``main_server`` 一重启工具就对模型不可见了 —— 这里定期补一刀。
+        self._llm_reregister_at: float = time.time() + _LLM_TOOL_REREGISTER_SECONDS
 
     # ------------------------------------------------------------------
     # 生命周期
@@ -609,6 +638,14 @@ class ReverseRichSimPlugin(NekoPluginBase):
     # 入口：存档
     # ------------------------------------------------------------------
 
+    @ui.action(
+        id="join",
+        label="加入一局",
+        icon="play",
+        tone="primary",
+        group="session",
+        order=0,
+    )
     @plugin_entry(
         id="join",
         name="加入一局",
@@ -618,13 +655,7 @@ class ReverseRichSimPlugin(NekoPluginBase):
             "properties": {
                 "mode": {
                     "type": "string",
-                    "enum": [
-                        "classic_arcade",
-                        "classic_beginner",
-                        "classic_advanced",
-                        "classic_hell",
-                        "infinite",
-                    ],
+                    "enum": list(JOIN_MODES),
                     "description": "游戏模式",
                 },
                 "seed": {
@@ -846,6 +877,140 @@ class ReverseRichSimPlugin(NekoPluginBase):
                 "现钱唯一，股票市值不算数。"
             )
         return Ok(payload)
+
+    # ------------------------------------------------------------------
+    # P7.4：LLM 工具（聊天框里说「加入一局」就能真的开局）
+    # ------------------------------------------------------------------
+    #
+    # 0.8.3 真机事故：插件**一个 ``@llm_tool`` 都没有**，只有 ``@plugin_entry``。
+    # 两者是不同的东西 —— 官方文档写得很死：
+    #
+    #   「``@llm_tool(name="get_weather")`` 把**对话期工具**注册到 main_server 的
+    #   ``/api/tools`` registry。``@plugin_entry(id="get_weather")`` 声明的是供
+    #   插件管理器、跨插件调用和独立用户插件 Agent 路由使用的运行时入口。」
+    #
+    # 也就是说：没有 ``@llm_tool``，猫娘手里就没有任何可以调的东西 ——
+    # 玩家在聊天框打「加入一局」，猫娘只会当成闲聊回一句「打深渊还是清委托？」。
+    @llm_tool(
+        name="reverse_rich_sim_join",
+        description=(
+            "开始一局「反向暴富模拟器」（纯虚构的反诈沙盘，标的价格全是假的）。"
+            "当玩家说「加入一局」「开始炒股」「来一局」「开户」「玩反向暴富」"
+            "「反诈沙盘」这类话时，调用这个工具。"
+            "已经在局中就不要调用，直接用 reverse_rich_sim_status 查现状。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": list(JOIN_MODES),
+                    "description": (
+                        "模式：classic_arcade=街机（没有生活费，最好上手）、"
+                        "classic_beginner=入门、classic_advanced=进阶、"
+                        "classic_hell=地狱、infinite=无尽（要自己领生活费+高利贷，能一直玩）"
+                    ),
+                },
+            },
+            "required": [],
+        },
+        timeout=30.0,
+    )
+    async def llm_join(self, *, mode: str = "classic_arcade", **_: Any) -> dict:
+        """LLM 工具：开局（玩家在聊天框说「加入一局」就走这里）。
+
+        返回**普通 dict**（不是 ``Ok``）—— 官方约定：handler 返回普通值会被
+        JSON 序列化后喂回 LLM；想表达「工具级失败」就返回
+        ``{"output": ..., "is_error": True, "error": ...}``。
+
+        参数用 keyword-only 加 ``**_``：LLM 偶尔会多吐几个键，而且宿主在有
+        ``host_reply`` 时还会往参数里塞一个 ``_ctx``，多出来的键必须能吞掉。
+        """
+        if mode not in JOIN_MODES:
+            mode = "classic_arcade"
+        result = await self.join(mode=mode)
+        if result.is_err():
+            error = result.err()
+            message = str(getattr(error, "message", "") or "开局失败")
+            return {
+                "output": {"ok": False, "message": message},
+                "is_error": True,
+                "error": message,
+            }
+        payload = result.unwrap()
+        return {
+            "output": {
+                "ok": True,
+                "message": i18n_text(
+                    "llm.join.done",
+                    "已经开好一局。玩家现在可以在插件面板里梭哈、割肉、跳过本日。",
+                ),
+                "mode": payload.get("mode"),
+                "mode_name": payload.get("mode_name"),
+                "initial_cash": payload.get("initial_cash"),
+                "notice": payload.get("notice"),
+            },
+            "is_error": False,
+        }
+
+    @llm_tool(
+        name="reverse_rich_sim_status",
+        description=(
+            "查看「反向暴富模拟器」当前这一局的状态：第几天、总资产、现金、"
+            "还活着没、距离被收割还有多远。"
+            "玩家问「我亏了多少」「现在什么情况」「我还活着吗」时调用。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        timeout=30.0,
+    )
+    async def llm_status(self, **_: Any) -> dict:
+        """LLM 工具：查当前对局状态。"""
+        engine_config = await self._engine_config()
+        session, error = await self._session_or_error(engine_config)
+        if error is not None:
+            message = str(getattr(error, "message", "") or "读不到对局")
+            return {
+                "output": {"ok": False, "message": message},
+                "is_error": True,
+                "error": message,
+            }
+        if session is None:
+            return {
+                "output": {
+                    "ok": True,
+                    "in_game": False,
+                    "message": i18n_text(
+                        "llm.status.idle",
+                        "当前没有进行中的对局。可以调用 reverse_rich_sim_join 开一局。",
+                    ),
+                },
+                "is_error": False,
+            }
+        player = session.player
+        # 总资产必须用引擎自己的口径算（现钱 + 持仓市值），不另起一套算法。
+        prices = session.market.prices()
+        return {
+            "output": {
+                "ok": True,
+                "in_game": True,
+                "mode": player.mode,
+                "mode_name": _MODE_NAMES.get(player.mode, player.mode),
+                "day": int(player.day),
+                "alive": bool(player.alive),
+                "cash": round(float(player.cash), 2),
+                "total_asset": round(float(player.total_asset(prices)), 2),
+                "initial_cash": round(float(player.initial_cash), 2),
+                "message": i18n_text(
+                    "llm.status.playing",
+                    "这一局还在进行中。",
+                ),
+            },
+            "is_error": False,
+        }
 
     @plugin_entry(
         id="status",
@@ -2419,6 +2584,11 @@ class ReverseRichSimPlugin(NekoPluginBase):
             await self._loan_prompt_watchdog()
         except Exception as error:  # noqa: BLE001 - 看门狗绝不能把心跳带崩
             self.logger.error(f"网贷弹窗看门狗异常（不影响后续心跳）：{error}")
+        # P7.4：LLM 工具注册的**自愈**（main_server 重启后把工具救回来）。
+        try:
+            await self._reregister_llm_tools_if_due()
+        except Exception as error:  # noqa: BLE001 - 自愈绝不能把心跳带崩
+            self.logger.error(f"LLM 工具重注册异常（不影响后续心跳）：{error}")
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         if elapsed_ms > 100.0:
             # 只有真的慢了才去读配置，避免每秒都打一次宿主配置
@@ -3743,6 +3913,40 @@ class ReverseRichSimPlugin(NekoPluginBase):
                     await self._do_declare_bankrupt(session, engine_config)
         except Exception as error:  # noqa: BLE001 - 看门狗绝不能把心跳带崩
             self.logger.error(f"网贷弹窗超时兜底失败（不影响后续心跳）：{error}")
+
+    async def _reregister_llm_tools_if_due(self) -> None:
+        """LLM 工具注册的**自愈**（0.8.3 真机事故的第二道保险）。
+
+        ``@llm_tool`` 的注册**只在插件启动时触发一次** —— 官方文档明说
+        「helper 不做 ``main_server`` 重启后的自动重注册」。于是
+        ``main_server`` 一重启（或者插件启动时它还没起来），猫娘就再也看不见
+        本插件的工具了：玩家在聊天框说「加入一局」，猫娘只会当成闲聊。
+
+        这里定期**重发**注册消息：
+
+        * ``main_server`` 侧是**覆盖语义**（同名重复注册会覆盖旧的）⇒ 重发安全；
+        * 插件侧只发 IPC，**不动**本地状态，也不需要先 ``unregister`` ——
+          那样中间会出现一个「工具对模型消失」的窗口，反而更糟；
+        * 宿主的 IPC 消费是**顺序 await** 的，所以重发不会被乱序吃掉。
+
+        SDK 的 ``_llm_tools`` / ``_notify_llm_tool_registered`` 带下划线是私有的，
+        但 SDK 自己的注释写明了这两个的用途就是「按需重发 IPC 通知」；这里用
+        ``getattr`` 取，取不到就**安静跳过**（SDK 改了也不至于把插件带崩）。
+        """
+        now = time.time()
+        if now < self._llm_reregister_at:
+            return
+        self._llm_reregister_at = now + _LLM_TOOL_REREGISTER_SECONDS
+
+        registry = getattr(self, "_llm_tools", None)
+        notify = getattr(self, "_notify_llm_tool_registered", None)
+        if not isinstance(registry, dict) or not callable(notify):
+            return
+        for meta in list(registry.values()):
+            try:
+                notify(meta)
+            except Exception as error:  # noqa: BLE001 - 一次失败不影响其它工具
+                self.logger.warning(f"LLM 工具重注册失败（不影响心跳）：{error}")
 
     def _roster_news_headline(
         self, item: Any, market: Any = None

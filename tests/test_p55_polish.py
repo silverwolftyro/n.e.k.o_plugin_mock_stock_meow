@@ -124,12 +124,12 @@ def test_plugin_overrides_death_title_by_reason() -> None:
 
 
 def test_version_is_a_patch_bump() -> None:
-    """版本号 = 0.8.3（P7.3：弹窗防死锁；P7.2 是 0.8.2；P7.1 是 0.8.1；P7 是 0.8.0）。"""
+    """版本号 = 0.8.4（P7.4：入口打通；P7.3 是 0.8.3；P7.2 是 0.8.2；P7.1 是 0.8.1；P7 是 0.8.0）。"""
     from plugins.reverse_rich_sim import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.8.3"
+    assert PLUGIN_VERSION == "0.8.4"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.8.3"' in toml
+    assert 'version = "0.8.4"' in toml
 
 
 # ---------------------------------------------------------------- ① 改动 1

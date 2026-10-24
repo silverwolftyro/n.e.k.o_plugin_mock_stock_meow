@@ -331,6 +331,24 @@ const LOAN_PROMPT_TIMEOUT_SECONDS = 30
  */
 const BOOM_HARD_LIMIT_MS = 5000
 
+/**
+ * P7.4：面板**自己轮询**上下文的节奏（毫秒）。
+ *
+ * 宿主**从不轮询** Hosted 面板的上下文 —— 它只在「插件启停 / 重载」和
+ * 「面板自己发起动作之后」刷新。对一个每秒 tick 的实时游戏面板来说，这带来
+ * 两个真问题：
+ *
+ * 1. **tick 是死的**：面板看着不动，玩家不知道行情在走；
+ * 2. **面板会变陈旧**：这一局结束（或被别人结束）之后，面板还停在局中界面，
+ *    玩家点「一键梭哈」只会拿到后端的 `not_joined`，而宿主把**任何**动作失败
+ *    都当成「面板运行时错误」上报 —— 屏幕顶部弹一个黄色的
+ *    「插件界面控件错误」覆盖层（0.8.3 真机事故）。
+ *
+ * 所以这里自己按固定节奏拉一次上下文。宿主的 `render` 走的是 reconcile
+ * （组件实例不重建），本地状态（弹窗、倒计时、逃生确认）不会被打断。
+ */
+const PANEL_POLL_INTERVAL_MS = 3000
+
 function percent(value: number | undefined | null): string {
   if (value === undefined || value === null) return "—"
   return `${(Number(value) * 100).toFixed(1)}%`
@@ -567,6 +585,23 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   // P7.3：网贷弹窗的**本地截止时刻**（epoch 毫秒）与轰炸的**硬上限**。
   const loanDeadline = useRef<number>(0)
   const boomDeadline = useRef<number>(0)
+  // ── P7.4：面板自己轮询上下文（宿主不轮询）────────────────────────
+  useEffect(() => {
+    let cancelled = false
+    const timer = setInterval(() => {
+      if (cancelled) return
+      try {
+        const pending = props.api.refresh()
+        if (pending && typeof pending.catch === "function") pending.catch(() => undefined)
+      } catch (_error) {
+        // 插件正在重启：拉不到就算了，下一个周期再说。
+      }
+    }, PANEL_POLL_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [props.api])
   // ── P7.2：濒死档「数字偶尔闪红」（**JS 定时器**，不用 CSS 动画）──
   const [flashOn, setFlashOn] = useState(false)
   // ── P7.2：弹窗轰炸的倒计时心跳（用来把 5 秒倒计时画出来）─────────
@@ -706,6 +741,24 @@ export default function Panel(props: PluginSurfaceProps<State>) {
 
   const actionById = (id: string): HostedAction | undefined =>
     (actions || []).find((item) => item.id === id)
+
+  // ── P7.4：动作失败后把上下文拉回来 ────────────────────────────
+  // 宿主的上下文不轮询，不主动拉的话面板会一直停在旧状态
+  // （比如这一局已经结束了，屏幕上的按钮全是死的）。
+  const resync = () => {
+    try {
+      const pending = props.api.refresh()
+      if (pending && typeof pending.catch === "function") pending.catch(() => undefined)
+    } catch (_error) {
+      // 拉不到就算了。
+    }
+  }
+
+  // 动作失败：先给人一句人话，再把上下文拉回来。
+  const onActionError = (error: any) => {
+    showToast(String((error && error.message) || error), "danger")
+    resync()
+  }
 
   const stockOptions = stocks
     .filter((stock) => stock.alive)
@@ -974,32 +1027,28 @@ export default function Panel(props: PluginSurfaceProps<State>) {
               label: t("visual.director_crash"),
               tone: "danger",
               values: { op: "crash", stock_id: effectiveStockId },
-              onError: (error: any) =>
-                showToast(String((error && error.message) || error), "danger"),
+              onError: onActionError,
             }),
             h(ActionButton, {
               action: actionById("director"),
               label: t("visual.director_loan"),
               tone: "danger",
               values: { op: "loan" },
-              onError: (error: any) =>
-                showToast(String((error && error.message) || error), "danger"),
+              onError: onActionError,
             }),
             h(ActionButton, {
               action: actionById("director"),
               label: t("visual.director_welfare"),
               tone: "danger",
               values: { op: "welfare" },
-              onError: (error: any) =>
-                showToast(String((error && error.message) || error), "danger"),
+              onError: onActionError,
             }),
             h(ActionButton, {
               action: actionById("director"),
               label: t("visual.director_kill"),
               tone: "danger",
               values: { op: "kill" },
-              onError: (error: any) =>
-                showToast(String((error && error.message) || error), "danger"),
+              onError: onActionError,
             }),
             // P7.2：赛博弹窗轰炸（关不掉的 Emoji 海 + 封锁操作 5 秒）。
             h(ActionButton, {
@@ -1007,8 +1056,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
               label: t("visual.director_boom"),
               tone: "danger",
               values: { op: "boom" },
-              onError: (error: any) =>
-                showToast(String((error && error.message) || error), "danger"),
+              onError: onActionError,
             }),
             h(Button, {
               onClick: () => setDirectorOpen(false),
@@ -1222,16 +1270,50 @@ export default function Panel(props: PluginSurfaceProps<State>) {
 
   // ── 没开局 ───────────────────────────────────────────────────────
   if (state.stage !== "playing") {
+    const joinAction = actionById("join")
     return (
       <Page className="rrm-root" title={t("panel.title")} subtitle={t("panel.subtitle")}>
         <Stack gap={12}>
           {h("style", null, RRM_CSS)}
           {titleBar}
           {boomModal}
-          <Card>
+          <Card title={t("panel.idle_title")}>
             <Stack gap={12}>
               <Alert tone="info" message={state.notice || t("panel.idle")} />
               <Text>{t("panel.idle_hint")}</Text>
+              {/* ── P7.4：真正的开局入口 ──────────────────────────────
+                  0.8.3 事故：空闲态只有一行冰冷的文字，玩家**没法开局** ——
+                  要么去聊天框打「加入一局」，要么就卡在这儿。这里给两个大按钮，
+                  点一下直接开一局。
+
+                  注意 ``joinAction`` 可能不存在（老版本插件没有把 join 挂成
+                  UI action）—— 那就不渲染按钮，绝不能拿一个空 action 去调，
+                  否则宿主会把它当成面板运行时错误上报。 */}
+              {joinAction ? (
+                <Inline gap={8} wrap={true} align="center">
+                  <ActionButton
+                    action={joinAction}
+                    label={t("panel.join_classic")}
+                    tone="primary"
+                    values={{ mode: "classic_arcade" }}
+                    onError={(error: any) => {
+                      showToast(String((error && error.message) || error), "danger")
+                      resync()
+                    }}
+                  />
+                  <ActionButton
+                    action={joinAction}
+                    label={t("panel.join_infinite")}
+                    tone="danger"
+                    values={{ mode: "infinite" }}
+                    onError={(error: any) => {
+                      showToast(String((error && error.message) || error), "danger")
+                      resync()
+                    }}
+                  />
+                </Inline>
+              ) : null}
+              <Text>{t("panel.idle_modes_hint")}</Text>
             </Stack>
           </Card>
           {danmakuCard}
@@ -1578,6 +1660,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                   label={t("visual.buy_all")}
                   tone="primary"
                   values={{ stock_id: effectiveStockId, amount: buyAllAmount }}
+                  onError={onActionError}
                 />
               ) : (
                 <Button
@@ -1603,6 +1686,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                   label={t("visual.sell_all")}
                   tone="danger"
                   values={{ stock_id: effectiveSellStockId, amount: sellAllAmount }}
+                  onError={onActionError}
                 />
               ) : (
                 <Button
@@ -1626,24 +1710,33 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                 onResult={(result: any) => {
                   if (result) setAnalysis(result as AnalysisResult)
                 }}
-                onError={(error: any) =>
-                  showToast(String((error && error.message) || error), "danger")
-                }
+                onError={onActionError}
               />
               <Text>{t("panel.analyses_left", { count: state.analyses_left || 0 })}</Text>
             </Inline>
 
             <Inline gap={8} wrap align="center">
-              <ActionButton action={actionById("daily_claim")} label={t("daily.claim")} />
-              <ActionButton action={actionById("daily_loan")} label={t("daily.loan")} tone="danger" />
-              <ActionButton action={actionById("daily_reject")} label={t("panel.reject")} />
+              <ActionButton
+                action={actionById("daily_claim")}
+                label={t("daily.claim")}
+                onError={onActionError}
+              />
+              <ActionButton
+                action={actionById("daily_loan")}
+                label={t("daily.loan")}
+                tone="danger"
+                onError={onActionError}
+              />
+              <ActionButton
+                action={actionById("daily_reject")}
+                label={t("panel.reject")}
+                onError={onActionError}
+              />
               {/* P5.5 改动 6：跳过本日（无限模式专用，经典模式入口会报错） */}
               <ActionButton
                 action={actionById("skip_day")}
                 label={t("panel.skip_day")}
-                onError={(error: any) =>
-                  showToast(String((error && error.message) || error), "danger")
-                }
+                onError={onActionError}
               />
             </Inline>
 
