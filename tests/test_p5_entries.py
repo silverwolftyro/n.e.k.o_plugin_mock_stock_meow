@@ -26,7 +26,8 @@ from storage.repo import Repo
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 _SOURCE = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
 
-#: P5 契约 §3.2 的 7 个 + P5.5 改动 6 的 ``skip_day`` + P6 档 2 的 ``kline`` = 9 个。
+#: P5 契约 §3.2 的 7 个 + P5.5 改动 6 的 ``skip_day`` + P6 档 2 的 ``kline`` = 9 个，
+#: 再加 P7 的 4 个、P7.4 的 1 个、P10 的 4 个 = 17 个。
 EXPECTED_ACTIONS = (
     "buy",
     "sell",
@@ -44,6 +45,11 @@ EXPECTED_ACTIONS = (
     "loan_prompt",
     # ── P7.4：开局入口（面板空闲态的双按钮 + 聊天指令的落点）────
     "join",
+    # ── P10：节奏偏好（游戏速度 / 自动·手动 / 推进一拍）与引导已读 ──
+    "set_game_speed",
+    "set_auto_tick",
+    "advance_tick",
+    "onboarding_ack",
 )
 
 #: 局中**不能出现的方向词**（细节 5）。

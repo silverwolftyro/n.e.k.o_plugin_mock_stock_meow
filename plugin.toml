@@ -1,7 +1,7 @@
 [plugin]
 id = "mock_stock_meow"
 name = "拟股喵喵"
-version = "0.9.2"
+version = "0.9.3"
 entry = "plugin.plugins.mock_stock_meow:MockStockMeowPlugin"
 description = "纯虚构反诈沙盘：养套杀 + 每日账单斩杀"
 type = "plugin"
@@ -37,3 +37,12 @@ title = "拟股喵喵行情"
 entry = "ui/panel.tsx"
 context = "market"
 permissions = ["state:read", "action:call"]
+
+# P10：官方推荐的「用户指南」面（Markdown 只读页）。
+# 面板里的【玩法说明】弹窗讲的是"三步怎么玩"，这一页是完整手册，
+# 两者互补：弹窗让人上手，手册让人查细节。
+[[plugin.ui.guide]]
+id = "quickstart"
+title = "玩法说明"
+entry = "docs/guide.md"
+permissions = ["state:read"]

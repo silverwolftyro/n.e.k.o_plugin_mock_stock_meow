@@ -168,7 +168,7 @@ def test_cards_use_the_frosted_treatment() -> None:
     css = _panel_css()
     assert "background: rgba(255, 255, 255, 0.85)" in css
     assert "border-radius: 20px" in css
-    assert "box-shadow: 0 10px 30px rgba(142, 171, 219, 0.15)" in css
+    assert "box-shadow: 0 18px 46px rgba(133, 163, 214, 0.15)" in css
     assert "border: 1px solid rgba(255, 255, 255, 0.6)" in css
 
 

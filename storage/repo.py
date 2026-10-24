@@ -162,6 +162,16 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_liquidation_player_tick ON liquidation_log(player_id, tick)",
+    # ── P10：插件级偏好设置（键值对）──────────────────────────────────
+    # 这里只放**不参与任何游戏规则**的偏好：游戏速度、自动/手动推进、
+    # 新手引导已读标记。全部是"玩家怎么玩"的设置，不是"游戏怎么算"的参数，
+    # 引擎层（engine/）与模式层（modes/）一行不改。
+    """
+    CREATE TABLE IF NOT EXISTS settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    )
+    """,
 )
 
 #: ``players`` 表在 P3 新增的列（幂等补齐，见 :meth:`Repo.ensure_schema`）。
@@ -193,6 +203,9 @@ _PLAYER_COLUMNS: tuple[tuple[str, str], ...] = (
     ("skip_day_used", "INTEGER NOT NULL DEFAULT 0"),
     # inaction_unlocked：是否已解锁「无为而治」称号
     ("inaction_unlocked", "INTEGER NOT NULL DEFAULT 0"),
+    # ── P10：新手引导已读标记（**记在这个 player_id 行上**）────────────
+    # 玩家点掉【玩法说明】弹窗后置 1；同一局不再弹，开了新局再看一次说明。
+    ("onboarding_seen", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 #: ``market_state`` 表在 P4 新增的列（幂等补齐）。
@@ -340,3 +353,101 @@ class Repo:
         finally:
             await session.close()
         return cursors
+
+    # ------------------------------------------------------------------
+    # P10：插件级偏好设置
+    # ------------------------------------------------------------------
+
+    async def get_setting(self, key: str) -> str | None:
+        """读一条插件级设置；没有就返回 ``None``。
+
+        数据库不可用时**返回 ``None`` 而不是抛异常** —— 偏好设置读不到时
+        插件必须退回到"用默认值继续跑"，绝不能因为一个可选偏好把整局卡死。
+        """
+        try:
+            rows = await self.fetch_all(
+                "SELECT value FROM settings WHERE key = ?", (key,)
+            )
+        except DbUnavailableError:
+            return None
+        if not rows:
+            return None
+        row = rows[0]
+        try:
+            return str(row["value"])
+        except (KeyError, TypeError, IndexError):  # pragma: no cover - 驱动差异兜底
+            return str(row)
+
+    async def get_settings_map(self) -> dict[str, str]:
+        """一次查询读出**全部**插件级设置（键 → 值）。
+
+        **一次会话读完所有键**：面板的上下文请求有 5 秒超时（宿主侧），
+        而宿主数据库的每次会话往返都不便宜 —— 一个键一次查询会把上下文
+        拖到超时边缘。所以这里只开**一个**会话把整张表读回来。
+        """
+        try:
+            rows = await self.fetch_all("SELECT key, value FROM settings")
+        except DbUnavailableError:
+            return {}
+        out: dict[str, str] = {}
+        for row in rows:
+            try:
+                out[str(row["key"])] = str(row["value"])
+            except (KeyError, TypeError, IndexError):  # pragma: no cover - 驱动差异兜底
+                continue
+        return out
+
+    async def set_setting(self, key: str, value: str) -> bool:
+        """写一条插件级设置；成功返回 ``True``。
+
+        ``INSERT OR REPLACE`` 而不是 ``INSERT ... ON CONFLICT``：老版本
+        SQLite 不支持 upsert 语法，而 ``OR REPLACE`` 从 SQLite 3 就有。
+        """
+        try:
+            await self.transaction(
+                [("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))]
+            )
+        except DbUnavailableError:
+            return False
+        except Exception:  # pragma: no cover - 写设置失败不该拖垮主流程
+            return False
+        return True
+
+    async def mark_player_onboarding_seen(self, player_id: str) -> bool:
+        """把某个 ``player_id`` 标记成"已经看过玩法说明"。
+
+        **引导状态记在 player_id 上**：玩家行就是这一局的身份，读写都靠它。
+        """
+        if not player_id:
+            return False
+        try:
+            await self.transaction(
+                [
+                    (
+                        "UPDATE players SET onboarding_seen = 1 WHERE id = ?",
+                        (player_id,),
+                    )
+                ]
+            )
+        except DbUnavailableError:
+            return False
+        except Exception:  # pragma: no cover - 写失败不该拖垮主流程
+            return False
+        return True
+
+    async def player_onboarding_seen(self, player_id: str) -> bool:
+        """查某个 ``player_id`` 是否已经看过玩法说明。"""
+        if not player_id:
+            return False
+        try:
+            row = await self.fetch_one(
+                "SELECT onboarding_seen FROM players WHERE id = ?", (player_id,)
+            )
+        except DbUnavailableError:
+            return False
+        if row is None:
+            return False
+        try:
+            return bool(row["onboarding_seen"])
+        except (KeyError, TypeError, IndexError):  # pragma: no cover - 驱动差异兜底
+            return bool(row)

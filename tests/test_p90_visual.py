@@ -79,23 +79,31 @@ def _block(css: str, selector: str) -> str:
 
 
 def test_background_is_the_design_gradient() -> None:
-    """整个面板铺**浅蓝 → 纯白**的纵向渐变（不许再是纯白底）。"""
+    """整个面板铺**浅蓝 → 纯白**的纵向渐变（不许再是纯白底）。
+
+    P10 微调：底色再**通透**一档 —— 顶部那片天蓝压得更透，中段快速褪成
+    近白，卡片于是像是「浮」在浅蓝空气里而不是贴在色块上。
+    """
     css = _panel_css()
-    assert "background: linear-gradient(180deg, #eaf2ff 0%, #f8fbff 100%)" in css, (
+    assert "background: linear-gradient(180deg, #e4efff 0%, #f4faff 48%, #fbfdff 100%)" in css, (
         "背景必须是浅蓝到纯白的纵向渐变"
     )
     # 面板根节点上要有（渐变铺在 .rrm-root 上，而不是 body 上）。
     root = _block(css, ".rrm-root {")
-    assert "linear-gradient(180deg, #eaf2ff 0%" in root, "渐变必须挂在 .rrm-root 上"
+    assert "linear-gradient(180deg, #e4efff 0%" in root, "渐变必须挂在 .rrm-root 上"
 
 
 def test_cards_are_glassy_with_soft_blue_shadow() -> None:
-    """卡片 = 半透明白 + 20px 大圆角 + 极柔蓝影 + 白色高光描边。"""
+    """卡片 = 半透明白 + 20px 大圆角 + **柔而大**的蓝影 + 白色高光描边。
+
+    P10 微调：影子从「10px 30px」改成「18px 46px」，模糊半径翻倍 ⇒ 影子更散、
+    更软，卡片才有「浮在浅蓝背景上」的轻盈感。
+    """
     css = _panel_css()
     block = _block(css, ".rrm-root .neko-card {")
     assert "background: rgba(255, 255, 255, 0.85)" in block
     assert "border-radius: 20px" in block
-    assert "box-shadow: 0 10px 30px rgba(142, 171, 219, 0.15)" in block
+    assert "box-shadow: 0 18px 46px rgba(133, 163, 214, 0.15)" in block
     assert "border: 1px solid rgba(255, 255, 255, 0.6)" in block
 
 
@@ -302,8 +310,8 @@ def test_assets_are_still_inline_data_uris() -> None:
     assert 'from "./assets/avatars"' in code
 
 
-def test_version_is_0_9_2() -> None:
-    """版本号 = 0.9.2。"""
-    assert 'version = "0.9.2"' in _TOML.read_text(encoding="utf-8")
+def test_version_is_0_9_3() -> None:
+    """版本号 = 0.9.3。"""
+    assert 'version = "0.9.3"' in _TOML.read_text(encoding="utf-8")
     init = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.9.2"' in init
+    assert 'PLUGIN_VERSION = "0.9.3"' in init

@@ -152,7 +152,27 @@ __all__ = ["MockStockMeowPlugin"]
 PLUGIN_ID = "mock_stock_meow"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.9.2"
+PLUGIN_VERSION = "0.9.3"
+
+#: P10：游戏速度档位 → **真实时间**推进间隔的倍率。
+#:
+#: **只改"现实里等多久跳一拍"，一个游戏数值都不碰**：每天多少 tick、
+#: 行情怎么走、手续费多少、斩杀线在哪 —— 全部不变。倍率越大＝等得越久。
+#:
+#: * ``slow``   —— 3 倍间隔，经典模式一个游戏日约 4.8 分钟（默认太窒息）
+#: * ``normal`` —— 1 倍，等同 0.9.2 的手感
+#: * ``fast``   —— 0.5 倍间隔，手快的人玩
+_GAME_SPEED_ORDER: tuple[str, ...] = ("slow", "normal", "fast")
+_GAME_SPEED_MULTIPLIER: dict[str, float] = {
+    "slow": 3.0,
+    "normal": 1.0,
+    "fast": 0.5,
+}
+
+#: P10：插件级设置（``settings`` 表）的键名。
+_SETTING_GAME_SPEED = "game_speed"
+_SETTING_AUTO_TICK = "auto_tick"
+_SETTING_ONBOARDING = "onboarding_ack"
 
 #: 「无为而治」称号的解锁天数（P5.5 改动 6）。
 #:
@@ -418,6 +438,20 @@ class MockStockMeowPlugin(NekoPluginBase):
         self._business_config_cached_at: float = 0.0
         #: 导演模式开关的缓存（面板载荷是同步的，要能直接读）。
         self._director_enabled_cache: bool = False
+        #: ── P10：节奏偏好（游戏速度 / 自动·手动）的**内存缓存** ────────
+        #: 心跳每秒跑一次、面板每秒轮询一次，都不能每次都去查 ``settings``
+        #: 表 —— 宿主数据库每次开会话都要走 IPC，面板上下文只有 5 秒超时。
+        #: 这三个偏好只会被玩家的按钮改写（改写时缓存同步更新），
+        #: 所以**读一次就够**。
+        self._settings_map_cache: dict[str, str] | None = None
+        #: 面板上按过的游戏速度（空串 = 没按过，交给 ``config.example.toml``）。
+        self._speed_override: str = ""
+        #: 自动/手动推进（``None`` = 没设过，默认自动）。
+        self._auto_tick_override: bool | None = None
+        #: 全局"引导已读"标记（``settings.onboarding_ack``）。
+        self._onboarding_ack_cache: bool = False
+        #: 玩家维度的"已读"标记缓存：``(player_id, 是否已读)``。
+        self._onboarding_player_seen_cache: tuple[str, bool] = ("", False)
         #: 最近一次玩家 id（P5：局终后 ``market_state.player_id`` 被清空，
         #: 面板要靠它去找归档的结算报告）。
         self._last_player_id: str = ""
@@ -500,6 +534,13 @@ class MockStockMeowPlugin(NekoPluginBase):
                     f"数据库暂不可用（{retry_error}；首次失败：{error}）；"
                     "待宿主下发有效配置后会在首次读写时自动建表。"
                 )
+        # ── P10：预热节奏偏好缓存（速度 / 自动手动 / 引导已读）────────
+        # **启动时读一次**：面板的上下文请求只有 5 秒超时，不能在热路径上
+        # 查库。读不到就等下次（``_ensure_settings_cache`` 会重试）。
+        try:
+            await self._ensure_settings_cache()
+        except Exception:  # noqa: BLE001 - 预热失败不影响启动
+            pass
         return Ok({"status": "ready", "stage": "p2-persistence"})
 
     def _log_runtime_capabilities(self) -> None:
@@ -2650,7 +2691,15 @@ class MockStockMeowPlugin(NekoPluginBase):
         difficulty = engine_config.difficulties.get(row["mode"])
         if difficulty is None:
             return 0
-        interval = max(1, int(difficulty.tick_interval_seconds))
+        # P10：手动模式下心跳**不自动推进** —— 玩家自己点【推进一拍】。
+        # 基线照常刷新：切回自动时不会一次性补一大串 tick（那会直接送命）。
+        await self._ensure_settings_cache()
+        if not self._auto_tick_enabled():
+            self._last_tick_at = now
+            return 0
+        # P10：游戏速度只缩放**间隔**（等多久跳一拍），不碰任何游戏数值。
+        speed = self._resolve_speed()
+        interval = self._tick_interval(difficulty.tick_interval_seconds, speed)
         if self._last_tick_at <= 0.0:
             # 首次心跳只记基线：不跳盘（插件重启即跳盘是最糟的体验）
             self._last_tick_at = now
@@ -3392,6 +3441,187 @@ class MockStockMeowPlugin(NekoPluginBase):
                     ),
                 }
             )
+
+    # ------------------------------------------------------------------
+    # 入口：P10 的四个偏好入口（速度 / 自动·手动 / 推进一拍 / 引导已读）
+    # ------------------------------------------------------------------
+    #
+    # 这四个入口**只改玩家偏好**，不改动任何游戏规则：
+    #   * ``set_game_speed`` —— 改"等多久跳一拍"（**真实时间**）；
+    #   * ``set_auto_tick`` —— 自动推进 ↔ 手动推进；
+    #   * ``advance_tick``  —— 手动模式下点一下走一拍；
+    #   * ``onboarding_ack`` —— 记"玩家看过玩法说明了"。
+    #
+    # ``advance_tick`` 复用**同一条 tick 流水线**（``_tick_once``），所以手动
+    # 推进出来的状态与自动推进**逐位一致** —— 手动只是"不等"，不是"不算"。
+
+    @ui.action(
+        id="set_game_speed",
+        label="游戏速度",
+        icon="clock",
+        tone="default",
+        group="settings",
+        order=1,
+    )
+    @plugin_entry(
+        id="set_game_speed",
+        name="设置游戏速度",
+        description=(
+            "切换游戏速度：slow（慢）/ normal（标准）/ fast（快）。"
+            "只改真实时间的推进快慢，**不改任何游戏数值**。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "speed": {
+                    "type": "string",
+                    "enum": list(_GAME_SPEED_ORDER),
+                    "description": "速度档位",
+                }
+            },
+            "required": ["speed"],
+        },
+    )
+    async def set_game_speed(self, speed: str = "normal") -> Ok:
+        """切换游戏速度（面板上的三档按钮）。
+
+        写的是插件自己的 ``settings`` 表 —— **不碰宿主配置**，所以不会触发
+        插件重启，局中的存档、内存态一律不受影响。
+        """
+        if speed not in _GAME_SPEED_ORDER:
+            return _err("bad_game_speed")
+        if not await self._repo.set_setting(_SETTING_GAME_SPEED, speed):
+            return _err("db_unavailable")
+        self._speed_override = speed
+        if self._settings_map_cache is None:
+            self._settings_map_cache = {}
+        self._settings_map_cache[_SETTING_GAME_SPEED] = speed
+        # 换速度等于换基线：别让旧基线在下一拍突然补一堆 tick。
+        self._last_tick_at = time.time()
+        return Ok({"action": "set_game_speed", "speed": speed})
+
+    @ui.action(
+        id="set_auto_tick",
+        label="自动/手动推进",
+        icon="play",
+        tone="default",
+        group="settings",
+        order=2,
+    )
+    @plugin_entry(
+        id="set_auto_tick",
+        name="切换自动/手动推进",
+        description=(
+            "开启自动推进后，市场按间隔自己往下走；"
+            "关掉之后市场就停住，等你点【推进一拍】。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "true = 自动推进，false = 手动推进",
+                }
+            },
+            "required": ["enabled"],
+        },
+    )
+    async def set_auto_tick(self, enabled: bool = True) -> Ok:
+        """切换自动推进 / 手动推进。"""
+        flag = "1" if enabled else "0"
+        if not await self._repo.set_setting(_SETTING_AUTO_TICK, flag):
+            return _err("db_unavailable")
+        self._auto_tick_override = bool(enabled)
+        if self._settings_map_cache is None:
+            self._settings_map_cache = {}
+        self._settings_map_cache[_SETTING_AUTO_TICK] = flag
+        # 手动模式下心跳不再推进；基线刷新一下，切回来时不会补一大串 tick。
+        self._last_tick_at = time.time()
+        return Ok({"action": "set_auto_tick", "auto": bool(enabled)})
+
+    @ui.action(
+        id="advance_tick",
+        label="推进一拍",
+        icon="play",
+        tone="primary",
+        group="settings",
+        order=3,
+    )
+    @plugin_entry(
+        id="advance_tick",
+        name="推进一拍",
+        description="手动模式下立刻推进一个 tick（走的是与自动推进完全相同的流水线）。",
+    )
+    async def advance_tick(self) -> Ok:
+        """手动推进一个 tick。
+
+        **只在手动模式可用**：自动模式下市场自己会走，按这个按钮就变成了
+        "偷偷多走一拍"，那自动/手动就分不清了。
+        """
+        if self._auto_tick_enabled():
+            return _err("advance_tick_requires_manual")
+        engine_config = await self._engine_config()
+        session, error = await self._session_or_error(engine_config)
+        if error is not None:
+            return error
+        if session is None:
+            return _err("not_joined")
+        if self._tick_running:
+            return _err("advance_tick_busy")
+        await self._run_one_tick()
+        fresh, fresh_error = await self._session_or_error(engine_config)
+        if fresh_error is not None:
+            return fresh_error
+        if fresh is None:
+            return Ok({"action": "advance_tick", "ended": True, "note": "这一局已经结束了。"})
+        return Ok(
+            {
+                "action": "advance_tick",
+                "day": int(fresh.player.day),
+                "tick": int(fresh.market.tick),
+                "cash": round(fresh.player.cash, 6),
+                "alive": bool(fresh.player.alive),
+                "death_reason": fresh.player.death_reason,
+                "note": (
+                    "走了一拍。"
+                    if fresh.player.alive
+                    else "走了一拍，你也到了头。"
+                ),
+            }
+        )
+
+    @ui.action(
+        id="onboarding_ack",
+        label="我知道了",
+        icon="check",
+        tone="default",
+        group="settings",
+        order=4,
+    )
+    @plugin_entry(
+        id="onboarding_ack",
+        name="标记已读玩法说明",
+        description="玩家看过【玩法说明】之后调用：不再自动弹窗。",
+    )
+    async def onboarding_ack(self) -> Ok:
+        """记下"玩家已经看过玩法说明"。
+
+        **两处都记**：
+
+        * ``settings.onboarding_ack`` —— 全局标记，保证**只自动弹一次**；
+        * ``players.onboarding_seen`` —— 记在这个 ``player_id`` 行上，
+          同一个玩家再开新局也不会被弹窗砸脸。
+        """
+        await self._repo.set_setting(_SETTING_ONBOARDING, "1")
+        player_id = self._last_player_id
+        if player_id:
+            await self._repo.mark_player_onboarding_seen(player_id)
+            self._onboarding_player_seen_cache = (player_id, True)
+        self._onboarding_ack_cache = True
+        if self._settings_map_cache is None:
+            self._settings_map_cache = {}
+        self._settings_map_cache[_SETTING_ONBOARDING] = "1"
+        return Ok({"action": "onboarding_ack", "seen": True})
 
     # ------------------------------------------------------------------
     # 入口：导演台（P7 · 直播特制版）
@@ -4322,6 +4552,127 @@ class MockStockMeowPlugin(NekoPluginBase):
         return round(session.player.cash - next_cost, 6)
 
     # ------------------------------------------------------------------
+    # P10：游戏速度 / 自动·手动推进 / 新手引导
+    #
+    # 这一节全是**玩家偏好**，不参与任何游戏规则：
+    #   * 游戏速度 —— 只缩放"等多久跳一拍"（真实时间），游戏数值一律不动；
+    #   * 自动/手动 —— 手动时心跳不推进，玩家自己点【推进一拍】；
+    #   * 新手引导 —— 首次打开面板自动弹一次【玩法说明】，状态记在 player_id 上。
+    #
+    # 引擎层（engine/）与模式层（modes/）**一行不改**：这里没有任何一个
+    # 数字会进入行情、手续费、斩杀线或日终结算的计算。
+    # ------------------------------------------------------------------
+
+    async def _ensure_settings_cache(self) -> None:
+        """把 ``settings`` 表里的偏好读进**内存缓存**（只读一次）。
+
+        **为什么必须缓存**：面板的上下文请求在宿主侧只有 **5 秒超时**，
+        而宿主数据库每开一次会话都要走一趟 IPC —— 一个键一次查询就能把
+        上下文拖到超时边缘（真机上已经踩到过：上下文超时 ⇒ 面板拿到空状态
+        ⇒ 插件被宿主停掉）。所以：
+
+        * 三个偏好（速度 / 自动手动 / 引导已读）**一次会话全部读回**；
+        * 读完之后**一律走内存**，面板每秒轮询也不碰数据库；
+        * 玩家按了按钮时直接改缓存（并落库）。
+
+        库还没准备好（宿主没下发配置）时**不置已加载标记** —— 下次再试。
+        """
+        if self._settings_map_cache is not None:
+            return
+        if not self._repo.enabled:
+            return
+        values = await self._repo.get_settings_map()
+        self._settings_map_cache = values
+        speed = values.get(_SETTING_GAME_SPEED, "")
+        self._speed_override = speed if speed in _GAME_SPEED_ORDER else ""
+        auto = values.get(_SETTING_AUTO_TICK)
+        self._auto_tick_override = (
+            None
+            if auto is None
+            else auto.strip().lower() not in ("0", "false", "off", "no", "manual")
+        )
+        self._onboarding_ack_cache = bool(values.get(_SETTING_ONBOARDING))
+
+    def _resolve_speed(self) -> str:
+        """当前生效的游戏速度档位（读内存缓存，不查库、不问宿主）。
+
+        优先级：**面板上按过的设置 > ``config.example.toml`` 的
+        ``[game].game_speed`` > ``normal``**。面板设置优先，是因为玩家
+        在面板上按的按钮是"当下的需求"，改 toml 才是"长期偏好"。
+        """
+        if self._speed_override in _GAME_SPEED_ORDER:
+            return self._speed_override
+        cfg = self._business_config_cache
+        section = cfg.get("game") if isinstance(cfg, dict) else None
+        toml_value = section.get("game_speed") if isinstance(section, dict) else None
+        if isinstance(toml_value, str) and toml_value in _GAME_SPEED_ORDER:
+            return toml_value
+        return "normal"
+
+    @staticmethod
+    def _tick_interval(base_seconds: float, speed: str) -> int:
+        """按档位把基础间隔缩放成实际间隔（至少 1 秒）。
+
+        ``base_seconds`` 是难度配置里的原始间隔（经典 8 秒 / 无限 30 秒）。
+        """
+        multiplier = _GAME_SPEED_MULTIPLIER.get(speed, 1.0)
+        return max(1, int(round(float(base_seconds) * multiplier)))
+
+    def _auto_tick_enabled(self) -> bool:
+        """现在是"自动推进"还是"手动推进"。默认**自动**。"""
+        return self._auto_tick_override is not False
+
+    def _pace_block(
+        self, engine_config: EngineConfig, session: Session | None
+    ) -> dict[str, Any]:
+        """面板载荷的 ``pace`` 块：速度档位 + 自动/手动 + 节奏换算。
+
+        **纯内存**（不查库、不问宿主）—— 面板每秒轮询一次，这里必须便宜。
+
+        **纯表现**：这里算出来的秒数只是给玩家看的"还要等多久"，
+        不参与任何判定，也不写进存档。
+        """
+        speed = self._resolve_speed()
+        auto = self._auto_tick_enabled()
+        difficulty = session.difficulty if session is not None else None
+        if difficulty is None:
+            difficulty = engine_config.difficulties.get("classic_arcade")
+        base_interval = float(difficulty.tick_interval_seconds) if difficulty else 8.0
+        ticks_per_day = int(difficulty.ticks_per_day) if difficulty else 12
+        interval = self._tick_interval(base_interval, speed)
+        return {
+            "speed": speed,
+            "auto": auto,
+            "base_interval_seconds": int(base_interval),
+            "interval_seconds": interval,
+            "ticks_per_day": ticks_per_day,
+            "day_seconds": interval * ticks_per_day,
+            "multiplier": _GAME_SPEED_MULTIPLIER.get(speed, 1.0),
+        }
+
+    def _onboarding_block(self, session: Session | None) -> dict[str, Any]:
+        """面板载荷的 ``onboarding`` 块：说明要不要自动弹。
+
+        **纯内存**：``auto_open`` 只在"全局还没弹过"时为真；弹过一次之后，
+        玩家随时可以点空闲态的大按钮【玩法说明】重看，但不会再被弹窗砸脸。
+
+        玩家维度的"已读"记在 ``players.onboarding_seen``（也就是
+        **player_id** 那一行）—— 由 ``onboarding_ack`` 写库，这里只读缓存。
+        """
+        player_id = session.player_id if session is not None else ""
+        player_seen = (
+            self._onboarding_player_seen_cache[1]
+            if player_id and self._onboarding_player_seen_cache[0] == player_id
+            else False
+        )
+        global_seen = self._onboarding_ack_cache
+        return {
+            "seen": bool(global_seen or player_seen),
+            "auto_open": not global_seen,
+            "player_id": player_id,
+        }
+
+    # ------------------------------------------------------------------
     # Hosted UI 上下文
     # ------------------------------------------------------------------
 
@@ -4340,10 +4691,17 @@ class MockStockMeowPlugin(NekoPluginBase):
         结算报告）。结算报告里有 heat 曲线与种子 —— 那是**结算页**才允许
         出现的东西，而此刻局已经结束了。
         """
+        # ── P10：先预热偏好缓存（**一次**会话读完，随后全走内存）──────────
+        # 面板的上下文请求只有 5 秒超时，热路径上不能查库。
+        await self._ensure_settings_cache()
         engine_config = await self._engine_config()
         session, error = await self._session_or_error(engine_config)
         if error is not None:
             return {"stage": "p2-persistence", "notice": "数据库不可用。"}
+        # ── P10：节奏块（速度 / 自动·手动）与引导块（要不要自动弹说明）──
+        # **纯内存**（不查库、不问宿主）：面板每秒轮询，这里必须便宜。
+        pace = self._pace_block(engine_config, session)
+        onboarding = self._onboarding_block(session)
         if session is None:
             settlement = self._latest_settlement()
             if settlement is not None:
@@ -4381,13 +4739,19 @@ class MockStockMeowPlugin(NekoPluginBase):
                     "achievements": settlement.get("achievements")
                     if isinstance(settlement, dict)
                     else None,
+                    # ── P10：节奏与引导（结算页也要能看说明）────────────
+                    "pace": pace,
+                    "onboarding": onboarding,
                     "notice": "本局已经结算归档。下面是这一局的最终成绩。",
                 }
             return {
                 "stage": "idle",
                 "notice": "当前没有进行中的对局，请先加入一局。",
+                # ── P10：空闲态也要有节奏块（玩家可以在开局前先调速度）──
+                "pace": pace,
+                "onboarding": onboarding,
             }
-        return self._panel_payload(session, engine_config)
+        return self._panel_payload(session, engine_config, pace, onboarding)
 
     # ------------------------------------------------------------------
     # 内部工具（以下方法以 _ 开头，不会被宿主收集为入口）
@@ -4728,18 +5092,45 @@ class MockStockMeowPlugin(NekoPluginBase):
     async def _session_or_error(self, engine_config: EngineConfig):
         """加载当前会话；数据库不可用时返回错误结果。"""
         try:
-            return await load_session(
+            session = await load_session(
                 self._repo, self.state, engine_config=engine_config
-            ), None
+            )
         except (DbUnavailableError, sqlite3.Error) as error:
             # 宿主补发有效配置后重试一次（懒建表自愈也在这里生效）。
             await self._refresh_runtime_capabilities()
             try:
-                return await load_session(
+                session = await load_session(
                     self._repo, self.state, engine_config=engine_config
-                ), None
+                )
             except (DbUnavailableError, sqlite3.Error):
                 return None, _err("db_unavailable", error)
+        await self._refresh_player_onboarding_cache(session)
+        return session, None
+
+    async def _refresh_player_onboarding_cache(self, session: Session | None) -> None:
+        """补齐**玩家维度**的"引导已读"缓存（记在 ``player_id`` 那一行）。
+
+        **只在"全局还没标记已读"时才会去查库** —— 一旦玩家看过说明，
+        全局标记就够用了，热路径不必再碰数据库（面板上下文只有 5 秒超时）。
+        """
+        if session is None:
+            return
+        player_id = session.player_id
+        if not player_id:
+            return
+        if self._onboarding_player_seen_cache[0] == player_id:
+            return
+        if self._settings_map_cache is None:
+            return
+        if self._onboarding_ack_cache:
+            # 全局已读 ⇒ 这个玩家必然也看过。
+            self._onboarding_player_seen_cache = (player_id, True)
+            return
+        try:
+            seen = await self._repo.player_onboarding_seen(player_id)
+        except (DbUnavailableError, sqlite3.Error):
+            return
+        self._onboarding_player_seen_cache = (player_id, bool(seen))
 
     async def _harvest_events(self, player_id: str) -> list[dict[str, Any]]:
         """收割时间线（**只有结算页能拿到**，含收割时刻的 heat 数值）。"""
@@ -4895,7 +5286,11 @@ class MockStockMeowPlugin(NekoPluginBase):
     # ------------------------------------------------------------------
 
     def _panel_payload(
-        self, session: Session, engine_config: EngineConfig
+        self,
+        session: Session,
+        engine_config: EngineConfig,
+        pace: dict[str, Any] | None = None,
+        onboarding: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """``@ui.context`` 的**白名单**载荷（P5 面板用）。
 
@@ -5046,6 +5441,9 @@ class MockStockMeowPlugin(NekoPluginBase):
             # 新闻真假一概没有）。
             "visual": self._visual_block(session, engine_config),
             "settlement": None,
+            # ── P10：节奏（速度 / 自动·手动）与新手引导 ──────────────────
+            "pace": pace or {},
+            "onboarding": onboarding or {},
             "notice": "",
         }
 

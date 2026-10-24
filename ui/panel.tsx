@@ -239,6 +239,28 @@ type Visual = {
   roster?: RosterMember[]
 }
 
+/**
+ * P10：节奏（游戏速度 + 自动/手动推进）。
+ *
+ * **纯表现**：这里只有"现实里等多久"的换算，一个游戏数值都没有。
+ */
+type Pace = {
+  speed?: "slow" | "normal" | "fast"
+  auto?: boolean
+  base_interval_seconds?: number
+  interval_seconds?: number
+  ticks_per_day?: number
+  day_seconds?: number
+  multiplier?: number
+}
+
+/** P10：新手引导状态（已读标记记在 player_id 上）。 */
+type Onboarding = {
+  seen?: boolean
+  auto_open?: boolean
+  player_id?: string
+}
+
 type State = {
   stage?: string
   day?: number
@@ -271,6 +293,10 @@ type State = {
   notice?: string
   /** P7：视觉降级 / 弹幕 / 导演台 / 名册。 */
   visual?: Visual
+  /** P10：节奏（游戏速度 / 自动·手动）。 */
+  pace?: Pace
+  /** P10：新手引导（要不要自动弹《玩法说明》）。 */
+  onboarding?: Onboarding
 }
 
 /** P5.5 改动 4：天台虚惊一场的三屏。 */
@@ -344,10 +370,13 @@ const RRM_CSS = `
 .rrm-root .neko-stack > *, .rrm-root .neko-card-body > * { min-width: 0; }
 .rrm-root .neko-key-value-value { overflow-wrap: anywhere; }
 
-/* ── ① 主题变量覆写（P9.0：轻盈透明的二次元科技风）──────────────────
+/* ── ① 主题变量覆写（P9.0：轻盈透明的二次元科技风；P10 微调）──────────────
    色值取自设计图：背景 #EAF4FE → #F6FBFF，卡片 #F0F7FF（近白蓝），
    绿胶囊 #E7F8F0、粉胶囊 #FBE6EA，强调蓝 #5B8FF9，正文深蓝 #1F2D3D。
-   毛玻璃用「半透明白 + 柔光投影」近似（宿主不支持背景模糊效果）。 */
+   毛玻璃用「半透明白 + 柔光投影」近似（宿主不支持背景模糊效果）。
+
+   P10 微调（视觉任务三）：底色再**通透**一档 —— 顶部那片天蓝压得更透，
+   中段快速褪成近白，卡片因此像是「浮」在浅蓝空气里而不是贴在色块上。 */
 .rrm-root {
   --text: #1f2d3d;
   --muted: #7b8ca6;
@@ -357,18 +386,20 @@ const RRM_CSS = `
   --border: rgba(142, 171, 219, 0.22);
   --surface: rgba(255, 255, 255, 0.85);
   --surface-strong: #ffffff;
-  --bg: #eaf2ff;
+  --bg: #e4efff;
   --radius-md: 20px;
-  background: linear-gradient(180deg, #eaf2ff 0%, #f8fbff 100%);
+  background: linear-gradient(180deg, #e4efff 0%, #f4faff 48%, #fbfdff 100%);
   color: var(--text);
 }
 
-/* ── ② 毛玻璃卡片：半透明白底 + 20px 大圆角 + 极柔的蓝影 ─────────── */
+/* ── ② 毛玻璃卡片：半透明白底 + 20px 大圆角 + **柔而大**的蓝影 ──────────
+   P10 微调：阴影从「10px 30px / α0.15」改成「18px 46px / α0.15」——
+   位移更大、模糊更大、透明度不变 ⇒ 影子更散、更软，卡片于是有「浮起来」的轻盈感。 */
 .rrm-root .neko-card {
   background: rgba(255, 255, 255, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.6);
   border-radius: 20px;
-  box-shadow: 0 10px 30px rgba(142, 171, 219, 0.15);
+  box-shadow: 0 18px 46px rgba(133, 163, 214, 0.15);
 }
 .rrm-root .neko-card-header { padding: 16px 18px 0; }
 .rrm-root .neko-card-body { padding: 14px 18px 18px; gap: 16px; }
@@ -399,7 +430,7 @@ const RRM_CSS = `
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.65);
   border-radius: 18px;
-  box-shadow: 0 8px 22px rgba(142, 171, 219, 0.13);
+  box-shadow: 0 14px 36px rgba(133, 163, 214, 0.14);
 }
 .rrm-root .neko-stat-label { color: #9fb2c6; font-size: 12px; }
 
@@ -408,7 +439,7 @@ const RRM_CSS = `
   background: rgba(255, 255, 255, 0.88);
   border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: 18px;
-  box-shadow: 0 8px 22px rgba(142, 171, 219, 0.14);
+  box-shadow: 0 14px 34px rgba(133, 163, 214, 0.15);
   padding: 12px 14px;
 }
 .rrm-root .neko-card.rrm-tile .neko-card-body { padding: 0; gap: 8px; }
@@ -623,6 +654,137 @@ const RRM_CSS = `
 .rrm-font-broke { font-weight: 300; }
 .rrm-font-dying { font-weight: 500; }
 .rrm-root .neko-button.rrm-escape { font-size: 11px; padding: 2px 8px; color: var(--muted); border-radius: 999px; }
+
+/* ── ⑭ P10：玩法说明大按钮（空闲态最显眼的那一个）─────────────────────
+   「怎么玩」必须比「开局」还要醒目 —— 新手第一眼看到的就是它。 */
+.rrm-root .neko-button.rrm-guide-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  min-height: 62px;
+  padding: 12px 22px;
+  border-radius: 31px;
+  background: linear-gradient(90deg, #a4e5ff 0%, #7bbcff 100%);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  color: #16305c;
+  box-shadow: 0 16px 38px rgba(123, 188, 255, 0.42);
+}
+.rrm-root .rrm-guide-btn-main { font-size: 18px; font-weight: 800; letter-spacing: 1px; }
+.rrm-root .rrm-guide-btn-sub { font-size: 12px; font-weight: 600; letter-spacing: 0.3px; }
+/* 标题栏里那个小链接（局中随时翻说明）。 */
+.rrm-root .neko-button.rrm-guide-link {
+  font-size: 11px;
+  padding: 3px 11px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-weight: 650;
+}
+
+/* ── ⑮ P10：玩法说明弹窗里的三步图文 ──────────────────────────────── */
+.rrm-guide-step {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 13px 15px;
+  border-radius: 16px;
+  background: rgba(240, 247, 255, 0.92);
+  border: 1px solid rgba(142, 171, 219, 0.18);
+}
+.rrm-guide-num {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #a4e5ff 0%, #7bbcff 100%);
+  color: #16305c;
+  font-size: 15px;
+  font-weight: 800;
+}
+.rrm-guide-step-main { display: flex; flex-direction: column; gap: 4px; }
+.rrm-guide-step-title { font-size: 15px; font-weight: 800; color: #1f2d3d; letter-spacing: 0.4px; }
+.rrm-guide-step-body { font-size: 13px; line-height: 1.8; color: #5b6b82; }
+.rrm-guide-step-tip { font-size: 12px; line-height: 1.7; color: #8ba0bd; }
+.rrm-guide-footer {
+  font-size: 12px;
+  color: #8ba0bd;
+  text-align: center;
+  letter-spacing: 0.5px;
+}
+
+/* ── ⑯ P10：节奏卡（游戏速度 + 自动/手动）─────────────────────────── */
+.rrm-pace-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rrm-pace-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 13px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 1px;
+}
+.rrm-pace-badge-auto {
+  background: #e7f8f0;
+  border: 1px solid rgba(23, 145, 111, 0.2);
+  color: #17916f;
+}
+.rrm-pace-badge-manual {
+  background: #fdf0e4;
+  border: 1px solid rgba(185, 112, 42, 0.22);
+  color: #b9702a;
+}
+.rrm-pace-hint { font-size: 13px; color: #5b6b82; }
+.rrm-root .neko-button.rrm-speed-tag {
+  width: 100%;
+  padding: 9px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(142, 171, 219, 0.3);
+  background: rgba(255, 255, 255, 0.78);
+  color: #6b7a90;
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: 0.5px;
+}
+.rrm-root .neko-button.rrm-speed-tag-on {
+  background: linear-gradient(90deg, #a4e5ff 0%, #7bbcff 100%);
+  border-color: rgba(255, 255, 255, 0.78);
+  color: #16305c;
+  box-shadow: 0 10px 24px rgba(123, 188, 255, 0.38);
+}
+.rrm-pace-meta {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: #8ba0bd;
+}
+.rrm-pace-actions { display: flex; gap: 10px; align-items: center; }
+.rrm-root .neko-button.rrm-pace-toggle {
+  flex: 0 0 auto;
+  padding: 9px 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 750;
+}
+.rrm-root .neko-button.rrm-pace-advance {
+  flex: 1 1 auto;
+  min-height: 52px;
+  border-radius: 26px;
+  background: linear-gradient(90deg, #a4e5ff 0%, #7bbcff 100%);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  color: #16305c;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  box-shadow: 0 14px 32px rgba(123, 188, 255, 0.42);
+}
+.rrm-pace-note { font-size: 12px; line-height: 1.7; color: #8ba0bd; }
 `
 
 function money(value: number | undefined | null): string {
@@ -1146,6 +1308,187 @@ function BankruptArt(props: { alt: string }) {
   )
 }
 
+/**
+ * P10：玩法说明弹窗（三步图文）。
+ *
+ * 用**宿主自带的** ``Modal`` + ``Alert``（官方推荐做法之一）；宿主组件几乎
+ * 都不透传 ``style``，所以视觉一律走 ``className`` + 注入的 ``RRM_CSS``。
+ *
+ * 三步分别讲：① 零花钱/家底/棺材本 + 每日生活费；② 一键梭哈/一键割肉 + 看涨跌图；
+ * ③ 猫娘会实时嘴臭、接受不了别玩。
+ */
+function GuideModal(props: {
+  open: boolean
+  t: Translate
+  onClose: () => void
+}) {
+  const { open, t, onClose } = props
+  const step = (index: number, title: string, body: string, tip: string) =>
+    h(
+      "div",
+      { className: "rrm-guide-step", key: title },
+      h("span", { className: "rrm-guide-num" }, String(index)),
+      h(
+        "div",
+        { className: "rrm-guide-step-main" },
+        h("div", { className: "rrm-guide-step-title" }, title),
+        h("div", { className: "rrm-guide-step-body" }, body),
+        tip ? h("div", { className: "rrm-guide-step-tip" }, tip) : null
+      )
+    )
+  return h(Modal, {
+    open: open,
+    title: t("guide.modal_title"),
+    onClose: onClose,
+    closeOnBackdrop: true,
+    closeOnEscape: true,
+    size: "lg",
+    children: h(
+      Stack,
+      { gap: 12 },
+      step(
+        1,
+        t("guide.step1_title"),
+        t("guide.step1_body"),
+        t("guide.step1_tip")
+      ),
+      step(
+        2,
+        t("guide.step2_title"),
+        t("guide.step2_body"),
+        t("guide.step2_tip")
+      ),
+      step(3, t("guide.step3_title"), t("guide.step3_body"), ""),
+      h(Alert, { tone: "warning", message: t("guide.step3_alert") }),
+      h("div", { className: "rrm-guide-footer" }, t("guide.footer"))
+    ),
+    footer: h(
+      "div",
+      { className: "neko-button-group" },
+      h(Button, {
+        tone: "primary",
+        onClick: onClose,
+        children: t("guide.ack"),
+      })
+    ),
+  })
+}
+
+/**
+ * P10：节奏卡（游戏速度 + 自动/手动推进）。
+ *
+ * **只改"现实里等多久"**，一个游戏数值都不碰：
+ *   * 速度三档（慢 / 标准 / 快）＝ 心跳间隔的倍率；
+ *   * 自动 / 手动 ＝ 心跳要不要自己往前跳；
+ *   * 手动模式下才出现【推进一拍】—— 自动模式里给这个按钮会让"自动"变成谎话。
+ */
+function PaceControl(props: {
+  pace: Pace
+  t: Translate
+  ticksToSettle?: number
+  onSpeed: (speed: string) => void
+  onToggleAuto: () => void
+  onAdvance: () => void
+}) {
+  const { pace, t, ticksToSettle, onSpeed, onToggleAuto, onAdvance } = props
+  const speed = pace.speed || "normal"
+  const auto = pace.auto !== false
+  const interval = pace.interval_seconds || 0
+  const minutes = Math.max(1, Math.round((pace.day_seconds || 0) / 60))
+  const speeds = [
+    { id: "slow", label: t("panel.pace_speed_slow") },
+    { id: "normal", label: t("panel.pace_speed_normal") },
+    { id: "fast", label: t("panel.pace_speed_fast") },
+  ]
+  return h(
+    Card,
+    { title: t("panel.pace_title") },
+    h(
+      Stack,
+      { gap: 12 },
+      h(
+        "div",
+        { className: "rrm-pace-head" },
+        h(
+          "span",
+          {
+            className: auto
+              ? "rrm-pace-badge rrm-pace-badge-auto"
+              : "rrm-pace-badge rrm-pace-badge-manual",
+          },
+          auto ? t("panel.pace_auto_badge") : t("panel.pace_manual_badge")
+        ),
+        h(
+          "span",
+          { className: "rrm-pace-hint" },
+          auto
+            ? interval > 0
+              ? t("panel.pace_auto_hint", { seconds: interval })
+              : t("panel.pace_auto_hint_unknown")
+            : t("panel.pace_manual_hint")
+        )
+      ),
+      h(
+        Grid,
+        { cols: 3, gap: 8 },
+        speeds.map((item) =>
+          h(Button, {
+            key: item.id,
+            className:
+              item.id === speed
+                ? "rrm-speed-tag rrm-speed-tag-on"
+                : "rrm-speed-tag",
+            onClick: () => onSpeed(item.id),
+            children: item.label,
+          })
+        )
+      ),
+      h(
+        "div",
+        { className: "rrm-pace-meta" },
+        h(
+          "span",
+          null,
+          minutes > 0
+            ? t("panel.pace_day_estimate", { minutes: minutes })
+            : t("panel.pace_day_estimate_unknown")
+        ),
+        ticksToSettle === undefined || ticksToSettle === null
+          ? null
+          : h(
+              "span",
+              null,
+              t("panel.pace_to_settle", { ticks: ticksToSettle })
+            )
+      ),
+      h(
+        "div",
+        { className: "rrm-pace-actions" },
+        h(Button, {
+          className: "rrm-pace-toggle",
+          tone: "default",
+          onClick: onToggleAuto,
+          children: auto
+            ? t("panel.pace_switch_manual")
+            : t("panel.pace_switch_auto"),
+        }),
+        auto
+          ? null
+          : h(Button, {
+              className: "rrm-pace-advance",
+              onClick: onAdvance,
+              children: t("panel.pace_advance"),
+            })
+      ),
+      h(
+        "div",
+        { className: "rrm-pace-note" },
+        auto ? t("panel.pace_auto_note") : t("panel.pace_manual_note")
+      )
+    )
+  )
+}
+
 export default function Panel(props: PluginSurfaceProps<State>) {
   const { t, state, actions } = props
 
@@ -1213,6 +1556,52 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   const danmakuList = visual.danmaku || []
   const rosterList = visual.roster || []
   const boom = visual.boom || {}
+
+  // ── P10：节奏（游戏速度 / 自动·手动）与新手引导 ────────────────────
+  // 宿主偶尔会返回**空状态**（宿主自己忙，5 秒预算用光）。这时候宁可显示
+  // 上一次知道的节奏，也不要闪回"标准 0 秒/拍"吓人 —— 所以留个兜底缓存。
+  const paceRef = useRef<Pace>({})
+  const paceRaw = (state.pace || {}) as Pace
+  const pace: Pace =
+    Object.keys(paceRaw).length > 0 ? paceRaw : paceRef.current
+  if (Object.keys(paceRaw).length > 0) {
+    paceRef.current = paceRaw
+  }
+  const onboarding = state.onboarding || {}
+  const [guideOpen, setGuideOpen] = useState(false)
+  // 「只自动弹一次」：**本次挂载**只试一次（面板每 3 秒轮询，不能反复弹）。
+  const guideAutoTried = useRef(false)
+  useEffect(() => {
+    if (guideAutoTried.current) return
+    if (!onboarding.auto_open) return
+    guideAutoTried.current = true
+    setGuideOpen(true)
+  }, [onboarding.auto_open])
+  /** 关掉《玩法说明》＝"玩家看过了"：把已读标记记回 player_id。 */
+  const closeGuide = () => {
+    setGuideOpen(false)
+    try {
+      const pending = props.api.call("onboarding_ack", {}, { userInitiated: true })
+      if (pending && typeof pending.catch === "function") pending.catch(() => undefined)
+    } catch (_error) {
+      // 记不上就记不上：弹窗已经关了，绝不能因此挡住玩家。
+    }
+  }
+  /** 调一个 P10 的偏好入口（写完立刻刷新上下文）。 */
+  const callPace = (action: string, args: Record<string, any>) => {
+    try {
+      props.api
+        .call(action, args, { userInitiated: true })
+        .then(async () => {
+          await props.api.refresh()
+        })
+        .catch((error: any) => {
+          showToast(String((error && error.message) || error), "danger")
+        })
+    } catch (error: any) {
+      showToast(String((error && error.message) || error), "danger")
+    }
+  }
 
   // 三屏自动推进：第一屏停 3 秒（黑屏），之后每屏 2 秒。
   const deathScene = (state.settlement && state.settlement.death_scene) || null
@@ -1566,6 +1955,31 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       },
     },
     h("span", { className: "rrm-tag" }, `${t("panel.title")} · ${stageLabel}`),
+    // ── P10：自动/手动徽标 —— 一眼看出市场是自己走，还是等玩家推一拍 ────
+    h(
+      "span",
+      {
+        className:
+          pace.auto === false
+            ? "rrm-pace-badge rrm-pace-badge-manual"
+            : "rrm-pace-badge rrm-pace-badge-auto",
+      },
+      pace.auto === false
+        ? t("panel.pace_manual_badge")
+        : t("panel.pace_auto_badge")
+    ),
+    // ── P10：局中也能随时翻《玩法说明》（不用回空闲态）─────────────────
+    h(Button, {
+      className: "rrm-guide-link",
+      tone: "default",
+      onClick: (event: any) => {
+        if (event && typeof event.stopPropagation === "function") {
+          event.stopPropagation()
+        }
+        setGuideOpen(true)
+      },
+      children: t("panel.guide_button"),
+    }),
     // 开源纯净版**不剧透**导演台：连提示都不给（入口本身插件层还会再挡一次）。
     directorEnabled
       ? h(
@@ -1695,6 +2109,23 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     )
   )
 
+  // ── P10：节奏卡（游戏速度 + 自动/手动）─────────────────────────────
+  const paceCard = h(PaceControl, {
+    pace: pace,
+    t: t,
+    ticksToSettle: state.stage === "playing" ? state.ticks_to_settle : undefined,
+    onSpeed: (next: string) => callPace("set_game_speed", { speed: next }),
+    onToggleAuto: () => callPace("set_auto_tick", { enabled: pace.auto === false }),
+    onAdvance: () => callPace("advance_tick", {}),
+  })
+
+  // ── P10：《玩法说明》弹窗（三步图文）───────────────────────────────
+  const guideModal = h(GuideModal, {
+    open: guideOpen,
+    t: t,
+    onClose: closeGuide,
+  })
+
   // ── 局终：展示归档的结算报告 ─────────────────────────────────────
   if (state.stage === "finished" && state.settlement) {
     const report = state.settlement
@@ -1730,6 +2161,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                 </Inline>
               </Stack>
             </Card>
+            {guideModal}
             {danmakuCard}
           </Stack>
         </Page>
@@ -1914,6 +2346,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
               </Stack>
             </Card>
           ) : null}
+          {guideModal}
           {danmakuCard}
         </Stack>
       </Page>
@@ -1966,8 +2399,34 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                 </Inline>
               ) : null}
               <Text>{t("panel.idle_modes_hint")}</Text>
+              {/* ── P10：大号《玩法说明》按钮 ──────────────────────────
+                  上手门槛太高是这一版最致命的问题：玩家打开面板完全不知道
+                  该干嘛。所以「怎么玩」必须比「开局」还醒目 —— 一个占满
+                  整行的大胶囊按钮，点了弹出三步图文说明。 */}
+              <Button
+                className="rrm-guide-btn"
+                tone="primary"
+                onClick={() => {
+                  setGuideOpen(true)
+                }}
+              >
+                {[
+                  h(
+                    "span",
+                    { className: "rrm-guide-btn-main", key: "main" },
+                    t("panel.guide_button")
+                  ),
+                  h(
+                    "span",
+                    { className: "rrm-guide-btn-sub", key: "sub" },
+                    t("panel.guide_button_sub")
+                  ),
+                ]}
+              </Button>
             </Stack>
           </Card>
+          {paceCard}
+          {guideModal}
           {danmakuCard}
         </Stack>
       </Page>
@@ -2076,6 +2535,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
         {titleBar}
         {directorConsole}
         {boomModal}
+        {guideModal}
 
         {/* ── P7.2 ⓪：状态条（压缩成一行徽标，别占地方）────────────── */}
         <Inline gap={8} wrap align="center">
@@ -2101,6 +2561,11 @@ export default function Panel(props: PluginSurfaceProps<State>) {
               : money(state.distance_to_kill)}
           </Text>
         </Inline>
+
+        {/* ── P10：节奏卡（游戏速度 + 自动/手动）─────────────────────
+            放在状态条正下方：自动/手动必须**一眼可见** —— 玩家抱怨的
+            "Tick 快得让人窒息"，靠的就是这一张卡来解。 */}
+        {paceCard}
 
         {/* ── P7.2 ①：K 线 —— 面板最上方的**主视觉**，占满全宽 ─────── */}
         <Card title={t("panel.kline")}>
