@@ -1,4 +1,4 @@
-"""反向暴富模拟器（N.E.K.O. 插件 · 第一层外壳）。
+"""拟股喵喵（N.E.K.O. 插件 · 第一层外壳）。
 
 架构定位
 --------
@@ -146,13 +146,13 @@ from .storage.session import (
     save_snapshot,
 )
 
-__all__ = ["ReverseRichSimPlugin"]
+__all__ = ["MockStockMeowPlugin"]
 
 #: 插件 ID，与 [plugin].id 保持一致。
-PLUGIN_ID = "reverse_rich_sim"
+PLUGIN_ID = "mock_stock_meow"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.8.4"
+PLUGIN_VERSION = "0.9.0"
 
 #: 「无为而治」称号的解锁天数（P5.5 改动 6）。
 #:
@@ -380,8 +380,8 @@ class _TickJournal:
 
 
 @neko_plugin
-class ReverseRichSimPlugin(NekoPluginBase):
-    """反向暴富模拟器插件外壳（P2：持久化 + 宿主入口）。
+class MockStockMeowPlugin(NekoPluginBase):
+    """拟股喵喵插件外壳（P2：持久化 + 宿主入口）。
 
     本层只做三件事：
 
@@ -892,12 +892,12 @@ class ReverseRichSimPlugin(NekoPluginBase):
     # 也就是说：没有 ``@llm_tool``，猫娘手里就没有任何可以调的东西 ——
     # 玩家在聊天框打「加入一局」，猫娘只会当成闲聊回一句「打深渊还是清委托？」。
     @llm_tool(
-        name="reverse_rich_sim_join",
+        name="mock_stock_meow_join",
         description=(
-            "开始一局「反向暴富模拟器」（纯虚构的反诈沙盘，标的价格全是假的）。"
-            "当玩家说「加入一局」「开始炒股」「来一局」「开户」「玩反向暴富」"
+            "开始一局「拟股喵喵」（纯虚构的反诈沙盘，标的价格全是假的）。"
+            "当玩家说「加入一局」「开始炒股」「来一局」「开户」「玩拟股喵喵」"
             "「反诈沙盘」这类话时，调用这个工具。"
-            "已经在局中就不要调用，直接用 reverse_rich_sim_status 查现状。"
+            "已经在局中就不要调用，直接用 mock_stock_meow_status 查现状。"
         ),
         parameters={
             "type": "object",
@@ -954,9 +954,9 @@ class ReverseRichSimPlugin(NekoPluginBase):
         }
 
     @llm_tool(
-        name="reverse_rich_sim_status",
+        name="mock_stock_meow_status",
         description=(
-            "查看「反向暴富模拟器」当前这一局的状态：第几天、总资产、现金、"
+            "查看「拟股喵喵」当前这一局的状态：第几天、总资产、现金、"
             "还活着没、距离被收割还有多远。"
             "玩家问「我亏了多少」「现在什么情况」「我还活着吗」时调用。"
         ),
@@ -985,7 +985,7 @@ class ReverseRichSimPlugin(NekoPluginBase):
                     "in_game": False,
                     "message": i18n_text(
                         "llm.status.idle",
-                        "当前没有进行中的对局。可以调用 reverse_rich_sim_join 开一局。",
+                        "当前没有进行中的对局。可以调用 mock_stock_meow_join 开一局。",
                     ),
                 },
                 "is_error": False,

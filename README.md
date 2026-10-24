@@ -1,4 +1,4 @@
-# 反向暴富模拟器（纯虚构 · 反诈沙盘）
+# 拟股喵喵（纯虚构 · 反诈沙盘）
 
 > ⚠️ 本项目是一个纯虚构、纯娱乐的反诈教学游戏。所有股票、价格、代币均为虚构，
 > 无现金价值，不提供充值、提现、兑换、真实行情对接、投资建议或任何金融服务。
@@ -18,24 +18,41 @@
 - 所有标的 ID 形如 `FAKE-xxx`，**不映射**任何真实股票代码或外汇对
 - 价格、费率、代币均为虚构数值，无现金价值
 - 代码中**不存在**充值、提现、兑换、入金、出金一类功能，连变量名与占位符都没有
-- 灵感来自《FX战士久留美》，但不使用其任何版权内容、角色名与视觉素材
+- 灵感来自早期同类虚构作品，但不使用任何已有作品的版权内容、角色名与视觉素材
 
 ## 当前状态
 
-**P7.4 完成**。游戏可玩：四个经典档 + 一个无限档，插件管理页里有完整的 Hosted TSX 面板。
+**P8.0 完成**。游戏可玩：四个经典档 + 一个无限档，插件管理页里有完整的 Hosted TSX 面板。
 P7.2 做了一次**彻底的「游戏化减法 + 抽象化加法」**：面板不再是专业炒股软件；
 P7.3 修掉了 0.8.2 真机暴露的**弹窗死锁事故**；
-P7.4 修掉了 0.8.3 真机暴露的**「没法开局」入口事故**。
+P7.4 修掉了 0.8.3 真机暴露的**「没法开局」入口事故**；
+P8.0 把它**正式化**成《拟股喵喵》，并把 UI 整个翻成**清丽轻科技风**。
 
-- **极简**：行情表只剩「名称 + 走势小折线 + 现价 + 超大红绿涨跌」，
-  持仓表只剩「名称 + 当前市值 + 大号盈亏」，操作区只剩两个大按钮
-  （一键梭哈 / 一键割肉），K 线搬到**面板最上方**占满全宽当主视觉。
+- **正式化**（0.9.0）：内部 ID 改成 `mock_stock_meow`，中文名《拟股喵喵》，
+  界面上不再有「反向暴富 / 久留美」这类旧字眼（引擎层与测试禁词元组除外）。
+- **清丽风**（0.9.0）：从暗色调赛博朋克整个翻面成浅色 —— 极浅灰蓝→纯白的纵向渐变、
+  半透明白色卡片（`rgba(255,255,255,0.72)` + 16px 圆角 + 极淡阴影）、
+  涨是薄荷绿 `#5AC8A8`、跌是珊瑚粉 `#FF6B81`。
+  实现方式是**在面板根节点上重新定义宿主的 CSS 变量** —— 宿主所有组件
+  （卡片 / 按钮 / 徽标 / 文本）一次性跟着变浅，不用逐个组件覆写。
+- **方块卡片网格**（0.9.0）：行情列表从表格换成**方块卡片**（宿主 `Columns` 的
+  fluid 模式：面板宽就 4 列、窄就 2 列），每格 = 股票名（+ 群友小头像）+
+  微型折线 + **巨大**涨跌百分比。持仓也换成了同一套方块卡。
+- **胶囊操作台**（0.9.0）：「一键梭哈 / 一键割肉」是两个**并排的胶囊大按钮**
+  （各占一半宽，带一点点薄荷绿 / 珊瑚粉微光），辅助按钮（跳过本日 / 领工资 /
+  借高利贷）**缩小**放在下面。
+- **家道三档**（0.9.0）：右上角的资金卡片随家道变 —— 富二代【零花钱】、
+  断供【家底】、濒死【棺材本】；界面上不再有「资金 / 总资产」这种后台味儿的词。
+- **轻量素材**（0.9.0）：`ui/assets/` 里有 6 个群友头像和 2 张梗图，
+  面板用**内联 data URI** 渲染（宿主不服务插件目录，相对路径必然 404）。
+- **极简**（0.7.2）：行情只剩「名称 + 走势小折线 + 超大红绿涨跌」，
+  持仓只剩「名称 + 当前市值 + 大号盈亏」，K 线搬到**面板最上方**占满全宽当主视觉。
 - **去金融化**：总资产按档位叫「零花钱 / 家底 / 棺材本」，买入叫「梭哈」，
   卖出叫「割肉」，强制平仓叫「底裤被扒」；富二代圆润字体、断供细字体、
   濒死数字偶尔闪红。
-- **抽象彩蛋**：社区名册扩到 6 人，**群友直接出现在行情列表里**
-  （星辰永远是最稳的那只，Wehos 永远是最野的那只），猫娘弹幕框**固定在面板底部**，
-  玩家每点一下必有一句刻薄嘲讽。
+- **抽象彩蛋**：社区名册 6 人，**群友直接出现在行情方块卡里**
+  （星辰永远是最稳的那只，Wehos 永远是最野的那只，还各带一个小头像），
+  猫娘弹幕框**固定在面板底部**，玩家每点一下必有一句刻薄嘲讽。
 - **导演台**新增「赛博弹窗轰炸」：50 个 🤡、关不掉、封锁操作 5 秒。
 - **防死锁**（0.8.3）：网贷弹窗点了**立刻**关窗、永远带一个「我不借了，把我埋了吧」
   的逃生按钮、30 秒没人操作就自动结算；轰炸有**客户端硬截止**；标题栏多一个
@@ -57,20 +74,21 @@ P4 / P5 / P6 **逐位一致**。
 | P5 | 完整面板 + 聊天卡片 + 猫娘播报与嘲讽 | ✅ 已完成 |
 | P5.5 | 体验打磨：打工工资 / 入场三选一 / 猫娘留白 / 天台三屏 / 称号图鉴 / 跳过本日 | ✅ 已完成 |
 | P6 | 仓库化收口：独立 git 仓库 / CI 工作流 / 错误码 i18n 查表 / 按需拉 K 线 / 官方 TSX 类型检查 | ✅ 已完成 |
-| P7 | 社区抽象化与节目效果：改名 `reverse_rich_sim` / 双版本（导演模式开关）/ 社区名册 + 猫娘弹幕 / 荒诞弹窗 / Emoji 海 | ✅ 已完成 |
+| P7 | 社区抽象化与节目效果：改名 `mock_stock_meow` / 双版本（导演模式开关）/ 社区名册 + 猫娘弹幕 / 荒诞弹窗 / Emoji 海 | ✅ 已完成 |
 | P7.1 | **回滚 0.8.0 崩 UI 的视觉特效**：病危只留顶部红色 Alert + 数字染红；去掉闪烁 / 裂纹 / 滤镜 / 遮罩 / 按钮漂移；面板回宿主默认样式 + 防御性 CSS | ✅ 已完成 |
 | P7.2 | **UI 极简重构 + 终极抽象补全**：K 线全宽主视觉 / 行情表 + Sparkline / 持仓大号盈亏 / 一键梭哈割肉 / 零花钱·家底·棺材本 / 三档字体 / 群友实体化 / 弹幕固定框 / 赛博弹窗轰炸 | ✅ 已完成 |
 | P7.3 | **弹窗防死锁**（0.8.2 真机事故修复）：网贷弹窗同步关窗 + 破产逃生按钮 + 30 秒超时（前端关窗 / 服务端自动结算）/ 轰炸客户端硬截止 / 标题栏紧急逃生按钮 | ✅ 已完成 |
 | P7.4 | **入口打通**（0.8.3 真机事故修复）：面板空闲态双开局按钮 + 空闲态隐藏操作区 + `@llm_tool`（聊天指令真能触发）+ LLM 工具注册自愈 + 面板自轮询 + 动作失败自动 resync | ✅ 已完成 |
+| P8.0 | **正式化 + 视觉大重构**：改名《拟股喵喵》（ID `mock_stock_meow`）/ 清丽轻科技风（CSS 变量覆写 + 毛玻璃质感卡片 + 薄荷绿珊瑚粉）/ 行情与持仓换方块卡片网格 / 胶囊大按钮操作台 / 家道三档资金文案 / `ui/assets/` 群友头像与梗图 | ✅ 已完成 |
 
-**当前版本 0.8.4**，单测 **563 例全绿**，`neko-plugin check` 0 error，
+**当前版本 0.9.0**，单测 **582 例全绿**，`neko-plugin check` 0 error，
 `check --release` 与 `check --release --market-release` 均通过，
 官方 `check-hosted-tsx` 类型检查通过。
 
 ## 目录结构
 
 ```text
-plugin/plugins/reverse_rich_sim/
+plugin/plugins/mock_stock_meow/
 ├── plugin.toml            # 插件清单：身份、入口、能力开关、Hosted UI 声明
 ├── __init__.py            # 第一层：宿主事件 ↔ 第二层调用 的翻译层
 ├── cards.py               # P5：9 种事件卡片 + 猫娘嘲讽文案 + 死亡叙事（只产数据，不投递）
@@ -78,11 +96,13 @@ plugin/plugins/reverse_rich_sim/
 ├── pyproject.toml         # 零第三方依赖
 ├── i18n/zh-CN.json        # 本地化文案（错误码 / 面板 / 卡片 / 嘲讽 / 天台三屏 / 家道三档 / 导演台）
 ├── community_roster.json  # P7/P7.2：社区名册（6 名群友 + 方向中立的抽象新闻池）
-├── ui/panel.tsx           # Hosted UI 市场面板（P7.2 极简版 + P7.3 防死锁 + P7.4 入口打通：开局按钮 / 自轮询 / 失败 resync）
+├── ui/panel.tsx           # Hosted UI 市场面板（P8 清丽版：CSS 变量覆写 / 方块卡片网格 / 胶囊操作台 / 群友头像；P7.4：开局按钮 / 自轮询 / 失败 resync）
+├── ui/assets/             # P8.0：静态资源（6 个群友头像 PNG + 2 张梗图 PNG + avatars.ts 内联产物）
+├── tools/gen_assets.py    # P8.0：头像与梗图的生成脚本（改图后重跑它）
 ├── engine/                # 第三层：纯标准库游戏引擎
 ├── modes/                 # 第二层：经典 / 无限 两种模式
 ├── storage/               # 持久化（DB 权威 + 状态缓存）
-└── tests/                 # 563 例单测（含自带 Hosted TSX lint + SDK 导入边界守卫 + 数据库懒建表守卫 + 运行时能力对齐守卫 + P7 / P7.1 / P7.2 效果守卫 + P7.3 防死锁守卫 + P7.4 入口守卫）
+└── tests/                 # 582 例单测（含自带 Hosted TSX lint + SDK 导入边界守卫 + 数据库懒建表守卫 + 运行时能力对齐守卫 + P7 / P7.1 / P7.2 效果守卫 + P7.3 防死锁守卫 + P7.4 入口守卫 + P8.0 身份与视觉守卫）
 ```
 
 三层架构规划：
@@ -99,14 +119,14 @@ plugin/plugins/reverse_rich_sim/
 在 N.E.K.O 源码树根目录（`N.E.K.O-main`）执行：
 
 ```bash
-uv run neko-plugin check "D:\项目\N.E.K.O\neko-猫娘股市\plugin\plugins\reverse_rich_sim"
+uv run neko-plugin check "D:\项目\N.E.K.O\neko-猫娘股市\plugin\plugins\mock_stock_meow"
 ```
 
 发布预检（**只做校验，不发布**）：
 
 ```bash
-uv run neko-plugin check --release "D:\项目\N.E.K.O\neko-猫娘股市\plugin\plugins\reverse_rich_sim"
-uv run neko-plugin check --release --market-release "D:\项目\N.E.K.O\neko-猫娘股市\plugin\plugins\reverse_rich_sim"
+uv run neko-plugin check --release "D:\项目\N.E.K.O\neko-猫娘股市\plugin\plugins\mock_stock_meow"
+uv run neko-plugin check --release --market-release "D:\项目\N.E.K.O\neko-猫娘股市\plugin\plugins\mock_stock_meow"
 ```
 
 > Windows 中文环境提示：CLI 内部有一处未指定 `encoding` 的文件读取，
@@ -327,8 +347,8 @@ N.E.K.O 源码树根，因此本地校验用临时迷你仓库进行（源码树
 
 | 工具 | 作用 |
 | :-- | :-- |
-| `reverse_rich_sim_join` | 开一局（`mode` 参数，默认 `classic_arcade`） |
-| `reverse_rich_sim_status` | 查当前局：第几天、总资产、还活着没 |
+| `mock_stock_meow_join` | 开一局（`mode` 参数，默认 `classic_arcade`） |
+| `mock_stock_meow_status` | 查当前局：第几天、总资产、还活着没 |
 
 **问题三：面板是陈旧的**
 宿主**从不轮询** Hosted 面板的上下文 —— 只在「插件启停」和「面板自己发起
@@ -365,7 +385,7 @@ N.E.K.O 源码树根，因此本地校验用临时迷你仓库进行（源码树
 `sys.path` 上）能 import 过去，打包进真实宿主就启动即崩：
 
 ```
-Plugin 'reverse_rich_sim' lifecycle event 'startup' failed:
+Plugin 'mock_stock_meow' lifecycle event 'startup' failed:
 Process crashed: No module named 'plugin.sdk.shared.core.cards'
 ```
 
@@ -415,7 +435,7 @@ Steam 版宿主（0.9.0）实测：插件进程启动时 `ctx._effective_config`
 
 * schema 改成**懒建表**（`Repo.ensure_schema`）——第一次真正用数据库时补建，
   失败也不放弃；`tests/test_db_bootstrap.py` 锁死这条性质。
-* **运行时能力对齐**（`ReverseRichSimPlugin._effective_runtime_config`）：
+* **运行时能力对齐**（`MockStockMeowPlugin._effective_runtime_config`）：
   把**宿主缓存 > 读到的配置 > 插件自己的 `plugin.toml` 清单**合成一份完整
   配置再喂给 `refresh_runtime_config`。清单兜底的合法性来自 SDK 自己的话：
   *"plugin.toml manifest metadata is authoritative"*；宿主**显式**给过的值
@@ -427,7 +447,7 @@ Steam 版宿主（0.9.0）实测：插件进程启动时 `ctx._effective_config`
 ## CI
 
 `.github/workflows/verify.yml` 与 `.github/workflows/release.yml` 由官方
-`neko-plugin setup-repo reverse_rich_sim --github-actions` 生成，Market 发布走
+`neko-plugin setup-repo mock_stock_meow --github-actions` 生成，Market 发布走
 标准 release 工作流。
 
 仓库行尾统一 LF（`.gitattributes` + `core.autocrlf=false`）。

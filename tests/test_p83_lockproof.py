@@ -279,7 +279,7 @@ def test_loan_prompt_open_registers_the_deadline(plugin) -> None:
 def test_loan_prompt_watchdog_auto_borrows_in_infinite_mode(plugin) -> None:
     """**服务端兜底**：30 秒没人操作 → 无限模式自动强制借入。"""
     _value(_run(plugin.join(mode="infinite", seed=9305)))
-    from plugins.reverse_rich_sim.storage.session import load_session
+    from plugins.mock_stock_meow.storage.session import load_session
 
     session = _run(
         load_session(plugin._repo, plugin.state, engine_config=_run(plugin._engine_config()))
@@ -301,7 +301,7 @@ def test_loan_prompt_watchdog_auto_borrows_in_infinite_mode(plugin) -> None:
 def test_loan_prompt_watchdog_auto_bankrupts_in_classic_mode(plugin) -> None:
     """经典模式没有高利贷 → 超时只能「拒绝并破产」。"""
     _value(_run(plugin.join(mode="classic_beginner", seed=9305)))
-    from plugins.reverse_rich_sim.storage.session import load_session
+    from plugins.mock_stock_meow.storage.session import load_session
 
     session = _run(
         load_session(plugin._repo, plugin.state, engine_config=_run(plugin._engine_config()))
@@ -382,7 +382,7 @@ def test_panel_i18n_keys_all_exist() -> None:
 
 def test_version_is_bumped() -> None:
     raw = _PLUGIN_TOML.read_text(encoding="utf-8")
-    assert 'version = "0.8.4"' in raw
+    assert 'version = "0.9.0"' in raw
 
 
 def test_engine_and_mode_layers_are_still_untouched() -> None:

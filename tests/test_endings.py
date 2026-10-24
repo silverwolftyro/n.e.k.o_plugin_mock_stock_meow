@@ -14,7 +14,7 @@ import pytest
 
 from conftest import run
 from engine.settlement import check_inaction
-from plugins.reverse_rich_sim.storage.repo import Repo
+from plugins.mock_stock_meow.storage.repo import Repo
 
 _TICKS_PER_DAY_CLASSIC = 12
 _TICKS_PER_DAY_INFINITE = 48
@@ -137,8 +137,8 @@ def test_classic_mode_reports_finished_at_total_game_days(plugin) -> None:
     """模式层：第 30 个游戏日结束后 ``is_finished`` 为真。"""
     from engine.config import default_engine_config
     from engine.models import MarketState, Player
-    from plugins.reverse_rich_sim.modes import get_mode
-    from plugins.reverse_rich_sim.modes.shared import ModeContext
+    from plugins.mock_stock_meow.modes import get_mode
+    from plugins.mock_stock_meow.modes.shared import ModeContext
 
     config = default_engine_config()
     mode = get_mode("classic_beginner")

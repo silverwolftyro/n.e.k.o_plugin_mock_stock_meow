@@ -1,4 +1,4 @@
 [project]
-name = "reverse_rich_sim"
+name = "mock_stock_meow"
 version = "0.1.0"
 dependencies = []

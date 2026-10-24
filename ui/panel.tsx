@@ -1,4 +1,4 @@
-// 反向暴富模拟器 · 市场面板（P7.2 极简重构版）
+// 拟股喵喵 · 市场面板（P8 清丽重构版）
 //
 // Hosted TSX 规则（.agent/skills/neko-plugin/references/hosted-ui-authoring.md）：
 //   * 只从 `@neko/plugin-ui` 导入；不引 npm 包；不引外部裸模块；
@@ -17,13 +17,19 @@
 //   3. `style` 传的是**对象**（运行时逐键写 `dom.style[key]`），
 //      **不是** CSS 字符串；CSS 自定义属性（`--x`）用 `setProperty` 也支持。
 //
-// 0.8.1 起的**硬规矩**（Steam 宿主 0.9.0 上 0.8.0 把面板 UI 整个搞崩了）：
-//   * 面板**只用宿主组件的默认样式** —— 不碰 opacity / filter / animation /
-//     position / 背景 / 伪元素；
-//   * 卡片必须是 `Stack` 的**直接** flex item（和 P6 已验证的骨架一致），
-//     中间**不许**再塞 `<div>` 包裹层；
-//   * 自定义 CSS 只剩「盒模型 + 溢出收敛 + 关掉入场动画 + 字体档位」这类
-//     **不改变布局**的声明（见 RRM_CSS）；
+// 0.8.1 起的**硬规矩**（Steam 宿主 0.9.0 上 0.8.0 把面板 UI 整个搞崩了）。
+// P8.0 把视觉整个翻面成「清丽轻科技风」，但下面这些**崩溃防线一条都没破**：
+//   * 零 ``position``（absolute / fixed）、零 ``inset``、零 ``z-index``；
+//   * 零 ``filter``（**真毛玻璃做不了** —— 它靠 ``backdrop-filter``，属于
+//     filter 家族，会给祖先建立 containing block 把宿主布局搞歪；这里用
+//     「半透明白 + 淡阴影 + 16px 圆角」做质感近似）；
+//   * 零 ``opacity``（半透明一律用 ``rgba`` 表达）；
+//   * 零伪元素、零 ``@keyframes``；唯一的 ``animation`` 是 ``animation: none``；
+//   * 渐变**只允许纵向**（180deg）—— 0.8.0 的巨大 X 线条是
+//     ``position:absolute + inset:0 + 对角渐变`` 做的，这里既没有定位也没有
+//     对角渐变；
+//   * 卡片与布局容器之间**不许有自定义 div 包裹层**（卡片必须是布局容器的
+//     **直接**子元素）—— 0.8.0 的第四条根因；
 //   * 「病危」只有两种表现：面板顶部一条红色 `Alert` + 关键数字染红。
 //
 // P7.2 的**极简重构**（先做减法，再塞抽象文案）：
@@ -35,6 +41,15 @@
 //   * 操作区改成**一键梭哈 / 一键割肉**（输入框、下拉框全部收掉）；
 //   * 猫娘弹幕变成**常驻在面板底部**的固定框（文档流，不悬浮）。
 //
+// P8.0 的**清丽轻科技风**（详见 RRM_CSS 的注释）：
+//   * 主题靠**重新定义宿主 CSS 变量**换皮 —— 宿主所有组件（卡片 / 按钮 /
+//     徽标 / 文本）一次性变成浅色系，不用逐个组件覆写；
+//   * 行情表换成**方块卡片网格**（宿主 `Columns` 的 fluid 模式，窗口宽就是
+//     4 列、窄就是 2 列）；
+//   * 操作台换成**两个并排的胶囊大按钮**（各占一半宽）；
+//   * 群友（社区名册）在名字旁边挂一个**小圆头像**（`ui/assets/` 的内联 PNG，
+//     加载失败退回专属 Emoji，绝不破图）。
+//
 // 局中隐藏（P4 §14 / P5 方案 B）：本面板**不显示** heat、反转日、新闻真假。
 // 载荷里没有的东西，面板也拿不到 —— 面板只渲染 `state` 里的白名单字段。
 import {
@@ -42,7 +57,7 @@ import {
   Alert,
   Button,
   Card,
-  DataTable,
+  Columns,
   Divider,
   Grid,
   Inline,
@@ -64,7 +79,18 @@ import {
 } from "@neko/plugin-ui"
 import type { HostedAction, PluginSurfaceProps, Tone } from "@neko/plugin-ui"
 
+import { AVATARS, MEOW_BANKRUPT, MEOW_LOAN } from "./assets/avatars"
+
 type KlinePoint = [number, number]
+
+/**
+ * 宿主传进来的翻译函数（``PluginSurfaceProps["t"]``）。
+ *
+ * P8.0：方块卡片是**独立组件**（不 Panel 的闭包里），所以要显式把
+ * ``t`` 传下去 —— **绝不在组件里写裸中文字面量**（P8 红线：所有新增
+ * 文字必须进 i18n 词典）。
+ */
+type Translate = (key: string, params?: Record<string, any>) => string
 
 type Stock = {
   id: string
@@ -250,49 +276,158 @@ const PHASE_TONE: Record<string, Tone> = {
   slaughter: "danger",
 }
 
-/** 涨绿跌红（和 K 线、结算卡片一个口径）。 */
-const TREND_UP = "#15803d"
-const TREND_DOWN = "#b91c1c"
+/**
+ * 涨绿跌红 —— P8.0 换成**柔和**配色：涨是薄荷绿，跌是珊瑚粉。
+ *
+ * 这两个值和 RRM_CSS 里的 ``--success`` / ``--danger`` 是**同一套**：
+ * canvas 画不出来 CSS 变量（canvas 只认字面色值），所以这里写死同样的
+ * 十六进制，两边必须同步改。
+ */
+const TREND_UP = "#5AC8A8"
+const TREND_DOWN = "#FF6B81"
 
 /**
- * 0.8.1 防御性基线 + P7.2 字体档位 —— **只做收敛，绝不做任何视觉效果**。
+ * P8.0：**清丽轻科技风**（从暗色调赛博朋克彻底翻面）。
  *
- * 0.8.0 在 Steam 宿主（0.9.0）上把面板 UI 整个搞崩了，根因有**五**条：
+ * 做法（很重要，别写成逐组件覆写）：
+ * 宿主的主题是靠 **CSS 变量**驱动的（`--text` / `--muted` / `--primary` /
+ * `--success` / `--danger` / `--border` / `--surface` / `--surface-strong` /
+ * `--radius-md`）。所以只要在 `.rrm-root` 上**重新定义这些变量**，宿主
+ * 所有组件（卡片 / 按钮 / 徽标 / 文本 / 分隔线）会**一次性**换成浅色系 ——
+ * 既不用碰宿主源码，也不用逐个组件写覆写。
  *
- *   1. `.neko-card::after` 的 `position:absolute; inset:0` 加两条对角
- *      `linear-gradient` ⇒ 面板上出现**巨大的交叉 X 线条**，直接盖在表格上。
- *   2. 祖先容器上的动画改的是**祖先容器的 opacity** ⇒ 整个面板泛白半透明。
- *   3. 祖先容器上的 `filter: grayscale(...)` ⇒ filter 会给祖先建立
- *      containing block，宿主的 flex / grid 布局随之错位。
- *   4. 自定义的 `<div>` 包裹层把卡片从 `Stack` 的 flex item 变成了嵌套
- *      block ⇒ 间距消失、挤成一团。
- *   5. **宿主自己的** `.neko-page` / `.neko-card` 都带入场动画（从
- *      `opacity: 0` 起步），而宿主每次刷新上下文都会**重建 iframe**，
- *      于是这段入场动画**每次都从头重放** —— 面板长期停在半透明状态。
- *      宿主的 `styles.css` 里其实留了官方逃生口
- *      （`@media (prefers-reduced-motion: reduce)` → `animation: none !important`），
- *      这里照搬它的口径，但**限定在本面板的根节点内**。
+ * 剩下的几条硬规矩**一条都没破**（0.8.0 崩 UI 的五条根因全部规避）：
  *
- * 因此这里的规矩是：
- *   * 面板**只用宿主组件的默认样式**，不碰 opacity / filter / 动画 /
- *     position / 背景 / 伪元素；
- *   * 自定义 CSS 只允许「盒模型 + 溢出收敛 + 关掉入场动画 + 字体档位」
- *     这类**不会改变布局**的声明；
- *   * 卡片必须是 `Stack` 的**直接** flex item（和 P6 已验证的骨架一致）。
- *
- * P7.2 新增的三档字体（**只改字体，不改布局**）：
- *   * 富二代 → 圆润体（幼圆 / YouYuan，缺了自动回退系统字体）；
- *   * 断供   → 细体（font-weight: 300）；
- *   * 濒死   → 中等字重（数字另有「偶尔闪红」，见 `flashOn`）。
- *
- * 宿主 `styles.css` 里本来就有 `* { box-sizing: border-box }` 与
- * `.neko-card { overflow: hidden }`，这里再声明一次是为了不依赖宿主版本。
+ *   * 零 ``position``（absolute / fixed）、零 ``inset``、零 ``z-index``；
+ *   * 零 ``filter``（所以**真毛玻璃做不了** —— 毛玻璃靠 ``backdrop-filter``，
+ *     属于 filter 家族。这里用「半透明白 + 淡阴影 + 16px 圆角」做**质感近似**，
+ *     视觉上是清透的，但绝不会给祖先建立 containing block）；
+ *   * 零 ``opacity``（半透明一律用 ``rgba`` 表达）；
+ *   * 零伪元素（``content:`` 一律不写）；
+ *   * 唯一的 ``animation`` 是 ``animation: none !important``（关掉宿主入场淡入）；
+ *   * 渐变**只允许纵向**（180deg）—— 0.8.0 的巨大 X 线条是 ``position:absolute
+ *     + inset:0 + 对角渐变`` 做的，这里既没有定位也没有对角渐变。
  */
 const RRM_CSS = `
 *, *::before, *::after { box-sizing: border-box; }
 .rrm-root, .rrm-root *, .rrm-root *::before, .rrm-root *::after { animation: none !important; }
 .rrm-root .neko-stack > *, .rrm-root .neko-card-body > * { min-width: 0; }
 .rrm-root .neko-key-value-value { overflow-wrap: anywhere; }
+
+/* ── ① 主题变量覆写：一次改动，宿主所有组件跟着变浅 ─────────────── */
+.rrm-root {
+  --text: #22304a;
+  --muted: #6b7a90;
+  --primary: #4c7df0;
+  --success: #5ac8a8;
+  --danger: #ff6b81;
+  --border: rgba(148, 163, 184, 0.26);
+  --surface: rgba(255, 255, 255, 0.72);
+  --surface-strong: #ffffff;
+  --bg: #eef4fb;
+  --radius-md: 16px;
+  background: linear-gradient(180deg, #e9f1fa 0%, #f6fafe 42%, #ffffff 100%);
+  color: var(--text);
+}
+
+/* ── ② 卡片：半透明白 + 16px 圆角 + 极淡阴影 ──────────────────────── */
+.rrm-root .neko-card {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 16px;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.06);
+}
+.rrm-root .neko-card-title { color: #1f2a44; font-weight: 760; }
+.rrm-root .neko-heading { color: #1f2a44; }
+.rrm-root .neko-text { color: #6b7a90; }
+.rrm-root .neko-badge {
+  background: rgba(255, 255, 255, 0.86);
+  border-color: rgba(148, 163, 184, 0.28);
+  color: #55637a;
+}
+
+/* ── ③ 按钮：胶囊化 + 柔和色调 ───────────────────────────────────── */
+.rrm-root .neko-button {
+  border-radius: 999px;
+  background: rgba(76, 125, 240, 0.10);
+  border-color: rgba(76, 125, 240, 0.30);
+  color: #3563d4;
+  font-weight: 700;
+}
+.rrm-root .neko-button[data-tone="success"] {
+  background: rgba(90, 200, 168, 0.14);
+  border-color: rgba(90, 200, 168, 0.44);
+  color: #2e9e80;
+}
+.rrm-root .neko-button[data-tone="danger"] {
+  background: rgba(255, 107, 129, 0.12);
+  border-color: rgba(255, 107, 129, 0.42);
+  color: #e04e66;
+}
+
+/* ── ④ 操作台的两个大胶囊按钮（各占一半宽，带一点微光）────────────── */
+.rrm-root .neko-button.rrm-pill {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 13px 14px;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  border-radius: 999px;
+  /* 真机教训：按钮被压窄时中文会**竖着排**（一字一行），难看且读不出来。
+     锁死不换行，宁可两行空间也要横着排。 */
+  white-space: nowrap;
+}
+/* ActionButton 会把按钮包进一个 div（class 名 neko-action-control），
+   而那个壳在宿主里是 inline-grid（收缩到内容宽）—— 不改它的话，
+   网格里的列会被撑歪，两个按钮就不是各占一半。
+   这里把壳改成 grid（撑满列），里面的按钮再 width: 100%。
+   注意：这段 CSS 在反引号模板字符串里，**注释里绝不能出现反引号**。 */
+.rrm-root .neko-action-control {
+  display: grid;
+  align-items: stretch;
+  min-width: 0;
+}
+.rrm-root .neko-action-control > .neko-button.rrm-pill { width: 100%; }
+.rrm-root .neko-button.rrm-pill-buy {
+  background: rgba(90, 200, 168, 0.16);
+  border-color: rgba(90, 200, 168, 0.46);
+  color: #1f8a6e;
+  box-shadow: 0 8px 22px rgba(90, 200, 168, 0.18);
+}
+.rrm-root .neko-button.rrm-pill-sell {
+  background: rgba(255, 107, 129, 0.14);
+  border-color: rgba(255, 107, 129, 0.46);
+  color: #e04e66;
+  box-shadow: 0 8px 22px rgba(255, 107, 129, 0.18);
+}
+
+/* ── ⑤ 辅助按钮：缩小、变轻 ─────────────────────────────────────── */
+.rrm-root .neko-button.rrm-mini {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+/* ── ⑥ 群友头像（网格卡片里的小圆头像）──────────────────────────── */
+.rrm-root .rrm-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(255, 255, 255, 0.9);
+  vertical-align: middle;
+}
+.rrm-root .rrm-stock-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 14px;
+  color: #22304a;
+}
+
+/* ── ⑦ P7.2 遗留的三档字体（只改字体，不改布局）──────────────────── */
 .rrm-font-rich { font-family: "YouYuan", "Yuanti SC", "Hiragino Maru Gothic ProN", "Microsoft YaHei UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
 .rrm-font-broke { font-weight: 300; }
 .rrm-font-dying { font-weight: 500; }
@@ -413,7 +548,7 @@ function BigStat(props: {
  * 画一条折线；万一宿主环境拿不到 2D 上下文，就**降级成柱子**（纯 div，
  * 不依赖任何定位 / 动画），绝不抛错、绝不崩面板。
  */
-function Sparkline(props: { points: number[]; up: boolean }) {
+function Sparkline(props: { points: number[]; up: boolean; title?: string }) {
   const canvasRef = useRef<any>(null)
   const [broken, setBroken] = useState(false)
   const values = props.points || []
@@ -485,6 +620,7 @@ function Sparkline(props: { points: number[]; up: boolean }) {
     return h(
       "div",
       {
+        title: props.title,
         style: {
           display: "flex",
           alignItems: "flex-end",
@@ -499,8 +635,139 @@ function Sparkline(props: { points: number[]; up: boolean }) {
     ref: canvasRef,
     width: 84,
     height: 26,
+    title: props.title,
     style: { display: "block" },
   })
+}
+
+/**
+ * P8.0：**群友头像**。
+ *
+ * 社区名册里的群友（星辰 / Wehos / 老王 / 小明 / 熬夜怪 / 潜水员）在行情
+ * 方块卡里挂一个小圆头像 —— 头像是 ``ui/assets/`` 里内联的 PNG（data URI）。
+ *
+ * 极端情况下（图片解码失败）**退回专属 Emoji**，绝不出现破图。
+ */
+function RosterAvatar(props: { alias?: string }) {
+  const alias = props.alias || ""
+  const entry = AVATARS[alias]
+  const [broken, setBroken] = useState(false)
+  if (!entry || broken) {
+    return h(
+      "span",
+      { style: { fontSize: "14px", lineHeight: "1" } },
+      entry ? entry.fallback : "🐱"
+    )
+  }
+  return h("img", {
+    src: entry.src,
+    alt: alias,
+    className: "rrm-avatar",
+    onError: () => setBroken(true),
+  })
+}
+
+/**
+ * P8.0：**行情方块卡片**（网格单元）。
+ *
+ * 一格 = 股票名（+ 群友头像）+ 微型折线 + **巨大**涨跌百分比 + 现价。
+ *
+ * 用宿主 `Card` 组件 ⇒ 它是网格容器的**直接**子元素（0.8.0 的第四条根因
+ * 就是自定义 div 包裹层把卡片挤出 flex 流），布局由宿主负责，不会挤成一团。
+ *
+ * 三个信息维度（走势 / 现价 / 涨跌）的标签走 i18n，用原生 ``title`` 属性
+ * 当悬浮提示 —— 不加任何 CSS，也不破坏方块卡的紧凑排版。
+ */
+function StockTile(props: { stock: Stock; t: Translate }) {
+  const stock = props.stock
+  const t = props.t
+  const up = Number(stock.change || 0) >= 0
+  return h(
+    Card,
+    { className: "rrm-tile" },
+    h(
+      Stack,
+      { gap: 6 },
+      h(
+        "span",
+        { className: "rrm-stock-name" },
+        h(RosterAvatar, { alias: stock.roster_alias }),
+        stock.display_name || stock.name
+      ),
+      h(Sparkline, {
+        points: (stock.spark || []).map((point) => point[1]),
+        up,
+        title: t("visual.trend_title"),
+      }),
+      h(
+        "span",
+        {
+          title: t("visual.change_title"),
+          style: {
+            fontSize: "26px",
+            fontWeight: 800,
+            color: changeColor(stock.change),
+            whiteSpace: "nowrap",
+            lineHeight: "1.1",
+          },
+        },
+        changeText(stock.change)
+      ),
+      h(
+        "span",
+        {
+          title: t("visual.price_title"),
+          style: { fontSize: "12px", color: "var(--muted)" },
+        },
+        money(stock.price)
+      )
+    )
+  )
+}
+
+/**
+ * P8.0：**持仓方块卡片**（网格单元）。
+ *
+ * 和行情方块卡同一套视觉：名字 + 大号盈亏 + 当前市值。
+ */
+function PositionTile(props: { position: Position; t: Translate }) {
+  const position = props.position
+  const t = props.t
+  const pnl = Number(position.unrealized_pnl || 0)
+  const color =
+    pnl > 0.001 ? "var(--success)" : pnl < -0.001 ? "var(--danger)" : "var(--muted)"
+  return h(
+    Card,
+    { className: "rrm-tile" },
+    h(
+      Stack,
+      { gap: 4 },
+      h(
+        "span",
+        { className: "rrm-stock-name" },
+        position.display_name || position.name
+      ),
+      h(
+        "span",
+        {
+          title: t("visual.pnl_title"),
+          style: {
+            fontSize: "26px",
+            fontWeight: 800,
+            color,
+            whiteSpace: "nowrap",
+            lineHeight: "1.1",
+          },
+        },
+        `${pnl > 0 ? "+" : ""}${money(pnl)}`
+      ),
+      h(
+        "span",
+        { style: { fontSize: "12px", color: "var(--muted)" } },
+        money(position.market_value)
+      )
+    )
+  )
 }
 
 /** K 线：用 div 拼出来的迷你蜡烛图（宿主画不了 SVG）。 */
@@ -516,8 +783,8 @@ function Kline(props: {
   const max = Math.max.apply(null, prices)
   const min = Math.min.apply(null, prices)
   const span = max - min || 1
-  // P7.2：K 线是**主视觉**，所以更高、而且自适应铺满全宽。
-  const height = 190
+  // P8.0：K 线是**上半区的主视觉** —— 更高、更抢眼。
+  const height = 232
   // 0.8.1：不再按档位改 K 线颜色（家道中落的视觉降级已回滚，见 RRM_CSS 注释）。
   const up = TREND_UP
   const down = TREND_DOWN
@@ -734,6 +1001,9 @@ export default function Panel(props: PluginSurfaceProps<State>) {
 
   const stocks = state.stocks || []
   const positions = state.positions || []
+  // P8.0：行情网格最多铺 12 张方块卡（再多是视觉噪音，不是信息）。
+  const visibleStocks = stocks.slice(0, 12)
+  const hiddenStockCount = Math.max(0, stocks.length - visibleStocks.length)
   const news = state.news_today || []
   const catgirl = state.catgirl || null
   const pending = state.pending_action || null
@@ -1157,6 +1427,12 @@ export default function Panel(props: PluginSurfaceProps<State>) {
           {titleBar}
           <Card title={t("panel.settlement")}>
             <Stack gap={12}>
+              {/* P8.0：结算页配图（瘫在空钱包上的猫）—— 内联 data URI。 */}
+              {h("img", {
+                src: MEOW_BANKRUPT,
+                alt: t("panel.settlement_image_alt"),
+                style: { width: "160px", height: "120px", borderRadius: "12px" },
+              })}
               <Alert tone="info" message={t("panel.settlement_notice")} />
               <KeyValue
                 items={[
@@ -1368,6 +1644,13 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     children: h(
       Stack,
       { gap: 12 },
+      // P8.0：弹窗配图（猫爪按着合同）—— 最基础的 <img>，不带 onError
+      // 也无所谓：它是**内联 data URI**，不存在加载失败这回事。
+      h("img", {
+        src: MEOW_LOAN,
+        alt: t("visual.loan_modal_image_alt"),
+        style: { width: "160px", height: "120px", borderRadius: "12px" },
+      }),
       h(Text, null, t("visual.loan_modal_body")),
       h(Alert, { tone: "danger", message: t("visual.loan_modal_note") }),
       // P7.3：把逃生通道**写在脸上**（玩家不用猜有没有出路）。
@@ -1482,15 +1765,10 @@ export default function Panel(props: PluginSurfaceProps<State>) {
           </Stack>
         </Card>
 
-        {/* ── P7.2 ②：傻子版第一屏 —— 三块超大数字 ─────────────────── */}
+        {/* ── P8.0 ②：家道三档的第一屏数字 ──────────────────────────
+            顺序改成「盈亏 | 现钱 | **身家**」—— 身家那张卡落在**右上角**，
+            它的名字随 stage 变：零花钱（富二代）/ 家底（断供）/ 棺材本（濒死）。 */}
         <Grid cols={3} gap={12}>
-          <BigStat
-            label={assetsLabel}
-            value={money(totalAssets)}
-            hint={stageHint}
-            color={flashColor}
-            size={36}
-          />
           <BigStat
             label={t("visual.pnl_title")}
             value={`${pnl > 0 ? "+" : ""}${money(pnl)}`}
@@ -1498,7 +1776,19 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             color={pnlColor}
             size={36}
           />
-          <BigStat label={cashLabel} value={money(state.cash)} size={28} />
+          <BigStat
+            label={cashLabel}
+            value={money(state.cash)}
+            hint={stageHint}
+            size={30}
+          />
+          <BigStat
+            label={assetsLabel}
+            value={money(totalAssets)}
+            hint={t("visual.assets_hint", { stage: stageLabel })}
+            color={flashColor}
+            size={36}
+          />
         </Grid>
 
         {/* ── P7.2 ③：明日账单（交不起就是红色警告）────────────────── */}
@@ -1519,61 +1809,23 @@ export default function Panel(props: PluginSurfaceProps<State>) {
           />
         )}
 
-        {/* ── P7.2 ④：行情列表（极简 + 走势小折线 + 超大涨跌）───────── */}
+        {/* ── P8.0 ③：中半区 —— 行情**方块卡片网格** ──────────────────
+            用宿主 `Columns` 的 fluid 模式：面板宽就是 4 列，窄就是 2 列。
+            每张方块卡 = 股票名（+ 群友头像）+ 微型折线 + 巨大涨跌百分比。
+            卡片是 `Columns` 的**直接**子元素 —— 中间没有任何 div 包裹层。 */}
         <Card title={t("visual.market_title")}>
-          <DataTable<Stock>
-            data={stocks}
-            rowKey="id"
-            emptyText={t("panel.no_stocks")}
-            columns={[
-              {
-                key: "name",
-                label: t("panel.stock"),
-                render: (row) =>
-                  h(
-                    "span",
-                    { style: { fontWeight: 700, fontSize: "14px" } },
-                    row.display_name || row.name
-                  ),
-              },
-              {
-                key: "spark",
-                label: t("visual.trend_title"),
-                render: (row) =>
-                  h(Sparkline, {
-                    points: (row.spark || []).map((point) => point[1]),
-                    up: Number(row.change || 0) >= 0,
-                  }),
-              },
-              {
-                key: "price",
-                label: t("visual.price_title"),
-                render: (row) =>
-                  h(
-                    "span",
-                    { style: { fontWeight: 700, fontSize: "15px" } },
-                    money(row.price)
-                  ),
-              },
-              {
-                key: "change",
-                label: t("visual.change_title"),
-                render: (row) =>
-                  h(
-                    "span",
-                    {
-                      style: {
-                        fontSize: "26px",
-                        fontWeight: 800,
-                        color: changeColor(row.change),
-                        whiteSpace: "nowrap",
-                      },
-                    },
-                    changeText(row.change)
-                  ),
-              },
-            ]}
-          />
+          {stocks.length === 0 ? (
+            <Text>{t("panel.no_stocks")}</Text>
+          ) : (
+            <Stack gap={10}>
+              <Columns fluid minWidth={228} gap={12}>
+                {visibleStocks.map((stock) => h(StockTile, { key: stock.id, stock, t }))}
+              </Columns>
+              {hiddenStockCount > 0 ? (
+                <Text>{t("panel.more_stocks", { count: hiddenStockCount })}</Text>
+              ) : null}
+            </Stack>
+          )}
         </Card>
 
         {/* ── P7.2 ⑤：持仓列表（只留名称 / 市值 / 大号盈亏）───────── */}
@@ -1582,57 +1834,11 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             {positions.length === 0 ? (
               <Text>{t("panel.no_positions")}</Text>
             ) : (
-              <DataTable<Position>
-                data={positions}
-                rowKey="stock_id"
-                emptyText={t("panel.no_positions")}
-                columns={[
-                  {
-                    key: "name",
-                    label: t("panel.stock"),
-                    render: (row) =>
-                      h(
-                        "span",
-                        { style: { fontWeight: 700, fontSize: "14px" } },
-                        row.display_name || row.name
-                      ),
-                  },
-                  {
-                    key: "market_value",
-                    label: t("visual.price_title"),
-                    render: (row) =>
-                      h(
-                        "span",
-                        { style: { fontWeight: 700, fontSize: "18px" } },
-                        money(row.market_value)
-                      ),
-                  },
-                  {
-                    key: "unrealized_pnl",
-                    label: t("visual.pnl_title"),
-                    render: (row) =>
-                      h(
-                        "span",
-                        {
-                          style: {
-                            fontSize: "26px",
-                            fontWeight: 800,
-                            color:
-                              Number(row.unrealized_pnl || 0) > 0.001
-                                ? "var(--success)"
-                                : Number(row.unrealized_pnl || 0) < -0.001
-                                  ? "var(--danger)"
-                                  : "var(--muted)",
-                            whiteSpace: "nowrap",
-                          },
-                        },
-                        `${Number(row.unrealized_pnl || 0) > 0 ? "+" : ""}${money(
-                          row.unrealized_pnl
-                        )}`
-                      ),
-                  },
-                ]}
-              />
+              <Columns fluid minWidth={196} gap={12}>
+                {positions.map((position) =>
+                  h(PositionTile, { key: position.stock_id, position, t })
+                )}
+              </Columns>
             )}
             {(state.concentration || 0) > 0.6 ? (
               <Alert
@@ -1645,17 +1851,27 @@ export default function Panel(props: PluginSurfaceProps<State>) {
           </Stack>
         </Card>
 
-        {/* ── P7.2 ⑥：操作区（一键梭哈 / 一键割肉）─────────────────── */}
+        {/* ── P8.0 ④：下半区 · 操作台 ────────────────────────────────
+            「一键梭哈 / 一键割肉」升级成**胶囊状大按钮**（`rrm-pill`，
+            flex:1 各占一半宽，带一点点薄荷绿 / 珊瑚粉微光）；
+            辅助按钮（分析 / 领工资 / 借高利贷 / 拒绝 / 跳过本日）**缩小**
+            （`rrm-mini`）放在大按钮下面。 */}
         <Card title={t("panel.trade")}>
           <Stack gap={12}>
-            <Inline gap={8} wrap align="center">
-              <Select
-                value={effectiveStockId}
-                options={stockOptions}
-                onChange={(value: any) => setSelectedStock(String(value))}
-              />
+            {/* ── P8.0 ④：两个胶囊大按钮**并排**独占一行 ──────────────
+                真机教训（0.9.0 首轮）：它们原本和 `Select` 挤在同一行，
+                `Select` 抢走了几乎全部宽度 ⇒ 两个大按钮被压成竖排细条、
+                「一键割肉」还被卡片裁掉。
+                真机教训（0.9.0 二轮）：改用 `Inline` 还是不均分 ——
+                `ActionButton` 会把按钮包进 `<div class="neko-action-control">`，
+                而那个壳是 `inline-grid`（收缩到内容宽），`flex: 1 1 0` 落不到
+                真正的 flex 子项上。
+                所以这里用 **`Grid cols={2}`** —— 网格列天生等分，不管子项
+                是裸 `<button>` 还是带壳的 `ActionButton`。 */}
+            <Grid cols={2} gap={10}>
               {buyAllAmount > 0 ? (
                 <ActionButton
+                  className="rrm-pill rrm-pill-buy"
                   action={actionById("buy")}
                   label={t("visual.buy_all")}
                   tone="primary"
@@ -1664,6 +1880,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                 />
               ) : (
                 <Button
+                  className="rrm-pill rrm-pill-buy"
                   onClick={() => {
                     showToast(t("visual.no_money"), "warning")
                   }}
@@ -1671,17 +1888,9 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                   {t("visual.buy_all")}
                 </Button>
               )}
-              <Text>{t("visual.buy_all_hint")}</Text>
-            </Inline>
-
-            <Inline gap={8} wrap align="center">
-              <Select
-                value={effectiveSellStockId}
-                options={positionOptions}
-                onChange={(value: any) => setSellStock(String(value))}
-              />
               {sellAllAmount > 0 ? (
                 <ActionButton
+                  className="rrm-pill rrm-pill-sell"
                   action={actionById("sell")}
                   label={t("visual.sell_all")}
                   tone="danger"
@@ -1690,6 +1899,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                 />
               ) : (
                 <Button
+                  className="rrm-pill rrm-pill-sell"
                   onClick={() => {
                     showToast(t("visual.nothing_to_sell"), "warning")
                   }}
@@ -1697,13 +1907,32 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                   {t("visual.sell_all")}
                 </Button>
               )}
-              <Text>{t("visual.sell_all_hint")}</Text>
+            </Grid>
+
+            {/* ── 标的：买入 / 卖出各一行选择器（不跟大按钮抢宽度）──── */}
+            <Inline gap={10} wrap={false} align="center">
+              <Select
+                value={effectiveStockId}
+                options={stockOptions}
+                onChange={(value: any) => setSelectedStock(String(value))}
+              />
             </Inline>
+            <Text>{t("visual.buy_all_hint")}</Text>
+
+            <Inline gap={10} wrap={false} align="center">
+              <Select
+                value={effectiveSellStockId}
+                options={positionOptions}
+                onChange={(value: any) => setSellStock(String(value))}
+              />
+            </Inline>
+            <Text>{t("visual.sell_all_hint")}</Text>
 
             <Divider />
 
             <Inline gap={8} wrap align="center">
               <ActionButton
+                className="rrm-mini"
                 action={actionById("analyze")}
                 label={t("action.analyze")}
                 values={{ stock_id: effectiveStockId }}
@@ -1717,23 +1946,27 @@ export default function Panel(props: PluginSurfaceProps<State>) {
 
             <Inline gap={8} wrap align="center">
               <ActionButton
+                className="rrm-mini"
                 action={actionById("daily_claim")}
                 label={t("daily.claim")}
                 onError={onActionError}
               />
               <ActionButton
+                className="rrm-mini"
                 action={actionById("daily_loan")}
                 label={t("daily.loan")}
                 tone="danger"
                 onError={onActionError}
               />
               <ActionButton
+                className="rrm-mini"
                 action={actionById("daily_reject")}
                 label={t("panel.reject")}
                 onError={onActionError}
               />
               {/* P5.5 改动 6：跳过本日（无限模式专用，经典模式入口会报错） */}
               <ActionButton
+                className="rrm-mini"
                 action={actionById("skip_day")}
                 label={t("panel.skip_day")}
                 onError={onActionError}

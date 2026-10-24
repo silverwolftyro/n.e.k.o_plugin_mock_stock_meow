@@ -184,8 +184,8 @@ def test_plugin_registers_llm_tools() -> None:
     assert "llm_tool" in source, "插件必须导入 llm_tool"
     names = re.findall(r'@llm_tool\(\s*\n\s*name="([^"]+)"', source)
     assert names, "至少要有一个 @llm_tool"
-    assert "reverse_rich_sim_join" in names, "必须有开局工具"
-    assert "reverse_rich_sim_status" in names, "必须有状态查询工具"
+    assert "mock_stock_meow_join" in names, "必须有开局工具"
+    assert "mock_stock_meow_status" in names, "必须有状态查询工具"
     # 工具名要满足 main_server 的约束：``[A-Za-z0-9_.\-]{1,64}``。
     for name in names:
         assert re.fullmatch(r"[A-Za-z0-9_.\-]{1,64}", name), f"工具名不合法：{name}"
@@ -283,7 +283,7 @@ def test_panel_i18n_keys_all_exist() -> None:
 
 def test_version_is_bumped() -> None:
     raw = _PLUGIN_TOML.read_text(encoding="utf-8")
-    assert 'version = "0.8.4"' in raw
+    assert 'version = "0.9.0"' in raw
 
 
 def test_engine_and_mode_layers_are_still_untouched() -> None:

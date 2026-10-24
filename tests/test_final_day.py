@@ -27,7 +27,7 @@ from __future__ import annotations
 from engine.config import default_engine_config
 from engine.models import MarketState, Player
 from engine.settlement import daily_settlement
-from plugins.reverse_rich_sim.modes.shared import ModeContext, TickOutcome
+from plugins.mock_stock_meow.modes.shared import ModeContext, TickOutcome
 
 
 def _ctx(tier: str, *, day: int, cash: float) -> ModeContext:
@@ -120,7 +120,7 @@ def test_classic_final_day_survives_with_exactly_one_day_of_bill() -> None:
     修正之前，这一局会在这里被"预支第 31 天"判定为交不起，然后被二道贩子
     收光（``liquidated``）。
     """
-    from plugins.reverse_rich_sim.modes.shared import run_daily_settlement
+    from plugins.mock_stock_meow.modes.shared import run_daily_settlement
 
     ctx = _ctx("classic_beginner", day=30, cash=10.0)
     outcome = TickOutcome()
@@ -136,7 +136,7 @@ def test_classic_final_day_survives_with_exactly_one_day_of_bill() -> None:
 
 def test_classic_day_before_final_keeps_the_next_day_check() -> None:
     """第 29 天不是终局日：依然要预支第 30 天的账单。"""
-    from plugins.reverse_rich_sim.modes.shared import run_daily_settlement
+    from plugins.mock_stock_meow.modes.shared import run_daily_settlement
 
     ctx = _ctx("classic_beginner", day=29, cash=10.0)
     outcome = TickOutcome()
@@ -148,7 +148,7 @@ def test_classic_day_before_final_keeps_the_next_day_check() -> None:
 
 def test_infinite_mode_is_never_a_final_day() -> None:
     """无限模式没有终点 → 永远走"预支次日"的判定。"""
-    from plugins.reverse_rich_sim.modes.shared import run_daily_settlement
+    from plugins.mock_stock_meow.modes.shared import run_daily_settlement
 
     ctx = _ctx("infinite", day=9999, cash=150.0)
     outcome = TickOutcome()

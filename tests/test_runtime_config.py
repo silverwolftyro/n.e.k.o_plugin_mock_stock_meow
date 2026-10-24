@@ -32,8 +32,8 @@ import time
 from typing import Any
 
 from conftest import make_plugin, run
-from plugins.reverse_rich_sim.cards import build_taunt_card
-from plugins.reverse_rich_sim.storage.repo import DbUnavailableError
+from plugins.mock_stock_meow.cards import build_taunt_card
+from plugins.mock_stock_meow.storage.repo import DbUnavailableError
 
 
 def _strip_capabilities(ctx: Any) -> None:
@@ -54,7 +54,7 @@ def test_manifest_fills_the_missing_database_capability(ctx) -> None:
     run(instance.on_startup())
 
     assert instance.db.enabled is True, "清单里的 [plugin.database] 应当兜底生效"
-    assert instance.db.db_name == "reverse_rich_sim.db"
+    assert instance.db.db_name == "mock_stock_meow.db"
 
 
 def test_manifest_fills_the_missing_state_backend(ctx) -> None:

@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from plugins.reverse_rich_sim.cards import (
+from plugins.mock_stock_meow.cards import (
     CARD_KINDS,
     build_bill_card,
     build_catgirl_daily_card,

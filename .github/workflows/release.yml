@@ -15,6 +15,6 @@ jobs:
   release:
     uses: Project-N-E-K-O/N.E.K.O/.github/workflows/plugin-market-release.yml@main
     with:
-      plugin-id: reverse_rich_sim
+      plugin-id: mock_stock_meow
       neko-repository: Project-N-E-K-O/N.E.K.O
       neko-ref: main

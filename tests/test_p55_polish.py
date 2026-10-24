@@ -106,12 +106,12 @@ def test_engine_death_titles_are_untouched() -> None:
 def test_plugin_overrides_death_title_by_reason() -> None:
     """插件层按 ``death_reason`` 改写称号 —— 改完**不含**旧词。"""
     from engine.models import Player
-    from plugins.reverse_rich_sim import ReverseRichSimPlugin
+    from plugins.mock_stock_meow import MockStockMeowPlugin
 
     player = Player("p", "n", 0.0, "infinite")
     player.death_reason = "welfare_neglect"
     player.death_title = "连续七天没去领低保。制度不养闲人。"
-    ReverseRichSimPlugin._override_death_title(player)
+    MockStockMeowPlugin._override_death_title(player)
     assert OLD_WORD not in (player.death_title or "")
     assert "工资" in (player.death_title or "")
 
@@ -119,17 +119,17 @@ def test_plugin_overrides_death_title_by_reason() -> None:
     other = Player("p", "n", 0.0, "classic_arcade")
     other.death_reason = "starved"
     other.death_title = "交不起第三天的账单。"
-    ReverseRichSimPlugin._override_death_title(other)
+    MockStockMeowPlugin._override_death_title(other)
     assert other.death_title == "交不起第三天的账单。"
 
 
 def test_version_is_a_patch_bump() -> None:
-    """版本号 = 0.8.4（P7.4：入口打通；P7.3 是 0.8.3；P7.2 是 0.8.2；P7.1 是 0.8.1；P7 是 0.8.0）。"""
-    from plugins.reverse_rich_sim import PLUGIN_VERSION
+    """版本号 = 0.9.0（P8：正式化 + UI 重构；P7.4 是 0.8.4；P7.3 是 0.8.3；P7.2 是 0.8.2；P7.1 是 0.8.1；P7 是 0.8.0）。"""
+    from plugins.mock_stock_meow import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.8.4"
+    assert PLUGIN_VERSION == "0.9.0"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.8.4"' in toml
+    assert 'version = "0.9.0"' in toml
 
 
 # ---------------------------------------------------------------- ① 改动 1
@@ -158,7 +158,7 @@ def test_cards_layer_string_literals_have_no_old_word() -> None:
 
 def test_welfare_card_speaks_in_worker_terms() -> None:
     """工资卡片：标题是「工资到账」，正文是打工叙事。"""
-    from plugins.reverse_rich_sim.cards import build_welfare_card
+    from plugins.mock_stock_meow.cards import build_welfare_card
 
     card = build_welfare_card(cycle=2, amount=1050.0, interval_days=7)
     assert card.title == "工资到账"
@@ -194,7 +194,7 @@ def test_welfare_neglect_kill_title_is_rewritten_end_to_end() -> None:
     """
     from engine.models import Player
     from engine.settlement import daily_settlement
-    from plugins.reverse_rich_sim import ReverseRichSimPlugin
+    from plugins.mock_stock_meow import MockStockMeowPlugin
 
     player = Player(id="p1", name="玩家", cash=100000.0, mode="infinite")
     params = {
@@ -215,7 +215,7 @@ def test_welfare_neglect_kill_title_is_rewritten_end_to_end() -> None:
     assert OLD_WORD in (player.death_title or "")
 
     # 插件层改写之后 —— 玩家看到的是「工资」。
-    ReverseRichSimPlugin._override_death_title(player)
+    MockStockMeowPlugin._override_death_title(player)
     assert OLD_WORD not in (player.death_title or "")
     assert "工资" in (player.death_title or "")
 
@@ -224,7 +224,7 @@ def test_welfare_summary_speaks_in_worker_terms(plugin) -> None:
     """结算页的工资小结用「工资」措辞。"""
     run(plugin.join(mode="infinite", seed=9202))
     engine_config = run(plugin._engine_config())
-    from plugins.reverse_rich_sim.storage.session import load_session
+    from plugins.mock_stock_meow.storage.session import load_session
 
     session = run(load_session(plugin._repo, plugin.state, engine_config=engine_config))
     assert session is not None
@@ -320,7 +320,7 @@ def test_settlement_payload_carries_the_identity_echo(plugin) -> None:
             )
         )
         engine_config = run(instance._engine_config())
-        from plugins.reverse_rich_sim.storage.session import load_session
+        from plugins.mock_stock_meow.storage.session import load_session
 
         session = run(load_session(instance._repo, instance.state, engine_config=engine_config))
         assert session is not None
@@ -338,7 +338,7 @@ def test_survivor_settlement_has_no_identity_echo(plugin) -> None:
     """活到终局（没死）→ **不给**身份呼应句。"""
     run(plugin.join(mode="classic_arcade", seed=9308, identity="debt"))
     engine_config = run(plugin._engine_config())
-    from plugins.reverse_rich_sim.storage.session import load_session
+    from plugins.mock_stock_meow.storage.session import load_session
 
     session = run(load_session(plugin._repo, plugin.state, engine_config=engine_config))
     assert session is not None
@@ -348,7 +348,7 @@ def test_survivor_settlement_has_no_identity_echo(plugin) -> None:
 
 def test_kill_card_carries_the_identity_echo(plugin) -> None:
     """聊天结算卡片也带身份呼应句。"""
-    from plugins.reverse_rich_sim.cards import build_kill_card
+    from plugins.mock_stock_meow.cards import build_kill_card
 
     card = build_kill_card(
         death_reason="liquidated",
@@ -373,7 +373,7 @@ def test_two_new_taunt_variants_exist() -> None:
 
 def test_taunt_variants_grew_to_four() -> None:
     """两个触发点各 4 个变体（加了留白，但**不加新触发点**）。"""
-    from plugins.reverse_rich_sim.cards import TAUNT_TRIGGERS, taunt_variants
+    from plugins.mock_stock_meow.cards import TAUNT_TRIGGERS, taunt_variants
 
     assert len(taunt_variants("cash_kill")) == 4
     assert len(taunt_variants("catgirl_dead")) == 4
@@ -383,7 +383,7 @@ def test_taunt_variants_grew_to_four() -> None:
 
 def test_taunt_pick_is_stable_per_seed() -> None:
     """同一个 seed 必出同一句（与既有机制一致）。"""
-    from plugins.reverse_rich_sim.cards import pick_taunt
+    from plugins.mock_stock_meow.cards import pick_taunt
 
     for seed in (11, 222, 3333, 44444):
         first = pick_taunt("cash_kill", seed)
@@ -394,7 +394,7 @@ def test_taunt_pick_is_stable_per_seed() -> None:
 
 def test_catgirl_silence_is_stable_and_about_thirty_percent() -> None:
     """猫娘沉默旁白：按 seed 稳定，概率 ≈30%。"""
-    from plugins.reverse_rich_sim.cards import pick_catgirl_silence
+    from plugins.mock_stock_meow.cards import pick_catgirl_silence
 
     seeds = list(range(1, 1001))
     hits = sum(1 for seed in seeds if pick_catgirl_silence(seed))
@@ -408,7 +408,7 @@ def test_catgirl_silence_needs_a_catgirl(plugin) -> None:
     """**没有猫娘**的局（经典模式）→ 不给旁白。"""
     run(plugin.join(mode="classic_arcade", seed=9401))
     engine_config = run(plugin._engine_config())
-    from plugins.reverse_rich_sim.storage.session import load_session
+    from plugins.mock_stock_meow.storage.session import load_session
 
     session = run(load_session(plugin._repo, plugin.state, engine_config=engine_config))
     assert session is not None
@@ -421,7 +421,7 @@ def test_catgirl_silence_appears_in_an_infinite_settlement(plugin) -> None:
     """无限模式（有猫娘）→ 旁白由 seed 稳定决定，且结算页真的有这个字段。"""
     run(plugin.join(mode="infinite", seed=9402))
     engine_config = run(plugin._engine_config())
-    from plugins.reverse_rich_sim.storage.session import load_session
+    from plugins.mock_stock_meow.storage.session import load_session
 
     session = run(load_session(plugin._repo, plugin.state, engine_config=engine_config))
     assert session is not None

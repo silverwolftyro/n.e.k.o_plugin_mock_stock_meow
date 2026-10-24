@@ -190,7 +190,7 @@ def test_director_crash_is_queued_and_applied_on_the_next_tick(plugin, ctx) -> N
 
 def _market_of(plugin: Any) -> Any:
     """读回当前这一局的市场（走插件自己的落库/读库路径）。"""
-    from plugins.reverse_rich_sim.storage.session import load_session
+    from plugins.mock_stock_meow.storage.session import load_session
 
     session = run(load_session(plugin._repo, plugin.state, engine_config=run(plugin._engine_config())))
     assert session is not None
@@ -245,7 +245,7 @@ def test_roster_headline_does_not_touch_the_news_content(plugin, ctx) -> None:
     """名册新闻**只换标题**；正文（引擎的方向信号）一个字都不动。"""
     import dataclasses
 
-    from plugins.reverse_rich_sim.engine.models import NewsItem
+    from plugins.mock_stock_meow.engine.models import NewsItem
 
     plain = NewsItem(
         id="news-roster-1",
@@ -374,7 +374,7 @@ def test_visual_block_carries_no_hidden_fields(plugin) -> None:
 
 
 def _player_of(plugin: Any) -> Any:
-    from plugins.reverse_rich_sim.storage.session import load_session
+    from plugins.mock_stock_meow.storage.session import load_session
 
     session = run(load_session(plugin._repo, plugin.state, engine_config=run(plugin._engine_config())))
     assert session is not None
@@ -433,7 +433,7 @@ def test_panel_has_no_layout_breaking_css() -> None:
         # 注意 `*, *::before, *::after { box-sizing: border-box }` 这种
         # 标准 reset 里出现 ::before / ::after 是无害的，所以不按名字禁。
         "content:",
-        "linear-gradient",
+        # 径向渐变一律禁（P8.0 只用**纵向** linear-gradient，见下面的守卫）。
         "radial-gradient",
         "rrm-stage-",
         "rrm-critical",
@@ -445,6 +445,20 @@ def test_panel_has_no_layout_breaking_css() -> None:
     )
     for token in css_forbidden:
         assert token not in css, f"注入的 CSS 里不许再出现 {token}"
+
+    # P8.0：渐变**解禁**，但只准**纵向**的 linear-gradient。
+    #
+    # 0.8.0 那条巨大的 X 线条是「``position:absolute`` + ``inset:0`` + 两条
+    # **对角**（45deg / 135deg）渐变」合成的。上面的 ``position`` / ``inset``
+    # 已经被禁死，这里再把**对角**也禁掉 —— 三重保险，X 线条不可能复活。
+    for match in re.finditer(r"([a-z]+)-gradient\(([^)]*)\)", css):
+        kind, body = match.group(1), match.group(2)
+        assert kind == "linear", f"只用 linear-gradient，发现 {kind}-gradient"
+        angle = re.search(r"(\d+(?:\.\d+)?)deg", body)
+        if angle:
+            assert float(angle.group(1)) in (0.0, 90.0, 180.0), (
+                f"渐变只允许纵向 / 横向（0/90/180deg），发现 {angle.group(1)}deg"
+            )
 
     # 只允许 `animation: none`（关掉宿主的入场淡入），不许任何别的动画。
     for match in re.finditer(r"animation:\s*([^;]+);", css):

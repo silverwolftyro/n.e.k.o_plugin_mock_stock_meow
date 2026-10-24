@@ -4,7 +4,7 @@
 ------
 1. 让 pytest 能直接 ``import engine``（插件根目录加入 ``sys.path``）——
    这是 P1 引擎层单测的既有约定。
-2. 让 ``import plugins.reverse_rich_sim`` 可用：把 ``plugins/`` 的父目录加入
+2. 让 ``import plugins.mock_stock_meow`` 可用：把 ``plugins/`` 的父目录加入
    ``sys.path``，``plugins`` 成为一个 **PEP 420 命名空间包**。这与宿主加载
    插件的方式一致（``plugin/core/host.py`` 要求 ``parts[0] == "plugins"``），
    因此本插件内部一律使用**相对导入**（``from .engine...`` / ``from ..engine...``），
@@ -24,7 +24,7 @@ from typing import Any, Coroutine
 
 import pytest
 
-#: 插件自身目录（``.../plugins/reverse_rich_sim``）。
+#: 插件自身目录（``.../plugins/mock_stock_meow``）。
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 #: ``plugins/`` 命名空间包的父目录（``.../plugin``）。
 _PLUGINS_PARENT = _PLUGIN_ROOT.parents[1]
@@ -59,17 +59,17 @@ class FakeCtx:
     ``get_own_config``。其余成员由 SDK 的 :class:`SdkContext` 兜底。
     """
 
-    plugin_id = "reverse_rich_sim"
+    plugin_id = "mock_stock_meow"
     logger = None
 
     def __init__(self, config_path: Path | None = None) -> None:
-        self.config_path = config_path or Path("reverse_rich_sim.toml")
+        self.config_path = config_path or Path("mock_stock_meow.toml")
         self.metadata: dict[str, Any] = {}
         self.bus: dict[str, Any] = {}
         self._effective_config: dict[str, Any] = {
             "plugin": {
                 "store": {"enabled": True},
-                "database": {"enabled": True, "name": "reverse_rich_sim.db"},
+                "database": {"enabled": True, "name": "mock_stock_meow.db"},
             },
             "plugin_state": {"backend": "file"},
         }
@@ -89,10 +89,10 @@ class FakeCtx:
 
 
 def make_plugin(ctx: FakeCtx) -> Any:
-    """按宿主的加载方式实例化插件（``plugins.reverse_rich_sim`` 包内导入）。"""
-    from plugins.reverse_rich_sim import ReverseRichSimPlugin
+    """按宿主的加载方式实例化插件（``plugins.mock_stock_meow`` 包内导入）。"""
+    from plugins.mock_stock_meow import MockStockMeowPlugin
 
-    return ReverseRichSimPlugin(ctx)
+    return MockStockMeowPlugin(ctx)
 
 
 @pytest.fixture()

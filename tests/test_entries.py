@@ -304,7 +304,7 @@ def test_buy_rejects_delisted_stock(plugin) -> None:
     退市本身由引擎在价格击穿地板时判定（P3 的定时器会持续触发），
     P2 用「改写状态快照」的方式构造这个前置条件。
     """
-    from plugins.reverse_rich_sim.storage.session import MarketSnapshot, load_snapshot
+    from plugins.mock_stock_meow.storage.session import MarketSnapshot, load_snapshot
 
     _value(run(plugin.join(seed=21)))
     market = _value(run(plugin.market()))
@@ -438,7 +438,7 @@ def test_state_survives_plugin_restart(build_plugin) -> None:
 
 def test_prices_are_recovered_by_replay_when_state_cache_is_lost(build_plugin) -> None:
     """价格不落库：状态缓存丢失时靠 (seed, tick) 重放精确还原。"""
-    from plugins.reverse_rich_sim.storage.session import build_engine_config, load_session
+    from plugins.mock_stock_meow.storage.session import build_engine_config, load_session
 
     instance = build_plugin("replay")
     _value(run(instance.join(seed=777)))

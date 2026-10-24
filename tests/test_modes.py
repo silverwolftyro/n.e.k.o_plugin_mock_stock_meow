@@ -16,16 +16,16 @@ from pathlib import Path
 import pytest
 
 from conftest import run
-from plugins.reverse_rich_sim.modes import (
+from plugins.mock_stock_meow.modes import (
     MODES,
     ClassicMode,
     InfiniteMode,
     ModeProtocol,
     get_mode,
 )
-from plugins.reverse_rich_sim.modes.shared import ModeContext, TickOutcome
+from plugins.mock_stock_meow.modes.shared import ModeContext, TickOutcome
 
-from plugins.reverse_rich_sim.storage.repo import Repo
+from plugins.mock_stock_meow.storage.repo import Repo
 
 _MODES_ROOT = Path(__file__).resolve().parents[1] / "modes"
 
@@ -184,7 +184,7 @@ def test_infinite_baseline_stock_is_the_most_volatile_one(plugin) -> None:
     rows = run(repo.fetch_all("SELECT * FROM positions"))
     stock_id = rows[0]["stock_id"]
 
-    from plugins.reverse_rich_sim.storage.session import load_session
+    from plugins.mock_stock_meow.storage.session import load_session
     from engine.config import default_engine_config
 
     session = run(
@@ -261,7 +261,7 @@ def test_all_classic_tiers_auto_finish_at_total_game_days() -> None:
     """四档都在第 30 个游戏日自动终局。"""
     from engine.config import default_engine_config
     from engine.models import MarketState, Player
-    from plugins.reverse_rich_sim.modes.shared import ModeContext
+    from plugins.mock_stock_meow.modes.shared import ModeContext
 
     config = default_engine_config()
     for name in ("classic_arcade", "classic_beginner", "classic_advanced", "classic_hell"):
@@ -282,7 +282,7 @@ def test_infinite_mode_never_finishes() -> None:
     """无限模式没有终点。"""
     from engine.config import default_engine_config
     from engine.models import MarketState, Player
-    from plugins.reverse_rich_sim.modes.shared import ModeContext
+    from plugins.mock_stock_meow.modes.shared import ModeContext
 
     config = default_engine_config()
     mode = get_mode("infinite")

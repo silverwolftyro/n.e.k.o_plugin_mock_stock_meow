@@ -20,7 +20,7 @@ from engine.settlement import (
     welfare_cycle,
     welfare_entitlement,
 )
-from plugins.reverse_rich_sim.storage.repo import Repo
+from plugins.mock_stock_meow.storage.repo import Repo
 
 
 def _error_code(result) -> str:

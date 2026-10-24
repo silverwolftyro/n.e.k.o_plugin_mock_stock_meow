@@ -1,4 +1,4 @@
-# 反向暴富模拟器 · 业务配置示例
+# 拟股喵喵 · 业务配置示例
 #
 # 本文件是插件首次运行时 `config.example.toml` → `self.config` 的模板。
 # 硬约束：本文件**不得包含 `[plugin]` 段**，否则 `neko-plugin check` 会直接报 error。

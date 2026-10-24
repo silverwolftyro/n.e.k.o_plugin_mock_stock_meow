@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -75,6 +76,20 @@ def _i18n() -> dict[str, str]:
     return json.loads(_I18N.read_text(encoding="utf-8"))
 
 
+def _function_source(code: str, name: str, until: str) -> str:
+    """抽出 ``function <name>(`` 到下一个 ``function <until>(`` 之间的源码。
+
+    P8.0 起行情 / 持仓不再是**表格**，而是**方块卡片网格**（``StockTile`` /
+    ``PositionTile`` 组件）。所以这些守卫改成直接盯组件本体，而不是去
+    ``</Card>`` 之间切一刀 —— 表格结构已经不存在了。
+    """
+    start = code.find(f"function {name}(")
+    assert start > 0, f"面板里必须有 {name} 组件"
+    end = code.find(f"function {until}(", start)
+    assert end > start, f"面板里 {name} 后面必须有 {until} 组件"
+    return code[start:end]
+
+
 def _run(coro: Any) -> Any:
     return asyncio_run(coro)
 
@@ -117,36 +132,45 @@ def test_engine_and_mode_layers_are_still_untouched() -> None:
 # ---------------------------------------------------------------- UI 极简
 
 
-def test_market_table_has_no_professional_columns() -> None:
-    """行情表删掉成本价 / 可卖 / 占比 / 标签，只留名称 + 走势 + 现价 + 涨跌。"""
+def test_market_tiles_have_no_professional_columns() -> None:
+    """行情方块卡（P8.0）删掉成本价 / 可卖 / 占比 / 标签，只留名称 + 走势 + 现价 + 涨跌。
+
+    P7.2 时代这是「行情表」的守卫；P8.0 把表格换成**方块卡片网格**，
+    不变式不变 —— 还是那四样信息，多一样都不许。
+    """
     code = _panel_code()
-    market_block = code.split('t("visual.market_title")', 1)[-1]
-    market_block = market_block.split("</Card>", 1)[0]
+    tile = _function_source(code, "StockTile", "PositionTile")
     for banned in ("panel.cost", "panel.sellable", "panel.weight", "panel.tag"):
-        assert banned not in market_block, f"行情表里不许再出现专业列 {banned}"
+        assert banned not in tile, f"行情卡里不许再出现专业列 {banned}"
     # 必须有：名称、走势小折线、现价、超大涨跌。
-    assert "visual.trend_title" in market_block
-    assert "visual.price_title" in market_block
-    assert "visual.change_title" in market_block
-    assert "Sparkline" in market_block
+    assert "stock.display_name || stock.name" in tile
+    assert "Sparkline" in tile
+    assert "visual.trend_title" in tile
+    assert "visual.price_title" in tile
+    assert "visual.change_title" in tile
+    assert "money(stock.price)" in tile
+    assert "changeText(stock.change)" in tile
+    assert 'fontSize: "26px"' in tile
 
 
-def test_holdings_table_only_keeps_name_value_and_pnl() -> None:
-    """持仓表只留名称 / 当前市值 / 大号盈亏。"""
+def test_position_tiles_only_keep_name_value_and_pnl() -> None:
+    """持仓方块卡（P8.0）只留名称 / 当前市值 / 大号盈亏。"""
     code = _panel_code()
-    block = code.split('t("visual.holdings_title")', 1)[-1]
-    block = block.split("</Card>", 1)[0]
+    tile = _function_source(code, "PositionTile", "Kline")
     for banned in ("panel.amount", "panel.cost", "panel.sellable", "panel.weight", "panel.tag"):
-        assert banned not in block, f"持仓表里不许再出现 {banned}"
-    assert "visual.pnl_title" in block
-    assert "unrealized_pnl" in block
+        assert banned not in tile, f"持仓卡里不许再出现 {banned}"
+    assert "position.display_name || position.name" in tile
+    assert "visual.pnl_title" in tile
+    assert "unrealized_pnl" in tile
+    assert "market_value" in tile
+    assert 'fontSize: "26px"' in tile
 
 
 def test_change_numbers_are_huge_and_colored() -> None:
     """涨跌数字必须**超大号 + 红绿**（红/绿走宿主变量）。"""
     code = _panel_code()
     assert 'fontSize: "26px"' in code
-    assert "changeColor(row.change)" in code
+    assert "changeColor(stock.change)" in code
     assert "var(--success)" in code
     assert "var(--danger)" in code
 
@@ -162,7 +186,11 @@ def test_sparkline_is_present_and_safe() -> None:
 
 
 def test_kline_is_the_first_card_and_full_width() -> None:
-    """K 线是**主视觉**：在面板最上面，而且自适应铺满全宽。"""
+    """K 线是**主视觉**：在面板最上面，而且自适应铺满全宽。
+
+    P8.0 把它从 190px 加高到 232px（它是上半区的主视觉）。这里不写死数字 ——
+    守卫盯的是「**够高**」这个不变式，具体数值以后还能再调。
+    """
     code = _panel_code()
     playing = code.split('t("panel.trade")', 1)[0]
     kline_at = playing.find('t("panel.kline")')
@@ -172,7 +200,10 @@ def test_kline_is_the_first_card_and_full_width() -> None:
     assert kline_at < market_at < holdings_at, "K 线必须在行情表与持仓表**之前**"
     # 全宽：柱子用 flex 撑开，而不是固定宽度挤在左边。
     assert 'flex: "1 1 0"' in code
-    assert "const height = 190" in code
+    # 主视觉：高度不能低于 200px。
+    match = re.search(r"const height = (\d+)", code)
+    assert match, "K 线必须有明确的高度"
+    assert int(match.group(1)) >= 200, f"K 线是主视觉，高度只有 {match.group(1)}px"
 
 
 def test_trade_area_is_one_click_only() -> None:
@@ -289,7 +320,7 @@ def test_roster_binds_by_volatility_without_touching_the_engine(plugin) -> None:
 
     这条守卫是「数值零改动」的关键：绑定**只改显示名**，不动 sigma。
     """
-    from plugins.reverse_rich_sim.storage.session import load_session
+    from plugins.mock_stock_meow.storage.session import load_session
 
     _value(_run(plugin.join(mode="classic_arcade", seed=9305)))
     session = _run(load_session(plugin._repo, plugin.state, engine_config=_run(plugin._engine_config())))
@@ -316,7 +347,7 @@ def test_roster_binds_by_volatility_without_touching_the_engine(plugin) -> None:
 
 def test_panel_payload_carries_display_names_and_sparklines(plugin) -> None:
     """面板载荷带上群友显示名与走势小折线（行情表要用）。"""
-    from plugins.reverse_rich_sim.storage.session import load_session
+    from plugins.mock_stock_meow.storage.session import load_session
 
     _value(_run(plugin.join(mode="classic_arcade", seed=9305)))
     session = _run(load_session(plugin._repo, plugin.state, engine_config=_run(plugin._engine_config())))
