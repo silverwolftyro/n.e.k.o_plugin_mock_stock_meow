@@ -61,6 +61,7 @@ import {
   Divider,
   Grid,
   Inline,
+  Input,
   KeyValue,
   List,
   Modal,
@@ -461,6 +462,10 @@ const RRM_CSS = `
   --radius-md: 20px;
   background: linear-gradient(180deg, #e4efff 0%, #f4faff 48%, #fbfdff 100%);
   color: var(--text);
+  /* P13：让**原生控件**跟着浅色主题走 —— 滑块没填满的那截轨道原本是
+     浏览器深色模式的默认黑，在浅色面板上非常刺眼。
+     （P12 滑块默认停在 100%，看不出来；P13 停在真实仓位上就露出来了。） */
+  color-scheme: light;
 }
 
 /* ── ② 毛玻璃卡片：半透明白底 + 20px 大圆角 + **柔而大**的蓝影 ──────────
@@ -617,27 +622,48 @@ const RRM_CSS = `
   justify-content: center;
 }
 
-/* ── P12：仓位控制（滑块 + 百分比快捷键）+ 实时预览 ──────────────────
+/* ── P13：仓位控制（连续滑块 + 直输框）+ 实时预览 ──────────────────
    滑块是宿主**原生**的 input[type=range]（.neko-slider）—— 我们只调宽度，
    **不加任何定位、层叠、滤镜、透明**（0.8.0 的崩溃红线一条没破）。
-   百分比快捷键是四个普通按钮，选中的那个上高亮色。 */
+   P13 把步进从 5% 改成 **1%**，并且**删掉了 25/50/75/100 那四档快捷键** ——
+   仓位不再被量化成四档，玩家可以精确拖到 33% 或 67%。
+   直输框也是宿主**原生**的 input（.neko-input），我们只调宽度与字号。 */
 .rrm-root .neko-slider { width: 100%; }
-.rrm-root .neko-grid.rrm-trade-pct {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
+/* P13：滑块轨道上色。
+   宿主 UI Kit 用 accent-color 给**已填充**那段上色，但**没填充**那段
+   走的是浏览器默认 —— 在这台机器的 Edge 上画出来是**纯黑**，放在浅色
+   面板上非常刺眼（P12 滑块默认停在 100%，看不出来；P13 停在真实仓位上
+   就露出来了）。
+   ⇒ 这里用 CSS 变量 --rrm-trade-fill（由面板按当前比例写入）
+   画一条 90 度渐变：左边是主色，右边是淡蓝。**没有**引入任何危险属性。 */
+.rrm-root .rrm-trade-slider .neko-slider-input {
+  /* **必须**先把原生外观去掉，作者写的 track / thumb 伪元素才会生效
+     （否则 Chrome 用自己的内部绘制，作者的轨道色根本不认）。 */
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  height: 16px;
 }
-.rrm-root .neko-button.rrm-pct {
-  height: 34px;
-  padding: 0 6px;
-  font-size: 13px;
-  font-weight: 700;
-  border-radius: 17px;
-  white-space: nowrap;
+.rrm-root .rrm-trade-slider .neko-slider-input::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(
+    90deg,
+    var(--primary) 0%,
+    var(--primary) var(--rrm-trade-fill, 0%),
+    rgba(91, 143, 249, 0.2) var(--rrm-trade-fill, 0%),
+    rgba(91, 143, 249, 0.2) 100%
+  );
 }
-.rrm-root .neko-button.rrm-pct-on {
-  background: linear-gradient(180deg, #a4e5ff 0%, #7bbcff 100%);
-  color: #16305c;
-  border: none;
+.rrm-root .rrm-trade-slider .neko-slider-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: var(--primary);
+  border: 2px solid #ffffff;
 }
 .rrm-root .neko-grid.rrm-trade-previews {
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -647,6 +673,27 @@ const RRM_CSS = `
   font-size: 12px;
   line-height: 1.5;
   color: #7b8ca6;
+}
+/* 直输框：两个框（股数 / 金额）平分一行，单位小字跟在框后。 */
+.rrm-root .rrm-trade-inputs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.rrm-root .neko-input.rrm-trade-input {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+.rrm-root .rrm-trade-input-unit {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: #7b8ca6;
+  white-space: nowrap;
 }
 
 /* ── P12：剧情沉浸模式（宿主原生 Modal size="full"）─────────────────
@@ -1925,7 +1972,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   }
 
   /**
-   * 【执行买入】：按滑块定的仓位买入。
+   * 【执行买入】：按滑块（或直输框反推出来的）仓位买入。
    *
    * 走 ``callAction`` ⇒ **纳入 P11.1 的全局请求锁**（狂点只会被静默丢弃，
    * 不会并发打爆宿主那次 ``get_ui_context``）。
@@ -1936,15 +1983,17 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       return
     }
     await callAction("buy", { stock_id: effectiveStockId, amount: buyAmount })
+    clearTradeDrafts()
   }
 
-  /** 【执行卖出】：按滑块定的仓位卖出。 */
+  /** 【执行卖出】：按滑块（或直输框反推出来的）仓位卖出。 */
   const executeSell = async () => {
     if (sellAmount <= 0) {
       showToast(t("visual.nothing_to_sell"), "warning")
       return
     }
     await callAction("sell", { stock_id: effectiveSellStockId, amount: sellAmount })
+    clearTradeDrafts()
   }
   /** 关掉《玩法说明》＝"玩家看过了"：把已读标记记回 player_id。 */
   const closeGuide = () => {
@@ -2204,27 +2253,42 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   // 濒死档：数字**偶尔闪红**（用 JS 定时器切颜色，不用 CSS 动画）。
   const flashColor = flashOn ? "var(--danger)" : undefined
 
-  // ── P12：仓位控制（滑块 + 百分比快捷键）+ 实时预览 ────────────────
+  // ── P13：仓位控制（连续滑块 + 直输框）+ 实时预览 ──────────────────
   //
-  // **为什么要把"一键梭哈"改掉**：全有或全无只有两个选项，玩家没有
-  // "投一半"这个真实存在的动作 —— 而"投一半"恰恰是反诈教育里最该
-  // 练的一手。
+  // **为什么要彻底去量子化**：仓位被量化成 25/50/75/100 四档之后，玩家
+  // 能做的只有"选一档"，"再压一点点""就差这一股"这种真实存在的动作
+  // 做不出来。现在滑块是 **1% 步进的连续** 的，另外可以**直接输金额或
+  // 股数** —— 系统反推仓位比例。"把最后几块钱也砸进去"应该做得到。
   //
   // **预览怎么算准**：手续费率是**引擎那一套**（``state.fees``，只读），
   // 所以"预计花费"和插件真正扣的钱**一致**（不是 0.995 那种经验折算）。
+  //
+  // **唯一的事实来源是仓位比例**：直输框只是**反推**出比例，真正成交的
+  // 数量永远由比例算出来 ⇒ 拖滑块和手输不会打架、不会各算各的。
   const [positionPct, setPositionPct] = useLocalState<number>("rrm.position_pct", 100)
+  // 比例**允许是小数**：直输"买 10 股"折出来的比例可能是 33.33%，
+  // 取整会让玩家要的 10 股变成 9 股 —— 悄悄改玩家的单子，最糟。
   const pct = Math.max(0, Math.min(100, Number(positionPct || 0)))
   const buyRate = Number(state.fees?.buy_rate || 0)
   const sellRate = Number(state.fees?.sell_rate || 0)
   const stampRate = Number(state.fees?.stamp_tax_rate || 0)
   const cash = Math.max(0, Number(state.cash || 0))
 
+  // 浮点保险：比例 → 数量 的来回换算会带上 1e-14 量级的误差，直接
+  // Math.floor 会把"明明是 1 股"算成 0 股。落在整数附近的就按整数算。
+  const robustFloor = (value: number) => {
+    if (!Number.isFinite(value)) return 0
+    const nearest = Math.round(value)
+    if (Math.abs(value - nearest) < 1e-6) return nearest
+    return Math.floor(value)
+  }
+
   const selectedStockRow = stocks.find((stock) => stock.id === effectiveStockId)
   const buyPrice = selectedStockRow ? Number(selectedStockRow.price || 0) : 0
   // 买入：预算 = 现金 × 仓位；按 ``notional × (1 + buy_rate) <= 预算`` 倒推数量。
   const buyBudget = (cash * pct) / 100
   const buyNotional = buyRate > -1 ? buyBudget / (1 + buyRate) : 0
-  const buyAmount = buyPrice > 0 ? Math.floor(buyNotional / buyPrice) : 0
+  const buyAmount = buyPrice > 0 ? robustFloor(buyNotional / buyPrice) : 0
   const buyCost = buyAmount * buyPrice * (1 + buyRate)
   const buyCashAfter = Math.max(0, cash - buyCost)
 
@@ -2232,12 +2296,117 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   const sellAllAmount = selectedPosition ? Number(selectedPosition.sellable || 0) : 0
   const sellPrice = selectedPosition ? Number(selectedPosition.price || 0) : 0
   // 卖出：回款 = 数量 × 价 × (1 - 卖出手续费 - 印花税)（印花税单边收）。
-  const sellAmount = Math.floor((sellAllAmount * pct) / 100)
+  const sellAmount = robustFloor((sellAllAmount * pct) / 100)
   const sellIncome = sellAmount * sellPrice * (1 - sellRate - stampRate)
   const sellCashAfter = cash + sellIncome
 
   // ── P7.2：一键梭哈 / 一键割肉的数量 ─────────────────────────────
   const buyAllAmount = buyAmount
+
+  // ── P13：直输框（股数 / 金额）⇒ 反推仓位比例 ──────────────────────
+  //
+  // 输入框显示**玩家正在敲的字**（草稿）；草稿是 ``null`` 时显示由比例
+  // 算出来的值。**空串是"玩家把框清空了"**，和"没有草稿"是两回事 ——
+  // 要是混为一谈，玩家一按退格，框里就立刻被派生值填回去，永远清不掉。
+  // 同一侧只留一个草稿：改了这一个，另一个就让位。
+  const [buySharesDraft, setBuySharesDraft] = useState<string | null>(null)
+  const [buyMoneyDraft, setBuyMoneyDraft] = useState<string | null>(null)
+  const [sellSharesDraft, setSellSharesDraft] = useState<string | null>(null)
+  const [sellMoneyDraft, setSellMoneyDraft] = useState<string | null>(null)
+
+  const clearTradeDrafts = () => {
+    setBuySharesDraft(null)
+    setBuyMoneyDraft(null)
+    setSellSharesDraft(null)
+    setSellMoneyDraft(null)
+  }
+  // 行情/现金变了 ⇒ 草稿作废（否则输入框里还留着上一次的数字）。
+  const tradeSignature = [
+    effectiveStockId,
+    buyPrice,
+    cash,
+    effectiveSellStockId,
+    sellPrice,
+    sellAllAmount,
+  ].join("|")
+  useEffect(() => {
+    clearTradeDrafts()
+  }, [tradeSignature])
+
+  // 买入「多少股」：这些股要花多少钱（含手续费）⇒ 除以现金 = 比例。
+  const pctForBuyShares = (raw: number) => {
+    const shares = Math.max(0, Math.floor(Number(raw) || 0))
+    if (shares <= 0 || buyPrice <= 0 || cash <= 0) return 0
+    const cost = shares * buyPrice * (1 + buyRate)
+    return Math.max(0, Math.min(100, (cost / cash) * 100))
+  }
+  // 买入「多少钱」：先按费率**向下取整**能买多少股再折算比例 ——
+  // 这样"输 100 块"就真的是 100 块上下，不会因为多出一分钱就少买一股。
+  const pctForBuyMoney = (raw: number) => {
+    const money = Math.max(0, Number(raw) || 0)
+    if (money <= 0 || buyPrice <= 0 || cash <= 0) return 0
+    const shares = Math.floor(money / (buyPrice * (1 + buyRate)))
+    if (shares <= 0) return 0
+    return pctForBuyShares(shares)
+  }
+  // 卖出「多少股」：占可卖数量的比例。
+  const pctForSellShares = (raw: number) => {
+    const shares = Math.max(0, Math.floor(Number(raw) || 0))
+    if (shares <= 0 || sellAllAmount <= 0) return 0
+    return Math.max(0, Math.min(100, (shares / sellAllAmount) * 100))
+  }
+  // 卖出「多少钱」：那是**期望回款**，先按费率倒推能卖多少股。
+  const pctForSellMoney = (raw: number) => {
+    const money = Math.max(0, Number(raw) || 0)
+    if (money <= 0 || sellPrice <= 0 || sellAllAmount <= 0) return 0
+    const per = sellPrice * (1 - sellRate - stampRate)
+    if (per <= 0) return 0
+    const shares = Math.floor(money / per)
+    if (shares <= 0) return 0
+    return pctForSellShares(shares)
+  }
+
+  const onBuySharesInput = (raw: string) => {
+    const text = raw === "" ? "" : String(raw)
+    setBuyMoneyDraft(null)
+    setBuySharesDraft(text)
+    if (text === "") return
+    const parsed = Number(text)
+    if (!Number.isFinite(parsed)) return
+    setPositionPct(pctForBuyShares(parsed))
+  }
+  const onBuyMoneyInput = (raw: string) => {
+    const text = raw === "" ? "" : String(raw)
+    setBuySharesDraft(null)
+    setBuyMoneyDraft(text)
+    if (text === "") return
+    const parsed = Number(text)
+    if (!Number.isFinite(parsed)) return
+    setPositionPct(pctForBuyMoney(parsed))
+  }
+  const onSellSharesInput = (raw: string) => {
+    const text = raw === "" ? "" : String(raw)
+    setSellMoneyDraft(null)
+    setSellSharesDraft(text)
+    if (text === "") return
+    const parsed = Number(text)
+    if (!Number.isFinite(parsed)) return
+    setPositionPct(pctForSellShares(parsed))
+  }
+  const onSellMoneyInput = (raw: string) => {
+    const text = raw === "" ? "" : String(raw)
+    setSellSharesDraft(null)
+    setSellMoneyDraft(text)
+    if (text === "") return
+    const parsed = Number(text)
+    if (!Number.isFinite(parsed)) return
+    setPositionPct(pctForSellMoney(parsed))
+  }
+
+  const buySharesShown = buySharesDraft === null ? String(buyAmount) : buySharesDraft
+  const buyMoneyShown = buyMoneyDraft === null ? buyCost.toFixed(2) : buyMoneyDraft
+  const sellSharesShown = sellSharesDraft === null ? String(sellAmount) : sellSharesDraft
+  const sellMoneyShown = sellMoneyDraft === null ? sellIncome.toFixed(2) : sellMoneyDraft
 
   // ── P7：终局 Emoji 海 ───────────────────────────────────────────
   const emojiSea = useMemo(() => {
@@ -3193,47 +3362,46 @@ export default function Panel(props: PluginSurfaceProps<State>) {
           </Stack>
         </Card>
 
-        {/* ── P12：操作台 · 仓位控制 + 预览 + 执行 ───────────────────
-            「一键梭哈 / 一键割肉」两个极端被换成：
-            **仓位滑块 + 百分比快捷键 + 实时预览 + 【执行买入/执行卖出】**。
+        {/* ── P13：操作台 · 连续仓位 + 直输框 + 执行 ───────────────
+            P12 把「一键梭哈 / 一键割肉」换成了仓位滑块，但滑块只有
+            25/50/75/100 四档 —— 仓位还是被**量化**的。P13 把它拆干净：
 
-            * 滑块是宿主**原生** ``Slider``（``input[type=range]``）——
-              零自绘、零危险 CSS；
+            * 滑块是宿主**原生** ``Slider``，步进改成 **1%**（连续）；
+            * **删掉** 25/50/75/100 那四档快捷键（那才是"去量子化"的
+              拦路虎）；
+            * 预览区多两个**直输框**（股数 / 金额），输入后系统**反推**
+              仓位比例并同步滑块；
             * 预览用**引擎那一套费率**（``state.fees``），所以"预计花费"
               和真扣的钱**一致**；
             * 执行按钮走 ``callAction`` ⇒ **纳入 P11.1 的全局请求锁**
               （``ActionButton`` 不支持 ``disabled``，也进不了这把锁）。 */}
         <Card title={t("panel.trade")}>
           <Stack gap={12}>
-            {/* ── 仓位：滑块 + 百分比快捷键 ─────────────────────────── */}
+            {/* ── 仓位：**连续**滑块（1% 步进），没有四档 ───────────── */}
             <Stack gap={6}>
               <Inline gap={8} align="center" justify="space-between">
                 <Text>{t("panel.trade_position")}</Text>
-                <Text>{t("panel.trade_pct", { pct: pct })}</Text>
+                <Text>{t("panel.trade_pct", { pct: Math.round(pct) })}</Text>
               </Inline>
-              <Slider
-                min={0}
-                max={100}
-                step={5}
-                value={pct}
-                showValue={false}
-                onChange={(value: any) => {
-                  setPositionPct(Number(value))
-                }}
-              />
-              <Grid cols={4} gap={6} className="rrm-trade-pct">
-                {[25, 50, 75, 100].map((option) =>
-                  h(Button, {
-                    key: option,
-                    className: pct === option ? "rrm-pct rrm-pct-on" : "rrm-pct",
-                    disabled: busy,
-                    onClick: () => {
-                      setPositionPct(option)
-                    },
-                    children: t("panel.trade_pct", { pct: option }),
-                  })
-                )}
-              </Grid>
+              {h(
+                "div",
+                {
+                  className: "rrm-trade-slider",
+                  // 当前比例写进 CSS 变量 ⇒ 轨道渐变能画出"已填充到哪"。
+                  style: { "--rrm-trade-fill": `${Math.round(pct * 10) / 10}%` },
+                },
+                h(Slider, {
+                  min: 0,
+                  max: 100,
+                  step: 1,
+                  value: pct,
+                  showValue: false,
+                  onChange: (value: any) => {
+                    setPositionPct(Number(value))
+                    clearTradeDrafts()
+                  },
+                })
+              )}
               <Text>{t("panel.trade_position_hint")}</Text>
             </Stack>
 
@@ -3284,22 +3452,130 @@ export default function Panel(props: PluginSurfaceProps<State>) {
               </span>
             </Inline>
 
-            {/* ── 实时预览（两列，跟上面的按钮对齐）────────────────── */}
+            {/* ── 实时预览 + 直输框（两列，跟上面的按钮对齐）─────────
+                P13：预览下面各挂两个输入框 —— **股数** 与 **金额**。
+                玩家可以直接说"我要买 10 股"或"我要买 100 块"，系统
+                **反推**出仓位比例并同步滑块（所以滑块永远只有一个
+                事实来源：比例）。
+
+                输入框用宿主**原生** ``Input``（自己造 input 就要自己
+                写样式 = 自己写危险 CSS）。金额那一栏用文本型：数字型
+                输入框会把"84."这种中间态吃掉，玩家根本打不出小数。 */}
             <Grid cols={2} gap={8} className="rrm-trade-previews">
-              <Text>
-                {t("panel.trade_buy_preview", {
-                  amount: buyAmount,
-                  cost: buyCost.toFixed(2),
-                  cash: buyCashAfter.toFixed(2),
-                })}
-              </Text>
-              <Text>
-                {t("panel.trade_sell_preview", {
-                  amount: sellAmount,
-                  income: sellIncome.toFixed(2),
-                  cash: sellCashAfter.toFixed(2),
-                })}
-              </Text>
+              <Stack gap={4} className="rrm-trade-preview-col">
+                <Text>
+                  {t("panel.trade_buy_preview", {
+                    amount: buyAmount,
+                    cost: buyCost.toFixed(2),
+                    cash: buyCashAfter.toFixed(2),
+                  })}
+                </Text>
+                {h(
+                  "div",
+                  {
+                    className: "rrm-trade-inputs",
+                    // 离开输入框 ⇒ 草稿作废，框里显示**实际**成交的那一组数。
+                    // （"我要买 20 块"但一股就 11.77 ⇒ 真正花的是 11.77。）
+                    //
+                    // **用 focusout 不用 blur** —— 宿主 UI Kit 是**自研迷你运行时**
+                    // （onX → addEventListener(x)），而 `blur` **不冒泡**：
+                    // 挂在容器上的 onBlur 永远等不到子输入框的失焦。
+                    // `focusout` 会冒泡，才是这里该用的那个。
+                    onFocusout: (event: any) => {
+                      const next = event && event.relatedTarget
+                      if (next && event.currentTarget && event.currentTarget.contains(next)) {
+                        return
+                      }
+                      setBuySharesDraft(null)
+                      setBuyMoneyDraft(null)
+                    },
+                  },
+                  h(
+                    Input,
+                    {
+                      className: "rrm-trade-input",
+                      type: "number",
+                      min: 0,
+                      step: 1,
+                      value: buySharesShown,
+                      placeholder: t("panel.trade_input_shares"),
+                      disabled: busy,
+                      onChange: (value: any) => {
+                        onBuySharesInput(value)
+                      },
+                    }
+                  ),
+                  h("span", { className: "rrm-trade-input-unit" }, t("panel.trade_unit_shares")),
+                  h(
+                    Input,
+                    {
+                      className: "rrm-trade-input",
+                      type: "text",
+                      value: buyMoneyShown,
+                      placeholder: t("panel.trade_input_money"),
+                      disabled: busy,
+                      onChange: (value: any) => {
+                        onBuyMoneyInput(value)
+                      },
+                    }
+                  ),
+                  h("span", { className: "rrm-trade-input-unit" }, t("panel.trade_unit_money"))
+                )}
+              </Stack>
+              <Stack gap={4} className="rrm-trade-preview-col">
+                <Text>
+                  {t("panel.trade_sell_preview", {
+                    amount: sellAmount,
+                    income: sellIncome.toFixed(2),
+                    cash: sellCashAfter.toFixed(2),
+                  })}
+                </Text>
+                {h(
+                  "div",
+                  {
+                    className: "rrm-trade-inputs",
+                    // 同上：离开输入框 ⇒ 吸附到**实际**回款（focusout 会冒泡）。
+                    onFocusout: (event: any) => {
+                      const next = event && event.relatedTarget
+                      if (next && event.currentTarget && event.currentTarget.contains(next)) {
+                        return
+                      }
+                      setSellSharesDraft(null)
+                      setSellMoneyDraft(null)
+                    },
+                  },
+                  h(
+                    Input,
+                    {
+                      className: "rrm-trade-input",
+                      type: "number",
+                      min: 0,
+                      step: 1,
+                      value: sellSharesShown,
+                      placeholder: t("panel.trade_input_shares"),
+                      disabled: busy,
+                      onChange: (value: any) => {
+                        onSellSharesInput(value)
+                      },
+                    }
+                  ),
+                  h("span", { className: "rrm-trade-input-unit" }, t("panel.trade_unit_shares")),
+                  h(
+                    Input,
+                    {
+                      className: "rrm-trade-input",
+                      type: "text",
+                      value: sellMoneyShown,
+                      placeholder: t("panel.trade_input_money"),
+                      disabled: busy,
+                      onChange: (value: any) => {
+                        onSellMoneyInput(value)
+                      },
+                    }
+                  ),
+                  h("span", { className: "rrm-trade-input-unit" }, t("panel.trade_unit_money"))
+                )}
+              </Stack>
             </Grid>
 
             {/* ── 标的：买入 / 卖出各一行选择器（不跟大按钮抢宽度）──── */}

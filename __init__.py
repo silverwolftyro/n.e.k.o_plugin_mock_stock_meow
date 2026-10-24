@@ -169,6 +169,7 @@ from .story import (
     effect_of,
     effect_tag,
     next_chapter,
+    reply_prompt,
 )
 
 __all__ = ["MockStockMeowPlugin"]
@@ -177,7 +178,7 @@ __all__ = ["MockStockMeowPlugin"]
 PLUGIN_ID = "mock_stock_meow"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.9.6"
+PLUGIN_VERSION = "0.9.7"
 
 #: P10：游戏速度档位 → **真实时间**推进间隔的倍率。
 #:
@@ -3373,6 +3374,9 @@ class MockStockMeowPlugin(NekoPluginBase):
         if not callable(push):
             self.logger.info(f"宿主未提供 push_message（story:{chapter_id}）：本次跳过")
             return False
+        # 把**实际推出去的那段提示词**记下来：既方便排查"她为什么这么说"，
+        # 也让"提示词里只有事实、没有表演指令"这条规矩**可审计**。
+        self.logger.info(f"剧情提示词（{chapter_id}）：{prompt}")
         try:
             result = push(
                 # ``visibility=[]`` ⇒ 插件原文**不显示**，只有 AI 的回复进聊天框。
@@ -3512,7 +3516,12 @@ class MockStockMeowPlugin(NekoPluginBase):
             state["pending"] = ""
             state["reply"] = {
                 "prompt": self._story_reply_prompt(
-                    chapter, choice, snapshot, granted, debt_amount
+                    chapter,
+                    choice,
+                    self._story_snapshot_after(snapshot, granted),
+                    granted,
+                    debt_amount,
+                    due_day,
                 ),
             }
             self._story_state = state
@@ -3576,28 +3585,51 @@ class MockStockMeowPlugin(NekoPluginBase):
         return cost
 
     @staticmethod
+    def _story_snapshot_after(
+        snapshot: dict[str, Any], granted: float
+    ) -> dict[str, Any]:
+        """把快照推到**这次选择生效之后**（现金 + 总资产都加上）。
+
+        为什么要这一步：提示词里同时会写"这次选择产生的实际变化：现金 +X"
+        和"客观数据：可动用现金 Y"。如果 Y 还是**变化前**的数字，LLM 读到的是
+        自相矛盾的两句话 —— 它可能因此得出错误的处境判断。
+        """
+        after = dict(snapshot or {})
+        if granted:
+            after["cash"] = round(float(after.get("cash") or 0.0) + float(granted), 2)
+            after["total_assets"] = round(
+                float(after.get("total_assets") or 0.0) + float(granted), 2
+            )
+        return after
+
+    @staticmethod
     def _story_reply_prompt(
         chapter: dict[str, Any] | None,
         choice: dict[str, Any] | None,
         snapshot: dict[str, Any],
         granted: float,
         debt_amount: float,
+        due_day: int = 0,
     ) -> str:
-        """玩家选完之后，请**外置 Yui** 回应的那句提示词。"""
-        from .meow import MASTER
+        """玩家选完之后，请**外置 Yui** 回应的那句提示词。
 
-        title = chapter_title(chapter or {})
-        label = choice_label(choice or {})
-        if debt_amount > 0.0:
-            detail = f"他借到了 {granted:.0f}，但要还 {debt_amount:.0f}"
-        elif granted > 0.0:
-            detail = f"他拿到了 {granted:.0f}"
-        else:
-            detail = "他什么都没拿"
-        return (
-            f"《拟股喵喵》剧情「{title}」里，{MASTER} 选了「{label}」——{detail}。\n"
-            "请立刻主动开口，用你自己的语气回应他这一下：把选择的代价说清楚，"
-            "别迎合他，也别把他骂到自闭。"
+        **P13**：拼装逻辑搬到了 ``story.reply_prompt`` —— **所有**给 Yui 的
+        提示词都在同一个地方拼，那里只放"客观事实 + 开放式请求"。
+        这里**不许**再写任何指定表演方式的指令。
+        """
+        due_days = 0
+        if due_day > 0 and snapshot.get("day"):
+            try:
+                due_days = max(0, int(due_day) - int(snapshot.get("day") or 0))
+            except (TypeError, ValueError):
+                due_days = 0
+        return reply_prompt(
+            chapter,
+            choice,
+            snapshot,
+            granted=granted,
+            debt_amount=debt_amount,
+            due_days=due_days,
         )
 
     # ------------------------------------------------------------------

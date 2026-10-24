@@ -315,7 +315,7 @@ def test_assets_are_still_inline_data_uris() -> None:
 
 
 def test_version_is_0_9_5() -> None:
-    """版本号 = 0.9.6。"""
-    assert 'version = "0.9.6"' in _TOML.read_text(encoding="utf-8")
+    """版本号 = 0.9.7。"""
+    assert 'version = "0.9.7"' in _TOML.read_text(encoding="utf-8")
     init = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.9.6"' in init
+    assert 'PLUGIN_VERSION = "0.9.7"' in init

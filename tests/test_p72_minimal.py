@@ -221,15 +221,28 @@ def test_kline_is_the_first_card_and_full_width() -> None:
     assert int(match.group(1)) >= 200, f"K 线是主视觉，高度只有 {match.group(1)}px"
 
 
-def test_trade_area_is_one_click_only() -> None:
-    """操作区是**快餐按钮**：一键梭哈 / 一键割肉。"""
+def test_trade_area_has_a_continuous_position_control() -> None:
+    """操作区不再是"两个极端"。
+
+    P7.2 的设计是「一键梭哈 / 一键割肉」两个极端，而且**不许有数量输入框**；
+    P12 把它换成仓位滑块，P13 再把滑块从四档改成**连续**（1% 步进），
+    并**加回**直输框（"我要买多少股" / "我要买多少钱"）——
+    只有精细的操作，才体现得出"把最后几块钱也砸进去"的那种绝望感。
+
+    （这条守卫在 P13 之前是"不许有输入框"；那次禁令是**用户主动推翻**的，
+    所以这里跟着改成"必须有连续仓位控制"，而不是悄悄放过。）
+    """
     code = _panel_code()
-    assert "visual.buy_all" in code
-    assert "visual.sell_all" in code
-    # 不许再有数量输入框（下拉框也只用来选标的）。
-    assert "NumberInput" not in code
     assert "buyAllAmount" in code
     assert "sellAllAmount" in code
+    # 连续滑块（1% 步进），不是四档。
+    # （滑块用 ``h(Slider, {...})`` 调用 —— 要往外层 div 写 CSS 变量画轨道。）
+    assert "step={1}" in code or "step: 1" in code, "仓位滑块必须是 1% 步进的连续滑块"
+    assert "[25, 50, 75, 100]" not in code, "四档快捷键不许回来"
+    # 直输框（股数 / 金额）—— P13 加回来的。
+    assert "rrm-trade-input" in code, "预览区要有股数 / 金额直输框"
+    assert "onBuySharesInput" in code
+    assert "onBuyMoneyInput" in code
 
 
 def test_kline_is_always_present_in_the_payload(plugin) -> None:

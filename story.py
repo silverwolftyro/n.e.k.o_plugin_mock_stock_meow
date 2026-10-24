@@ -12,13 +12,17 @@
 * **剧情数值效果全部在插件层**：本文件只声明"某个选项会产生什么效果"，
   真正改钱的是 ``__init__.py``（照抄 ``_take_loan`` 的写法：改内存 + 写库）。
 
-两套文本（**别搞混**，和 ``meow.py`` 同一个纪律）
---------------------------------------------------
-* **提示词**（``chapter["prompt"]``）—— 喂给 LLM 的**指令**，不是台词。
-  宿主 ``push_message(ai_behavior="respond")`` 会把它塞进对话上下文并**立刻触发
-  一个 AI 回合**，猫娘用**自己的语气**说出来。写死台词会让所有角色念同一句。
-* **场景文本**（``chapter["scene"]``）—— 面板沉浸模式显示的**纯文本**。
-  **不含任何猫娘立绘** —— 外置有 Yui 了，面板不画猫。
+三套文本（**别搞混**，P13 的纪律）
+----------------------------------
+* **处境**（``chapter["situation"]``）—— **客观事实**：发生了什么客观变化、
+  玩家现在处于什么处境。**不许**写语气、不许写台词、不许写"你要提醒玩家
+  什么"。这些是 P12 的旧病根 —— 把猫娘演成了复读机。
+* **提示词**（``chapter_prompt`` / ``reply_prompt`` **现场拼装**）—— 处境 +
+  客观数据 + 一句**开放式的请求**。宿主 ``push_message(ai_behavior="respond")``
+  会把它塞进对话上下文并**立刻触发一个 AI 回合**，猫娘用**她自己的方式**回应。
+  我们只负责**抛出事件的引子**，怎么说由她决定。
+* **场景文本**（``chapter["scene"]``）—— 面板沉浸模式显示的**纯文本**
+  （推送失败时的降级文案）。**不含任何猫娘立绘** —— 外置有 Yui 了，面板不画猫。
 
 占位符纪律
 ----------
@@ -62,6 +66,23 @@ STORY_PUSH_PRIORITY = 6
 #: 宿主 v2 契约：**同一个 key** 的排队提示在**两条投递路径上都合并成最新的** ⇒
 #: 同一章反复触发只会留下一条，不会刷屏。
 STORY_COALESCE_PREFIX = "mock_stock_meow.story"
+
+
+# ----------------------------------------------------------------------
+# 提示词模板（P13：只给事实，不给表演指令）
+# ----------------------------------------------------------------------
+
+#: 事件提示词的开头。
+STORY_EVENT_HEADER = "《拟股喵喵》事件提示。"
+
+#: 提示词的**结尾** —— 我们**唯一**允许对 Yui 说的话。
+#:
+#: 它只说明"发生了什么，你可以回应"，**不规定**她用什么语气、说什么内容、
+#: 要不要安慰、要不要嘲讽。**怎么演是她的事**（P13 的核心）。
+STORY_OPENING_ASK = "请结合当前的情景，自然地给予玩家回应。"
+
+#: 处境缺失时的兜底（老数据文件可能还没写 ``situation``）。
+STORY_FALLBACK_SITUATION = "玩家正在《拟股喵喵》里进行一局模拟交易，账户数据由系统实时结算。"
 
 
 # ----------------------------------------------------------------------
@@ -272,6 +293,8 @@ def _substitute(text: str, snapshot: dict[str, Any]) -> str:
         "{BILL}": _round(snapshot.get("next_bill")),
         "{LOSS}": f"{float(snapshot.get('loss_ratio') or 0.0):.0%}",
         "{TRADES}": str(int(snapshot.get("trade_count") or 0)),
+        "{TOTAL}": _round(snapshot.get("total_assets")),
+        "{INITIAL}": _round(snapshot.get("initial_cash")),
     }
     for key, value in replacements.items():
         out = out.replace(key, value)
@@ -285,9 +308,83 @@ def _round(value: Any) -> str:
         return "0.00"
 
 
+def chapter_situation(chapter: dict[str, Any]) -> str:
+    """这一幕的**客观处境**（客观事实，**不含任何表演指令**）。
+
+    读不到（老数据文件）就用 :data:`STORY_FALLBACK_SITUATION` 兜底 ——
+    宁可少说一句，也不能退回"请用 XX 语气说"那种指令。
+    """
+    text = str((chapter or {}).get("situation") or "").strip()
+    return text or STORY_FALLBACK_SITUATION
+
+
+def _facts_line(snapshot: dict[str, Any]) -> str:
+    """**客观数据行** —— 只报数字，不解释、不建议、不下判断。"""
+    return (
+        f"客观数据：第 {int(snapshot.get('day') or 0)} 天；"
+        f"可动用现金 {_round(snapshot.get('cash'))}；"
+        f"初始资金 {_round(snapshot.get('initial_cash'))}；"
+        f"账户总资产 {_round(snapshot.get('total_assets'))}；"
+        f"累计亏损 {float(snapshot.get('loss_ratio') or 0.0):.0%}；"
+        f"成交 {int(snapshot.get('trade_count') or 0)} 笔；"
+        f"下一笔生活费 {_round(snapshot.get('next_bill'))}。"
+    )
+
+
+def _effect_detail(granted: float, debt_amount: float, due_days: int) -> str:
+    """这次选择**实际**产生的数值变化（只报事实）。"""
+    parts: list[str] = []
+    if granted > 0.0:
+        parts.append(f"现金 +{float(granted):.2f}")
+    if debt_amount > 0.0:
+        parts.append(
+            f"新增一笔 {float(debt_amount):.2f} 的借款，{int(due_days)} 天后到期，需偿还 {float(debt_amount):.2f}"
+        )
+    if not parts:
+        parts.append("本次选择没有产生任何数值变化")
+    return "；".join(parts)
+
+
 def chapter_prompt(chapter: dict[str, Any], snapshot: dict[str, Any]) -> str:
-    """这一幕给外置 Yui 的**提示词**。"""
-    return _substitute(str((chapter or {}).get("prompt") or ""), snapshot)
+    """这一幕给外置 Yui 的**提示词**：处境 + 客观数据 + 一句开放式请求。
+
+    **P13 红线**：这里拼出来的每一个字都必须是"事实"或"开放的请求"。
+    任何"请用 XX 语气""提醒他 YY""别把玩家 ZZ"之类的**表演指令**都不许有
+    —— 猫娘怎么说，是**她**的事；我们只负责抛出事件的引子。
+    """
+    chapter = chapter or {}
+    lines = [
+        STORY_EVENT_HEADER,
+        f"当前剧情节点：{chapter_title(chapter)}（节点 id：{str(chapter.get('id') or '')}）。",
+        f"玩家：{MASTER}。",
+        f"当前处境：{chapter_situation(chapter)}",
+        _facts_line(snapshot),
+        STORY_OPENING_ASK,
+    ]
+    return _substitute("\n".join(lines), snapshot)
+
+
+def reply_prompt(
+    chapter: dict[str, Any] | None,
+    choice: dict[str, Any] | None,
+    snapshot: dict[str, Any],
+    granted: float = 0.0,
+    debt_amount: float = 0.0,
+    due_days: int = 0,
+) -> str:
+    """玩家选完之后的**回应提示词**（同样只给事实，不给表演指令）。"""
+    chapter = chapter or {}
+    lines = [
+        STORY_EVENT_HEADER,
+        f"当前剧情节点：{chapter_title(chapter)}（节点 id：{str(chapter.get('id') or '')}）。",
+        f"玩家：{MASTER}。",
+        f"玩家刚刚做出的选择：{choice_label(choice or {})}（{choice_hint(choice or {})}）。",
+        f"这次选择产生的实际变化：{_effect_detail(granted, debt_amount, due_days)}",
+        f"当前处境：{chapter_situation(chapter)}",
+        _facts_line(snapshot),
+        STORY_OPENING_ASK,
+    ]
+    return _substitute("\n".join(lines), snapshot)
 
 
 def chapter_scene(chapter: dict[str, Any], snapshot: dict[str, Any]) -> str:

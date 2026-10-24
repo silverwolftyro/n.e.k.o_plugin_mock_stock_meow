@@ -137,11 +137,16 @@ def test_chapter_ids_are_unique_and_ordered() -> None:
     assert orders == sorted(orders), "章节必须按 order 递增"
 
 
-def test_every_chapter_has_prompt_scene_and_choices() -> None:
+def test_every_chapter_has_situation_scene_and_choices() -> None:
+    """P13：章节里放的是**处境**（客观事实），不再是 P12 那种"提示词"。
+
+    P12 的 ``prompt`` 字段装的是"请用 XX 语气说 YY"这类**表演指令** ——
+    那正是把猫娘变成复读机的病根。P13 把它换成了 ``situation``。
+    """
     for chapter in _story_data()["chapters"]:
         chapter_id = chapter.get("id")
         assert str(chapter.get("title") or "").strip(), f"{chapter_id} 缺标题"
-        assert str(chapter.get("prompt") or "").strip(), f"{chapter_id} 缺提示词"
+        assert str(chapter.get("situation") or "").strip(), f"{chapter_id} 缺处境描述"
         assert str(chapter.get("scene") or "").strip(), f"{chapter_id} 缺场景文本"
         choices = chapter.get("choices") or []
         assert len(choices) >= 2, f"{chapter_id} 至少要两个选项"
@@ -174,9 +179,22 @@ def test_the_story_explains_how_the_family_falls_apart() -> None:
 
 
 def test_prompts_use_the_host_placeholders_not_str_format() -> None:
-    """``{MASTER_NAME}`` 由宿主展开 ⇒ 本模块**只准 replace**，**不准 format**。"""
+    """``{MASTER_NAME}`` 由宿主展开 ⇒ 本模块**只准 replace**，**不准 format**。
+
+    P13：提示词改成**现场拼装**（处境 + 客观数据 + 一句开放式请求），
+    所以要查的是**拼出来**的那句话，而不是 ``story.json`` 里的某个字段。
+    """
+    snapshot = {
+        "day": 5,
+        "cash": 88.0,
+        "next_bill": 30.0,
+        "initial_cash": 400.0,
+        "total_assets": 300.0,
+        "loss_ratio": 0.25,
+        "trade_count": 6,
+    }
     for chapter in _story_data()["chapters"]:
-        prompt = str(chapter.get("prompt") or "")
+        prompt = story_mod.chapter_prompt(chapter, snapshot)
         assert "{MASTER_NAME}" in prompt, f"{chapter.get('id')} 的提示词要带上玩家称呼"
     body = _story_text()
     assert ".format(" not in body, "剧情模块不许用 str.format（会炸掉 {MASTER_NAME}）"
@@ -399,9 +417,16 @@ def test_the_trade_ui_uses_the_host_slider() -> None:
     assert "type=\"range\"" not in code, "不要自己造 range input"
 
 
-def test_the_trade_ui_has_percentage_shortcuts() -> None:
+def test_the_trade_ui_has_no_percentage_shortcuts() -> None:
+    """P13：25/50/75/100 那四档快捷键**必须消失**。
+
+    P12 把「一键梭哈 / 一键割肉」换成了仓位滑块，但滑块只有四档 ——
+    仓位还是被**量化**的。P13 要的是**连续**仓位（1% 步进）+ 直输框。
+    """
     code = _panel_code()
-    assert "[25, 50, 75, 100]" in code, "要有 25% / 50% / 75% / 100% 快捷键"
+    assert "[25, 50, 75, 100]" not in code, "四档快捷键不许回来（那才是'去量子化'的拦路虎）"
+    assert "rrm-trade-pct" not in code
+    assert "rrm-pct" not in code
 
 
 def test_the_trade_buttons_are_renamed() -> None:
@@ -621,5 +646,5 @@ def test_the_panel_uses_no_bare_chinese_literals() -> None:
 
 
 def test_the_version_is_bumped() -> None:
-    assert 'version = "0.9.6"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.9.6"' in _init_text()
+    assert 'version = "0.9.7"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.9.7"' in _init_text()

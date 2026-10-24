@@ -309,7 +309,7 @@ def test_worktree_has_no_crlf_files() -> None:
 
 
 def test_version_is_0_7_4() -> None:
-    """版本号 = 0.9.6。
+    """版本号 = 0.9.7。
 
     版本史：
 
@@ -326,12 +326,13 @@ def test_version_is_0_7_4() -> None:
     * 0.9.4 —— P11：猫娘外置交互引导（主动搭话 + 呼叫猫娘 + 兜底弹窗）。
     * 0.9.5 —— P11.1：并发根治（上下文非阻塞 + 推进节流 + 面板请求锁）。
     * 0.9.6 —— P12.0：剧情引擎（四幕叙事 + 外置 Yui 驱动）+ 交易 GUI 化（滑块仓位）。
+    * 0.9.7 —— P13.0：Yui 灵魂化（交还叙事权）+ 交易去量子化（连续仓位 + 直输）。
     """
     from plugins.mock_stock_meow import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.9.6"
+    assert PLUGIN_VERSION == "0.9.7"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.9.6"' in toml
+    assert 'version = "0.9.7"' in toml
 
 
 # ------------------------------------------------- ⑥ 面板文案全走 i18n
