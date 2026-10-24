@@ -71,6 +71,11 @@ def test_concurrent_buys_and_ticks_do_not_lose_updates(plugin) -> None:
     for result in results:
         if result is None:
             continue
+        if isinstance(result, bool):
+            # P11.1：``_run_one_tick`` 现在返回"这一拍跑没跑"的布尔值
+            # （拿不到锁就**跳过**这一拍，而不是阻塞整个事件循环）——
+            # 它不是错误，跳过即可。
+            continue
         assert result.is_ok(), f"并发调用不应报错：{result!r}"
         payload = result.unwrap()
         if isinstance(payload, dict) and "cash_after" in payload:

@@ -161,7 +161,7 @@ __all__ = ["MockStockMeowPlugin"]
 PLUGIN_ID = "mock_stock_meow"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.9.4"
+PLUGIN_VERSION = "0.9.5"
 
 #: P10：游戏速度档位 → **真实时间**推进间隔的倍率。
 #:
@@ -194,6 +194,23 @@ _SETTING_ONBOARDING = "onboarding_ack"
 _SETTING_MEOW_GREETED = "meow_greeted"
 _SETTING_MEOW_NAG_PLAYER = "meow_nag_player"
 _SETTING_MEOW_LAST_AT = "meow_last_at"
+
+#: P11.1：手动推进类动作的**最小间隔**（秒）。
+#:
+#: 狂点【推进一拍】会让面板顶部疯狂弹红色警告
+#: ``Failed to query plugin UI action context``（宿主 500）。成因链：
+#:
+#: 1. 宿主执行任何 UI action **之前**都会先 ``await host.get_ui_context()``
+#:    （``plugin/core/host.py``，**5 秒预算**）—— 这是一次到插件的 IPC 往返；
+#: 2. 插件是**单进程单事件循环**，每个请求都要挤进同一个循环；
+#: 3. 第二个并发请求会去抢 ``self._lock``（``threading.Lock``），
+#:    而 ``acquire()`` 是**阻塞**调用 ⇒ **整个事件循环被冻住**；
+#: 4. 事件循环一冻，宿主那次 ``get_ui_context`` 就排在后面 ⇒ **超时 500**。
+#:
+#: 所以**后端也必须有一道闸门**：两次推进至少隔这么久，太快的**静默丢弃**
+#: （返回温和的 ``Ok``，**绝不抛红色 Error**）。前端还有一道全局请求锁，
+#: 两道一起才靠谱 —— 前端锁防"手抖"，后端闸门防"多标签页 / LLM 工具调用"。
+_ADVANCE_THROTTLE_SECONDS = 1.0
 
 #: 「无为而治」称号的解锁天数（P5.5 改动 6）。
 #:
@@ -503,6 +520,19 @@ class MockStockMeowPlugin(NekoPluginBase):
         #: 上一次【呼叫猫娘】的时间戳（**防连点**冷却；与自动搭话分开计时，
         #: 这样"先被打招呼、再手动提问"不会被误伤）。
         self._meow_call_last_at: float = 0.0
+        #: ── P11.1：手动推进类动作的**时间戳闸门**（纯内存）────────────
+        #:
+        #: 两次【推进一拍】之间至少隔 ``_ADVANCE_THROTTLE_SECONDS`` 秒。
+        #: 纯内存就够 —— 插件重启等于"玩家刚打开面板"，那时不该拦着。
+        #:
+        #: 【跳过本日】**不加**这个闸门：它本来就每天只能一次（游戏自己的
+        #: ``skip_day_used``），而且"连续快进"是合法用法。
+        self._last_advance_at: float = 0.0
+        #: ── P11.1：面板上下文的**上一次快照** ─────────────────────────
+        #:
+        #: 上下文处理器拿不到锁时返回它（**非阻塞**兜底）——
+        #: 宁可给面板一点旧数据，也绝不让宿主因为 5 秒超时而报 500。
+        self._context_cache: dict[str, Any] | None = None
         #: ── P7：社区名册 ──────────────────────────────────────────────
         #: 社区名册（群友人设 + 抽象新闻池）。从 ``community_roster.json``
         #: 读取；读不到就退化成空名册（插件照常跑，只是没有彩蛋）。
@@ -3042,11 +3072,27 @@ class MockStockMeowPlugin(NekoPluginBase):
         for _ in range(max(1, count)):
             await self._run_one_tick()
 
-    async def _run_one_tick(self) -> None:
-        """推进一个 tick（持锁；异常不影响定时器）。"""
-        with self._lock:
+    async def _run_one_tick(self) -> bool:
+        """推进一个 tick（持锁；异常不影响定时器）。
+
+        **P11.1：锁改成"非阻塞获取"** —— 这是并发报错的**根因**。
+
+        ``self._lock`` 是 ``threading.Lock``，``acquire()`` 是**阻塞**调用。
+        在 asyncio 的**单线程事件循环**里，阻塞式 ``acquire()`` 会把
+        **整个事件循环冻住**：插件于是没法响应宿主发来的
+        ``get_ui_context()``（5 秒预算）⇒ 宿主抛
+        ``Failed to query plugin UI action context``（500 红色警告）。
+
+        所以拿不到锁时**直接跳过这一拍**，绝不阻塞事件循环。返回
+        ``True`` 表示这一拍**真的跑了**。
+        """
+        if not self._lock.acquire(blocking=False):
+            # 有人在跑（多半是 skip_day 的快进）—— 跳过这一拍。
+            # **绝不阻塞事件循环**（阻塞 = 宿主查不到上下文 = 500）。
+            return False
+        try:
             if self._tick_running:
-                return
+                return False
             self._tick_running = True
             try:
                 await self._tick_once()
@@ -3056,6 +3102,9 @@ class MockStockMeowPlugin(NekoPluginBase):
             finally:
                 self._tick_running = False
                 self._last_tick_at = time.time()
+            return True
+        finally:
+            self._lock.release()
 
     async def _tick_once(self) -> None:
         """tick 流水线（P4：瘦身为**纯调度**）。
@@ -3670,6 +3719,13 @@ class MockStockMeowPlugin(NekoPluginBase):
         * **每天只能跳一次**（``players.skip_day_used`` 记当前游戏日）；
         * 跳过时**照常走日终结算**（扣生活费、三振、猫娘日终决策一个不少）；
         * 跳过时**照常发卡片**（日终卡片、收割卡片都在）。
+
+        **P11.1：这里刻意不加时间戳闸门。**
+        跳过本日本来就**每天只能一次**（游戏自己的 ``skip_day_used`` 闸门），
+        不存在"狂点刷屏"；而"连续快进 14 天"是**合法**用法（隐藏结局
+        「无为而治」的测试就靠它）—— 加个时间戳闸门反而会把连续快进打断。
+        真正的并发风险已经由**上下文处理器的非阻塞拿锁**挡住了（见
+        :meth:`market_context`）：宿主的上下文查询**永远不会再被冻住**。
         """
         with self._lock:
             engine_config = await self._engine_config()
@@ -3870,6 +3926,26 @@ class MockStockMeowPlugin(NekoPluginBase):
         self._last_tick_at = time.time()
         return Ok({"action": "set_auto_tick", "auto": bool(enabled)})
 
+    def _advance_throttled(self) -> bool:
+        """距上一次**真正推进**是否还不到 ``_ADVANCE_THROTTLE_SECONDS`` 秒。
+
+        **P11.1 真机复盘**：这个判定**必须用"此刻"的时间戳**，不能用
+        await 之前抓的旧时间戳。
+
+        真机并发实测（8 发齐射）抓到过这么一幕：请求 A 与 B 几乎同时进门，
+        两者都用自己的旧时间戳判了一次闸门（都"没被节流"），接着各自去
+        ``await`` 查配置/查库；A 先醒，跑完一拍；B 后醒，**闸门不会再判一次**，
+        于是又跑了一拍 —— 两次推进**只隔了不到 1 秒**，
+        "两次推进至少隔 1 秒"这条契约就破了。
+
+        所以闸门要判**两次**：一次在耗时操作之前（省下 IPC 与查库），
+        一次在真正推进之前（用新时间戳，且与拿锁之间**没有 await**）——
+        这样两次推进的执行时刻就真的隔开了。
+        """
+        if self._last_advance_at <= 0.0:
+            return False
+        return (time.time() - self._last_advance_at) < _ADVANCE_THROTTLE_SECONDS
+
     @ui.action(
         id="advance_tick",
         label="推进一拍",
@@ -3888,9 +3964,26 @@ class MockStockMeowPlugin(NekoPluginBase):
 
         **只在手动模式可用**：自动模式下市场自己会走，按这个按钮就变成了
         "偷偷多走一拍"，那自动/手动就分不清了。
+
+        **P11.1：节流闸门** —— 距上一次推进不到 ``_ADVANCE_THROTTLE_SECONDS``
+        秒就**静默丢弃**（返回温和的 ``Ok``）。狂点不再引发宿主的
+        ``Failed to query plugin UI action context``（500 红色警告），
+        也**绝不**抛红色 Error 制造崩溃恐慌。
         """
         if self._auto_tick_enabled():
             return _err("advance_tick_requires_manual")
+        # ── P11.1：时间戳闸门（在任何耗时操作之前！）──────────────────
+        # 必须排在 ``_engine_config()`` / ``_session_or_error()`` 之前：
+        # 那两步要走 IPC + 查库，正是把宿主的 5 秒预算吃光的地方。
+        if self._advance_throttled():
+            return Ok(
+                {
+                    "action": "advance_tick",
+                    "throttled": True,
+                    "reason": "advance_tick_busy",
+                    "note": "慢一点，市场还在消化上一拍。",
+                }
+            )
         engine_config = await self._engine_config()
         session, error = await self._session_or_error(engine_config)
         if error is not None:
@@ -3898,8 +3991,46 @@ class MockStockMeowPlugin(NekoPluginBase):
         if session is None:
             return _err("not_joined")
         if self._tick_running:
-            return _err("advance_tick_busy")
-        await self._run_one_tick()
+            # ── P11.1：正在跑 tick —— 温和提示，**不抛红色 Error** ──────
+            # （这一拍已经被心跳/上一次推进吃掉了，别再叠一层。）
+            return Ok(
+                {
+                    "action": "advance_tick",
+                    "throttled": True,
+                    "reason": "advance_tick_busy",
+                    "note": "市场正在推进，稍后再试。",
+                }
+            )
+        # ── P11.1：二次闸门（**用新时间戳**）──────────────────────────
+        # 上面那两次 await（IPC + 查库）期间，**别的请求可能真的跑了一拍** ——
+        # 真机 8 发齐射实测就抓到过：两个请求都拿"进门时"的旧时间戳判了一次
+        # 闸门（都以为自己没被节流），于是先后各跑一拍，间隔不到 1 秒。
+        # 这里用**此刻**的时间戳再判一次，"两次推进至少隔 1 秒"才是真成立。
+        if self._advance_throttled():
+            return Ok(
+                {
+                    "action": "advance_tick",
+                    "throttled": True,
+                    "reason": "advance_tick_busy",
+                    "note": "慢一点，市场还在消化上一拍。",
+                }
+            )
+        # 时间戳记的是"**真正推进**的那一刻"（不是进门那一刻），
+        # 且它与 ``_run_one_tick()`` 的拿锁之间**没有 await** ——
+        # 插件是单线程事件循环，所以这两步是原子的：
+        # 谁先记下时间戳谁推进，后到的必然被上面的二次闸门拦下。
+        self._last_advance_at = time.time()
+        ran = await self._run_one_tick()
+        if not ran:
+            # 锁被占着（``_run_one_tick`` 非阻塞拿锁失败）—— 这一拍没跑。
+            return Ok(
+                {
+                    "action": "advance_tick",
+                    "throttled": True,
+                    "reason": "advance_tick_busy",
+                    "note": "市场正在推进，稍后再试。",
+                }
+            )
         fresh, fresh_error = await self._session_or_error(engine_config)
         if fresh_error is not None:
             return fresh_error
@@ -5029,9 +5160,37 @@ class MockStockMeowPlugin(NekoPluginBase):
     # ------------------------------------------------------------------
 
     @ui.context(id="market")
-    @_locked
     async def market_context(self, **_):
         """为 ``ui/panel.tsx`` 提供**面板数据**（P5：完整面板）。
+
+        **P11.1：锁改成"非阻塞获取" + 缓存兜底** —— 这是"狂点【推进一拍】就弹
+        红色 ``Failed to query plugin UI action context``"的**根因修复**。
+
+        宿主执行任何 UI action **之前**都会先 ``await host.get_ui_context()``
+        （**5 秒预算**，见 ``plugin/core/host.py``）。而这个上下文处理器和
+        所有动作抢的是**同一把** ``threading.Lock``：动作跑 tick 期间
+        （``await`` 里持着锁），上下文请求去 ``acquire()`` 就是**阻塞**调用
+        ⇒ **整个事件循环被冻住** ⇒ 宿主那次查询超时 ⇒
+        ``PLUGIN_UI_CONTEXT_QUERY_FAILED``（500 红色警告）。
+
+        所以：拿不到锁就**直接返回上一次缓存的快照**（可能有点旧，但比 500
+        好一万倍），**绝不阻塞事件循环**。
+        """
+        if not self._lock.acquire(blocking=False):
+            cached = self._context_cache
+            if cached is not None:
+                return dict(cached)
+            # 连一次快照都还没有（刚启动就来查询）：给个最小载荷，别让宿主 500。
+            return {"stage": "busy", "notice": "市场正在结算，稍等一下。"}
+        try:
+            payload = await self._market_context_payload(**_)
+            self._context_cache = dict(payload)
+            return payload
+        finally:
+            self._lock.release()
+
+    async def _market_context_payload(self, **_):
+        """（原 ``market_context`` 的实现；**调用方必须自己持锁**。）
 
         与 ``market`` 入口**分开**：``market`` 是给 LLM 用的轻量白名单；这里给
         的是面板需要的完整白名单（持仓 / 账单 / 猫娘 / K 线 / 新闻分类）。

@@ -310,8 +310,8 @@ def test_assets_are_still_inline_data_uris() -> None:
     assert 'from "./assets/avatars"' in code
 
 
-def test_version_is_0_9_4() -> None:
-    """版本号 = 0.9.4。"""
-    assert 'version = "0.9.4"' in _TOML.read_text(encoding="utf-8")
+def test_version_is_0_9_5() -> None:
+    """版本号 = 0.9.5。"""
+    assert 'version = "0.9.5"' in _TOML.read_text(encoding="utf-8")
     init = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.9.4"' in init
+    assert 'PLUGIN_VERSION = "0.9.5"' in init

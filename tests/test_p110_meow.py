@@ -98,7 +98,14 @@ def _panel_css() -> str:
     marker = "const RRM_CSS = `"
     assert marker in source, "找不到 RRM_CSS"
     _, _, rest = source.partition(marker)
-    body, _, _ = rest.partition("`")
+    # CSS 是一整块反引号模板字符串，它的**结束**反引号独占一行。
+    # 用"独占一行"来找结尾 —— 注释里混进来的反引号（哪怕在行中间）骗不过它。
+    end = rest.find("\n`\n")
+    assert end > 0, "找不到 RRM_CSS 的结束反引号（它必须独占一行）"
+    body = rest[:end]
+    # 块内**只允许**结束那一个反引号；多出来的就说明注释里混了反引号 ⇒
+    # 模板字符串被截断 ⇒ 面板白屏。
+    assert "`" not in body, "RRM_CSS 里出现了反引号（会当场截断模板字符串）"
     return body
 
 
@@ -258,7 +265,7 @@ def test_call_meow_entry_and_button_exist() -> None:
     assert "call_prompt(" in body
 
     code = _panel_code()
-    assert '.call("meow_call"' in code
+    assert 'callAction("meow_call"' in code
     assert "rrm-meow-call" in code, "标题栏里必须有【呼叫猫娘】按钮"
     assert 't("panel.meow_call")' in code
 
@@ -615,7 +622,7 @@ def test_panel_uses_only_dictionary_keys() -> None:
     assert not missing, f"i18n 缺少面板用到的键：{missing}"
 
 
-def test_version_is_0_9_4() -> None:
-    """版本号 = 0.9.4。"""
-    assert 'version = "0.9.4"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.9.4"' in _init_text()
+def test_version_is_0_9_5() -> None:
+    """版本号 = 0.9.5。"""
+    assert 'version = "0.9.5"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.9.5"' in _init_text()

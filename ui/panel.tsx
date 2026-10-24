@@ -68,6 +68,8 @@ import {
   Select,
   Stack,
   StatusBadge,
+  Step,
+  Steps,
   Text,
   h,
   showToast,
@@ -749,30 +751,10 @@ const RRM_CSS = `
 }
 
 /* ── ⑮ P10：玩法说明弹窗里的三步图文 ──────────────────────────────── */
-.rrm-guide-step {
-  display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  padding: 13px 15px;
-  border-radius: 16px;
-  background: rgba(240, 247, 255, 0.92);
-  border: 1px solid rgba(142, 171, 219, 0.18);
-}
-.rrm-guide-num {
-  flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(180deg, #a4e5ff 0%, #7bbcff 100%);
-  color: #16305c;
-  font-size: 15px;
-  font-weight: 800;
-}
-.rrm-guide-step-main { display: flex; flex-direction: column; gap: 4px; }
-.rrm-guide-step-title { font-size: 15px; font-weight: 800; color: #1f2d3d; letter-spacing: 0.4px; }
+/* P11.1：三步的**骨架**已经换回宿主的原生 Steps / Step 组件
+   （neko-step / neko-step-index / neko-step-title 由宿主 styles.css 自己
+   样式化），所以这里只剩下两行**正文**排版。
+   注意：这段 CSS 整体是一个反引号模板字符串，注释里**绝对不能出现反引号**。 */
 .rrm-guide-step-body { font-size: 13px; line-height: 1.8; color: #5b6b82; }
 .rrm-guide-step-tip { font-size: 12px; line-height: 1.7; color: #8ba0bd; }
 .rrm-guide-footer {
@@ -1376,8 +1358,16 @@ function BankruptArt(props: { alt: string }) {
 /**
  * P10：玩法说明弹窗（三步图文）。
  *
- * 用**宿主自带的** ``Modal`` + ``Alert``（官方推荐做法之一）；宿主组件几乎
- * 都不透传 ``style``，所以视觉一律走 ``className`` + 注入的 ``RRM_CSS``。
+ * 用**宿主自带的** ``Modal`` + ``Alert`` + ``Steps`` / ``Step``
+ * （官方推荐做法之一）；宿主组件几乎不透传 ``style``，所以视觉一律走
+ * ``className`` + 注入的 ``RRM_CSS``。
+ *
+ * **P11.1：用回原生的 ``Steps`` / ``Step``** —— 之前那三步是手搓的
+ * ``.rrm-guide-step`` / ``.rrm-guide-num`` / ``.rrm-guide-step-title``，
+ * 而宿主 UI Kit 里本来就有 ``Steps``（竖排步骤条）和 ``Step``
+ * （序号 + 标题 + 正文），渲染出来的结构一模一样
+ * （``neko-step`` / ``neko-step-index`` / ``neko-step-title``）。
+ * 换回原生组件 ⇒ 少一堆自定义 CSS，也更像"官方原生样式"。
  *
  * 三步分别讲：① 零花钱/家底/棺材本 + 每日生活费；② 一键梭哈/一键割肉 + 看涨跌图；
  * ③ 猫娘会实时嘴臭、接受不了别玩。
@@ -1390,16 +1380,10 @@ function GuideModal(props: {
   const { open, t, onClose } = props
   const step = (index: number, title: string, body: string, tip: string) =>
     h(
-      "div",
-      { className: "rrm-guide-step", key: title },
-      h("span", { className: "rrm-guide-num" }, String(index)),
-      h(
-        "div",
-        { className: "rrm-guide-step-main" },
-        h("div", { className: "rrm-guide-step-title" }, title),
-        h("div", { className: "rrm-guide-step-body" }, body),
-        tip ? h("div", { className: "rrm-guide-step-tip" }, tip) : null
-      )
+      Step,
+      { index: index, title: title, key: title },
+      h("div", { className: "rrm-guide-step-body" }, body),
+      tip ? h("div", { className: "rrm-guide-step-tip" }, tip) : null
     )
   return h(Modal, {
     open: open,
@@ -1411,19 +1395,13 @@ function GuideModal(props: {
     children: h(
       Stack,
       { gap: 12 },
-      step(
-        1,
-        t("guide.step1_title"),
-        t("guide.step1_body"),
-        t("guide.step1_tip")
+      h(
+        Steps,
+        null,
+        step(1, t("guide.step1_title"), t("guide.step1_body"), t("guide.step1_tip")),
+        step(2, t("guide.step2_title"), t("guide.step2_body"), t("guide.step2_tip")),
+        step(3, t("guide.step3_title"), t("guide.step3_body"), "")
       ),
-      step(
-        2,
-        t("guide.step2_title"),
-        t("guide.step2_body"),
-        t("guide.step2_tip")
-      ),
-      step(3, t("guide.step3_title"), t("guide.step3_body"), ""),
       h(Alert, { tone: "warning", message: t("guide.step3_alert") }),
       h("div", { className: "rrm-guide-footer" }, t("guide.footer"))
     ),
@@ -1507,11 +1485,13 @@ function PaceControl(props: {
   pace: Pace
   t: Translate
   ticksToSettle?: number
+  /** P11.1：有 action 在飞 ⇒ 按钮禁用 + 显示"推进中"。 */
+  busy?: boolean
   onSpeed: (speed: string) => void
   onToggleAuto: () => void
   onAdvance: () => void
 }) {
-  const { pace, t, ticksToSettle, onSpeed, onToggleAuto, onAdvance } = props
+  const { pace, t, ticksToSettle, busy, onSpeed, onToggleAuto, onAdvance } = props
   const speed = pace.speed || "normal"
   const auto = pace.auto !== false
   const interval = pace.interval_seconds || 0
@@ -1559,6 +1539,7 @@ function PaceControl(props: {
               item.id === speed
                 ? "rrm-speed-tag rrm-speed-tag-on"
                 : "rrm-speed-tag",
+            disabled: busy,
             onClick: () => onSpeed(item.id),
             children: item.label,
           })
@@ -1588,6 +1569,7 @@ function PaceControl(props: {
         h(Button, {
           className: "rrm-pace-toggle",
           tone: "default",
+          disabled: busy,
           onClick: onToggleAuto,
           children: auto
             ? t("panel.pace_switch_manual")
@@ -1597,8 +1579,12 @@ function PaceControl(props: {
           ? null
           : h(Button, {
               className: "rrm-pace-advance",
+              // ── P11.1：请求在飞时禁用 + 显示"推进中" ──────────────
+              // 狂点会被这条禁用态挡掉 ⇒ 宿主不会再收到并发的 action ⇒
+              // 不会再有 `Failed to query plugin UI action context`。
+              disabled: busy,
               onClick: onAdvance,
-              children: t("panel.pace_advance"),
+              children: busy ? t("panel.pace_advance_busy") : t("panel.pace_advance"),
             })
       ),
       h(
@@ -1736,25 +1722,60 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     })
   }, [meow.fallback_seq, meow.fallback_line, meow.fallback_reason])
 
-  /** 【呼叫猫娘】：玩家按一下，外置猫娘回一句。 */
-  const callMeow = () => {
+  // ── P11.1：全局请求锁 ────────────────────────────────────────────
+  //
+  // 宿主执行任何 UI action **之前**都会先 `get_ui_context()`（**5 秒预算**），
+  // 而插件是**单进程单事件循环**：并发请求会让插件里的 `threading.Lock`
+  // 抢不到就**阻塞整个事件循环**，宿主那次上下文查询随之超时 ⇒
+  // 红色 `Failed to query plugin UI action context`（500）。
+  //
+  // 所以面板侧**只允许一个 action 在飞**：点下去立刻置 busy，
+  // 等接口返回 **且** 面板刷新完，才允许下一次点击。
+  const busyRef = useRef(false)
+  const [busy, setBusy] = useState(false)
+
+  /**
+   * 走锁的 action 调用。
+   *
+   * * 已经有请求在飞 ⇒ **静默丢弃**（只弹一条温和的 info 提示，
+   *   **绝不**红色警告制造恐慌）；
+   * * 返回 action 的载荷（``Ok({...})`` 里的字典），拿不到就 ``null``。
+   */
+  const callAction = async (
+    action: string,
+    args: Record<string, any>,
+    options?: { userInitiated?: boolean }
+  ): Promise<any> => {
+    if (busyRef.current) {
+      showToast(t("panel.action_busy"), "info")
+      return null
+    }
+    busyRef.current = true
+    setBusy(true)
     try {
-      props.api
-        .call("meow_call", {}, { userInitiated: true })
-        .then(async (result: any) => {
-          await props.api.refresh()
-          const spoken = Boolean(result && result.spoken)
-          showToast(
-            spoken ? t("panel.meow_called") : t("panel.meow_fallback_toast"),
-            spoken ? "info" : "warning"
-          )
-        })
-        .catch((error: any) => {
-          showToast(String((error && error.message) || error), "danger")
-        })
+      const result = await props.api.call(action, args, {
+        userInitiated: options?.userInitiated !== false,
+      })
+      await props.api.refresh()
+      return result
     } catch (error: any) {
       showToast(String((error && error.message) || error), "danger")
+      return null
+    } finally {
+      busyRef.current = false
+      setBusy(false)
     }
+  }
+
+  /** 【呼叫猫娘】：玩家按一下，外置猫娘回一句。 */
+  const callMeow = async () => {
+    const result = await callAction("meow_call", {})
+    if (result === null) return
+    const spoken = Boolean(result.spoken)
+    showToast(
+      spoken ? t("panel.meow_called") : t("panel.meow_fallback_toast"),
+      spoken ? "info" : "warning"
+    )
   }
   /** 关掉《玩法说明》＝"玩家看过了"：把已读标记记回 player_id。 */
   const closeGuide = () => {
@@ -1766,19 +1787,15 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       // 记不上就记不上：弹窗已经关了，绝不能因此挡住玩家。
     }
   }
-  /** 调一个 P10 的偏好入口（写完立刻刷新上下文）。 */
-  const callPace = (action: string, args: Record<string, any>) => {
-    try {
-      props.api
-        .call(action, args, { userInitiated: true })
-        .then(async () => {
-          await props.api.refresh()
-        })
-        .catch((error: any) => {
-          showToast(String((error && error.message) || error), "danger")
-        })
-    } catch (error: any) {
-      showToast(String((error && error.message) || error), "danger")
+  /**
+   * 调一个 P10 的偏好入口（写完立刻刷新上下文）。
+   *
+   * **P11.1**：走全局请求锁；后端命中节流时（``throttled``）只给一条温和提示。
+   */
+  const callPace = async (action: string, args: Record<string, any>) => {
+    const result = await callAction(action, args)
+    if (result && result.throttled) {
+      showToast(t("panel.action_throttled"), "info")
     }
   }
 
@@ -2164,6 +2181,8 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     h(Button, {
       className: "rrm-meow-call",
       tone: "default",
+      // P11.1：有 action 在飞时禁用（全局请求锁）。
+      disabled: busy,
       onClick: (event: any) => {
         if (event && typeof event.stopPropagation === "function") {
           event.stopPropagation()
@@ -2306,6 +2325,8 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     pace: pace,
     t: t,
     ticksToSettle: state.stage === "playing" ? state.ticks_to_settle : undefined,
+    // ── P11.1：把全局请求锁的 busy 态传下去（按钮禁用 + "推进中"）──
+    busy: busy,
     onSpeed: (next: string) => callPace("set_game_speed", { speed: next }),
     onToggleAuto: () => callPace("set_auto_tick", { enabled: pace.auto === false }),
     onAdvance: () => callPace("advance_tick", {}),

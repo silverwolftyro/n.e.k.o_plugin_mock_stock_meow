@@ -65,8 +65,12 @@ def _panel_code() -> str:
     marker = "const RRM_CSS = `"
     if marker in source:
         head, _, rest = source.partition(marker)
-        body, _, tail = rest.partition("`")
-        source = head + "\n/* <RRM_CSS> */\n" + tail
+        # CSS 的**结束**反引号独占一行 —— 用它定位结尾。
+        # （分区取第一个反引号的话，CSS 注释里混进来的反引号会被当分隔符吞掉，
+        #  守卫反而测不出问题。）
+        end = rest.find("\n`\n")
+        assert end > 0, "找不到 RRM_CSS 的结束反引号（它必须独占一行）"
+        source = head + "\n/* <RRM_CSS> */\n" + rest[end + 3 :]
     return source
 
 
@@ -75,7 +79,10 @@ def _panel_css() -> str:
     marker = "const RRM_CSS = `"
     assert marker in source, "找不到 RRM_CSS"
     _, _, rest = source.partition(marker)
-    body, _, _ = rest.partition("`")
+    end = rest.find("\n`\n")
+    assert end > 0, "找不到 RRM_CSS 的结束反引号（它必须独占一行）"
+    body = rest[:end]
+    assert "`" not in body, "RRM_CSS 里出现了反引号（会当场截断模板字符串）"
     return body
 
 
@@ -180,27 +187,40 @@ def test_guide_modal_covers_the_three_required_topics() -> None:
 
 
 def test_guide_modal_has_three_numbered_steps() -> None:
-    """弹窗里正好三步，每步一个编号圆点。"""
-    css = _panel_css()
-    assert ".rrm-guide-step" in css
-    assert ".rrm-guide-num" in css
+    """弹窗里正好三步，每步一个编号。
+
+    **P11.1**：三步的骨架换回宿主的原生 ``Steps`` / ``Step`` ——
+    编号圆点由宿主 styles.css 画（``.neko-step-index`` 是圆形徽标），
+    所以不再有自绘的 ``.rrm-guide-num``。
+    """
     code = _panel_code()
     body = code.split("function GuideModal(", 1)[1].split("export default function Panel", 1)[0]
     assert body.count("step(") == 3, "《玩法说明》必须正好三步"
+    # 注意：源码里 ``h(`` 与 ``Steps,`` 可能被换行拆开，所以用允许空白的正则，
+    # 别写成死板的字面量（否则改个排版就误报）。
+    assert re.search(r"h\(\s*Steps,", body), "必须用宿主的原生 Steps"
+    assert re.search(r"h\(\s*Step,", body), "必须用宿主的原生 Step"
+    assert "index: index" in body, "每一步都要带编号"
 
 
 def test_guide_steps_are_visually_distinct() -> None:
-    """三步图文不能是三坨一样的灰字。"""
+    """三步图文不能是三坨一样的灰字。
+
+    **P11.1**：标题与编号圆点交给宿主的原生 ``Steps`` / ``Step``，
+    插件这边只保留"正文"与"小字提示"两种排版 —— 两者字号、颜色、字重都不同。
+    """
     css = _panel_css()
     for token in (
-        ".rrm-guide-step-title",
         ".rrm-guide-step-body",
         ".rrm-guide-step-tip",
-        ".rrm-guide-num",
     ):
         assert token in css, f"缺少 {token} 样式"
-    num_block = css.split(".rrm-guide-num {", 1)[1].split("}", 1)[0]
-    assert "border-radius: 999px" in num_block, "编号应该是圆形"
+    body = css.split(".rrm-guide-step-body {", 1)[1].split("}", 1)[0]
+    tip = css.split(".rrm-guide-step-tip {", 1)[1].split("}", 1)[0]
+    assert body != tip, "正文与小字提示不能是同一套排版"
+    # 自绘的那套（P11.1 已换成原生组件）不该再留在 CSS 里。
+    assert ".rrm-guide-step-title" not in css, "标题交给宿主原生组件"
+    assert ".rrm-guide-num" not in css, "编号圆点交给宿主原生组件"
 
 
 # ══════════════════════════════════════════════════════════════ ④ 首次自动弹出
@@ -525,7 +545,7 @@ def test_no_dangerous_inline_styles() -> None:
     assert "<div className=" not in code, "必须用 h(\"div\", { className: ... })"
 
 
-def test_version_is_0_9_4() -> None:
-    """版本号 = 0.9.4。"""
-    assert 'version = "0.9.4"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.9.4"' in _init_text()
+def test_version_is_0_9_5() -> None:
+    """版本号 = 0.9.5。"""
+    assert 'version = "0.9.5"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.9.5"' in _init_text()
