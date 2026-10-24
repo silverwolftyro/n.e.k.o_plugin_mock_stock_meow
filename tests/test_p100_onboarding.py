@@ -525,7 +525,7 @@ def test_no_dangerous_inline_styles() -> None:
     assert "<div className=" not in code, "必须用 h(\"div\", { className: ... })"
 
 
-def test_version_is_0_9_3() -> None:
-    """版本号 = 0.9.3。"""
-    assert 'version = "0.9.3"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.9.3"' in _init_text()
+def test_version_is_0_9_4() -> None:
+    """版本号 = 0.9.4。"""
+    assert 'version = "0.9.4"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.9.4"' in _init_text()

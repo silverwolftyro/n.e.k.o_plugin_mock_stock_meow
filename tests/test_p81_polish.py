@@ -346,6 +346,6 @@ def test_assets_are_still_inline_data_uris() -> None:
 
 
 def test_version_is_0_9_1() -> None:
-    """版本号 = 0.9.3。"""
+    """版本号 = 0.9.4。"""
     toml = _TOML.read_text(encoding="utf-8")
-    assert 'version = "0.9.3"' in toml
+    assert 'version = "0.9.4"' in toml

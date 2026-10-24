@@ -61,7 +61,7 @@
   "market.tag_stable": "稳定",
   "market.tag_neutral": "中性",
   "market.tag_explosive": "爆炸",
-  "panel.subtitle": "拟股喵喵 · 纯虚构反诈沙盘 · P10 引导与节奏版",
+  "panel.subtitle": "拟股喵喵 · 纯虚构反诈沙盘 · P11 猫娘搭话版",
   "panel.placeholder": "市场面板将在 P5 阶段接入，当前展示 P2 的行情与持仓基础数据。",
   "action.buy": "买入",
   "action.sell": "卖出",
@@ -397,5 +397,13 @@
   "panel.pace_manual_note": "手动模式下，日终账单只在你点【推进一拍】之后才结算。",
   "panel.pace_auto_note": "自动模式下市场自己往前；想自己掌控节奏就切到手动。",
   "panel.pace_auto_hint_unknown": "市场按配置的节奏自己往前走。",
-  "panel.pace_day_estimate_unknown": "一个游戏日的长度随难度档位而定。"
+  "panel.pace_day_estimate_unknown": "一个游戏日的长度随难度档位而定。",
+  "panel.meow_call": "呼叫猫娘",
+  "panel.meow_called": "猫娘开口了，去聊天框看她说了什么。",
+  "panel.meow_fallback_toast": "这次没能让桌宠真的开口 —— 面板里给你演一段。",
+  "meow.modal_title": "猫娘发来一条消息",
+  "meow.ack": "知道了",
+  "meow.fallback_empty": "（猫娘这会儿没说话。）",
+  "meow.fallback_push": "受限于宿主版本，这次没法让桌宠真的开口 —— 这里先用面板模拟。",
+  "meow.fallback_generic": "这次没法让桌宠真的开口 —— 这里先用面板模拟。"
 }

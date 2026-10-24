@@ -309,7 +309,7 @@ def test_worktree_has_no_crlf_files() -> None:
 
 
 def test_version_is_0_7_4() -> None:
-    """版本号 = 0.9.3。
+    """版本号 = 0.9.4。
 
     版本史：
 
@@ -323,12 +323,13 @@ def test_version_is_0_7_4() -> None:
     * 0.9.0 —— P8：正式化《拟股喵喵》+ 清丽轻科技风 UI 重构。
     * 0.9.2 —— P8.1：结算页占位符/枚举修复 + K 线开局提示 + 操作区与梗图打磨。
     * 0.9.3 —— P10：新手引导（玩法说明弹窗 + 官方 guide 面）+ 节奏控制。
+    * 0.9.4 —— P11：猫娘外置交互引导（主动搭话 + 呼叫猫娘 + 兜底弹窗）。
     """
     from plugins.mock_stock_meow import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.9.3"
+    assert PLUGIN_VERSION == "0.9.4"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.9.3"' in toml
+    assert 'version = "0.9.4"' in toml
 
 
 # ------------------------------------------------- ⑥ 面板文案全走 i18n

@@ -27,7 +27,7 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 _SOURCE = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
 
 #: P5 契约 §3.2 的 7 个 + P5.5 改动 6 的 ``skip_day`` + P6 档 2 的 ``kline`` = 9 个，
-#: 再加 P7 的 4 个、P7.4 的 1 个、P10 的 4 个 = 17 个。
+#: 再加 P7 的 4 个、P7.4 的 1 个、P10 的 4 个 = 17 个，再加 P11 的 2 个 = 19 个。
 EXPECTED_ACTIONS = (
     "buy",
     "sell",
@@ -50,6 +50,9 @@ EXPECTED_ACTIONS = (
     "set_auto_tick",
     "advance_tick",
     "onboarding_ack",
+    # ── P11：猫娘外置交互引导（首次招呼 / 呼叫猫娘）──────────────
+    "meow_greet",
+    "meow_call",
 )
 
 #: 局中**不能出现的方向词**（细节 5）。

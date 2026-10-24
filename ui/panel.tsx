@@ -261,6 +261,27 @@ type Onboarding = {
   player_id?: string
 }
 
+/**
+ * P11：猫娘主动搭话（外置交互引导）的状态。
+ *
+ * **纯表现**：这里只有"猫娘有没有开口"和"兜底弹窗有没有新消息"，
+ * 一个游戏数值都没有 —— 主动搭话**不参与**任何游戏规则。
+ */
+type Meow = {
+  /** 首次加载引导已经打过招呼了（全局一次）。 */
+  greeted?: boolean
+  /** 现在能不能呼叫（防连点冷却中就是 false）。 */
+  can_call?: boolean
+  /** 还要等几秒才能再呼叫。 */
+  call_cooldown?: number
+  /** 兜底弹窗的序号 —— 变了就说明"有一条新的猫娘消息"。 */
+  fallback_seq?: number
+  /** 兜底弹窗的台词（宿主接不住主动搭话时才有）。 */
+  fallback_line?: string
+  /** 兜底弹窗的原因（``push_failed`` 等）。 */
+  fallback_reason?: string
+}
+
 type State = {
   stage?: string
   day?: number
@@ -297,6 +318,8 @@ type State = {
   pace?: Pace
   /** P10：新手引导（要不要自动弹《玩法说明》）。 */
   onboarding?: Onboarding
+  /** P11：猫娘主动搭话的状态。 */
+  meow?: Meow
 }
 
 /** P5.5 改动 4：天台虚惊一场的三屏。 */
@@ -681,6 +704,48 @@ const RRM_CSS = `
   border-radius: 999px;
   color: var(--muted);
   font-weight: 650;
+}
+
+/* ── ⑯ P11：呼叫猫娘 + 拟态外置对话 ─────────────────────────────────── */
+/* 标题栏里的【呼叫猫娘】小按钮（比《玩法说明》链接显眼一点点）。 */
+.rrm-root .neko-button.rrm-meow-call {
+  font-size: 11px;
+  padding: 3px 11px;
+  border-radius: 999px;
+  font-weight: 700;
+  color: #2b6ca8;
+  background: rgba(164, 229, 255, 0.42);
+  border: 1px solid rgba(123, 188, 255, 0.5);
+}
+/* 兜底弹窗里那条"消息"：左头像 + 右气泡。 */
+.rrm-root .rrm-meow-thread {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.rrm-root .rrm-meow-avatar {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  background: linear-gradient(180deg, #d8f0ff 0%, #bfe2ff 100%);
+  border: 1px solid rgba(123, 188, 255, 0.45);
+}
+.rrm-root .rrm-meow-bubble {
+  flex: 1 1 auto;
+  padding: 11px 14px;
+  border-radius: 16px;
+  background: #eaf6ff;
+  border: 1px solid rgba(123, 188, 255, 0.38);
+  color: #1f2d3d;
+  font-size: 13px;
+  line-height: 1.6;
+  box-shadow: 0 8px 22px rgba(133, 163, 214, 0.14);
 }
 
 /* ── ⑮ P10：玩法说明弹窗里的三步图文 ──────────────────────────────── */
@@ -1375,6 +1440,62 @@ function GuideModal(props: {
 }
 
 /**
+ * P11：拟态外置对话弹窗（**兜底**）。
+ *
+ * **这是降级路径，不是主路径。**
+ *
+ * 主路径是宿主 SDK 的 ``push_message(ai_behavior="respond")``：插件把一段提示
+ * 喂给 LLM 并立刻触发一个 AI 回合，**外置猫娘**（桌宠）自己开口说话。
+ *
+ * 只有当宿主**接不住**这次主动搭话（老版本宿主 / 推送被拒）时，才会退到这
+ * 个弹窗 —— 用"猫娘发来一条微信消息"的样式，在**面板内部**演一段台词。
+ * 所以弹窗里必须写清楚这是模拟，不能让玩家以为桌宠真的没说话。
+ *
+ * 视觉一律走 ``className`` + 注入的 ``RRM_CSS``（宿主组件几乎不透传 style）。
+ */
+function MeowChatModal(props: {
+  open: boolean
+  t: Translate
+  line: string
+  reason: string
+  onClose: () => void
+}) {
+  const { open, t, line, reason, onClose } = props
+  return h(
+    Modal,
+    {
+      open: open,
+      title: t("meow.modal_title"),
+      onClose: onClose,
+      size: "sm",
+      children: h(
+        Stack,
+        { gap: 12 },
+        h(
+          "div",
+          { className: "rrm-meow-thread" },
+          h("span", { className: "rrm-meow-avatar" }, "🐱"),
+          h("div", { className: "rrm-meow-bubble" }, line || t("meow.fallback_empty"))
+        ),
+        h(Alert, {
+          tone: "info",
+          message: reason === "push_failed" ? t("meow.fallback_push") : t("meow.fallback_generic"),
+        })
+      ),
+      footer: h(
+        "div",
+        { className: "neko-button-group" },
+        h(Button, {
+          tone: "primary",
+          onClick: onClose,
+          children: t("meow.ack"),
+        })
+      ),
+    }
+  )
+}
+
+/**
  * P10：节奏卡（游戏速度 + 自动/手动推进）。
  *
  * **只改"现实里等多久"**，一个游戏数值都不碰：
@@ -1577,6 +1698,64 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     guideAutoTried.current = true
     setGuideOpen(true)
   }, [onboarding.auto_open])
+
+  // ── P11：猫娘外置交互引导（主动搭话）───────────────────────────
+  //
+  // **主路径**：插件调 `push_message(ai_behavior="respond")`，宿主让**外置猫娘**
+  // 真的开口。面板这一侧只做两件事：
+  //   ① 挂载时调一次 `meow_greet`（首次加载引导，全局只说一次）；
+  //   ② 盯住 `meow.fallback_seq` —— 序号变了就说明"宿主接不住，弹兜底对话"。
+  const meow = (state.meow || {}) as Meow
+  const [meowFallback, setMeowFallback] = useState<{ line: string; reason: string } | null>(
+    null
+  )
+  // 「只招呼一次」：**本次挂载**只试一次。
+  //
+  // `userInitiated: false` 让宿主在插件还没起来时**自动重试**这次调用 ——
+  // 玩家刚打开面板时插件可能正在启动，等它跑起来再补一句招呼。
+  const meowGreetTried = useRef(false)
+  useEffect(() => {
+    if (meowGreetTried.current) return
+    meowGreetTried.current = true
+    try {
+      const pending = props.api.call("meow_greet", {}, { userInitiated: false })
+      if (pending && typeof pending.catch === "function") pending.catch(() => undefined)
+    } catch (_error) {
+      // 呼不上就算了：绝不能因为一句引导语把面板搞崩。
+    }
+  }, [props.api])
+  // 兜底弹窗：序号变了 ⇒ 有一条新的猫娘消息（宿主接不住主动搭话）。
+  const meowFallbackSeq = useRef(-1)
+  useEffect(() => {
+    const seq = Number(meow.fallback_seq || 0)
+    if (!seq || seq === meowFallbackSeq.current) return
+    meowFallbackSeq.current = seq
+    setMeowFallback({
+      line: String(meow.fallback_line || ""),
+      reason: String(meow.fallback_reason || ""),
+    })
+  }, [meow.fallback_seq, meow.fallback_line, meow.fallback_reason])
+
+  /** 【呼叫猫娘】：玩家按一下，外置猫娘回一句。 */
+  const callMeow = () => {
+    try {
+      props.api
+        .call("meow_call", {}, { userInitiated: true })
+        .then(async (result: any) => {
+          await props.api.refresh()
+          const spoken = Boolean(result && result.spoken)
+          showToast(
+            spoken ? t("panel.meow_called") : t("panel.meow_fallback_toast"),
+            spoken ? "info" : "warning"
+          )
+        })
+        .catch((error: any) => {
+          showToast(String((error && error.message) || error), "danger")
+        })
+    } catch (error: any) {
+      showToast(String((error && error.message) || error), "danger")
+    }
+  }
   /** 关掉《玩法说明》＝"玩家看过了"：把已读标记记回 player_id。 */
   const closeGuide = () => {
     setGuideOpen(false)
@@ -1980,6 +2159,19 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       },
       children: t("panel.guide_button"),
     }),
+    // ── P11：【呼叫猫娘】—— 让**外置**猫娘（桌宠）开口说话 ────────────
+    // 空闲态与局中都在标题栏里：一个位置，两个状态都够得着。
+    h(Button, {
+      className: "rrm-meow-call",
+      tone: "default",
+      onClick: (event: any) => {
+        if (event && typeof event.stopPropagation === "function") {
+          event.stopPropagation()
+        }
+        callMeow()
+      },
+      children: t("panel.meow_call"),
+    }),
     // 开源纯净版**不剧透**导演台：连提示都不给（入口本身插件层还会再挡一次）。
     directorEnabled
       ? h(
@@ -2126,6 +2318,16 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     onClose: closeGuide,
   })
 
+  // ── P11：拟态外置对话弹窗（**兜底**）──────────────────────────────
+  // 只有宿主接不住主动搭话时才会出现（``meowFallback`` 非空即弹）。
+  const meowModal = h(MeowChatModal, {
+    open: meowFallback !== null,
+    t: t,
+    line: meowFallback ? meowFallback.line : "",
+    reason: meowFallback ? meowFallback.reason : "",
+    onClose: () => setMeowFallback(null),
+  })
+
   // ── 局终：展示归档的结算报告 ─────────────────────────────────────
   if (state.stage === "finished" && state.settlement) {
     const report = state.settlement
@@ -2162,6 +2364,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
               </Stack>
             </Card>
             {guideModal}
+            {meowModal}
             {danmakuCard}
           </Stack>
         </Page>
@@ -2347,6 +2550,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             </Card>
           ) : null}
           {guideModal}
+          {meowModal}
           {danmakuCard}
         </Stack>
       </Page>
@@ -2427,6 +2631,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
           </Card>
           {paceCard}
           {guideModal}
+          {meowModal}
           {danmakuCard}
         </Stack>
       </Page>
@@ -2536,6 +2741,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
         {directorConsole}
         {boomModal}
         {guideModal}
+        {meowModal}
 
         {/* ── P7.2 ⓪：状态条（压缩成一行徽标，别占地方）────────────── */}
         <Inline gap={8} wrap align="center">

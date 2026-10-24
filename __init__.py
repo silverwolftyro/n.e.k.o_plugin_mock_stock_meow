@@ -128,6 +128,15 @@ from .engine.settlement import (
     sell_fee,
     welfare_entitlement,
 )
+from .meow import (
+    GREET_PROMPT,
+    MEOW_AUTO_COOLDOWN_SECONDS,
+    MEOW_CALL_COOLDOWN_SECONDS,
+    NAG_PROMPT,
+    call_prompt,
+    fallback_line,
+    rotate_topic,
+)
 from .modes import get_mode
 from .modes.shared import (
     ModeContext,
@@ -152,7 +161,7 @@ __all__ = ["MockStockMeowPlugin"]
 PLUGIN_ID = "mock_stock_meow"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.9.3"
+PLUGIN_VERSION = "0.9.4"
 
 #: P10：游戏速度档位 → **真实时间**推进间隔的倍率。
 #:
@@ -173,6 +182,18 @@ _GAME_SPEED_MULTIPLIER: dict[str, float] = {
 _SETTING_GAME_SPEED = "game_speed"
 _SETTING_AUTO_TICK = "auto_tick"
 _SETTING_ONBOARDING = "onboarding_ack"
+
+#: P11：猫娘主动搭话（外置交互引导）的 ``settings`` 表键名。
+#:
+#: * ``meow_greeted`` —— "首次加载引导"已经打过招呼了（**全局一次**）；
+#: * ``meow_nag_player`` —— 已经被唠叨过的 ``player_id``（每局一次）；
+#: * ``meow_last_at`` —— 上一次主动搭话的时间戳（**全局冷却**）。
+#:
+#: 三个键都是**插件自己的偏好**，与宿主配置无关 —— 写库不会触发插件重启，
+#: 局中的存档与内存态一律不受影响。
+_SETTING_MEOW_GREETED = "meow_greeted"
+_SETTING_MEOW_NAG_PLAYER = "meow_nag_player"
+_SETTING_MEOW_LAST_AT = "meow_last_at"
 
 #: 「无为而治」称号的解锁天数（P5.5 改动 6）。
 #:
@@ -452,6 +473,26 @@ class MockStockMeowPlugin(NekoPluginBase):
         self._onboarding_ack_cache: bool = False
         #: 玩家维度的"已读"标记缓存：``(player_id, 是否已读)``。
         self._onboarding_player_seen_cache: tuple[str, bool] = ("", False)
+        #: ── P11：猫娘外置交互引导（主动搭话）的**内存闸门** ────────────
+        #:
+        #: 猫娘开口会打断玩家 —— 所以每一次主动搭话都必须先过闸门：
+        #:   * ``_meow_greeted``   —— 首次加载引导打过招呼了（全局一次）；
+        #:   * ``_meow_nag_player``—— 已经被唠叨过的 player_id（每局一次）；
+        #:   * ``_meow_last_at``   —— 上次主动搭话的时间戳（全局冷却）；
+        #:   * ``_meow_call_count`` —— 呼叫次数（用来轮换话题）。
+        #: 全部**纯内存**：落库的键在 ``settings`` 表里（见 ``_SETTING_MEOW_*``），
+        #: 这里只是它们的缓存 —— 面板每秒轮询，热路径上不能查库。
+        self._meow_greeted: bool = False
+        self._meow_nag_player: str = ""
+        self._meow_last_at: float = 0.0
+        self._meow_call_count: int = 0
+        #: 兜底弹窗的**序号**（面板靠它判断"这条是不是新的"）。
+        #: 宿主不支持主动搭话时，插件把台词写进这个槽位，面板轮询到序号变了
+        #: 就弹出"拟态外置对话"。
+        self._meow_fallback_seq: int = 0
+        #: 兜底弹窗的台词与原因（**只在内存里**：是"此刻"的一次提示）。
+        self._meow_fallback_line: str = ""
+        self._meow_fallback_reason: str = ""
         #: 最近一次玩家 id（P5：局终后 ``market_state.player_id`` 被清空，
         #: 面板要靠它去找归档的结算报告）。
         self._last_player_id: str = ""
@@ -459,6 +500,9 @@ class MockStockMeowPlugin(NekoPluginBase):
         self._catgirl_daily: dict[str, Any] | None = None
         #: 猫娘上一次日终时的累计成交笔数（用来算"今天她动没动手"）。
         self._catgirl_trades_seen: int | None = None
+        #: 上一次【呼叫猫娘】的时间戳（**防连点**冷却；与自动搭话分开计时，
+        #: 这样"先被打招呼、再手动提问"不会被误伤）。
+        self._meow_call_last_at: float = 0.0
         #: ── P7：社区名册 ──────────────────────────────────────────────
         #: 社区名册（群友人设 + 抽象新闻池）。从 ``community_roster.json``
         #: 读取；读不到就退化成空名册（插件照常跑，只是没有彩蛋）。
@@ -2597,6 +2641,284 @@ class MockStockMeowPlugin(NekoPluginBase):
         return "观望"
 
     # ------------------------------------------------------------------
+    # P11：猫娘外置交互引导（主动搭话）
+    # ------------------------------------------------------------------
+    #
+    # **这一节是"真·宿主主动搭话"，不是面板模拟。**
+    #
+    # 官方 ``push_message`` v2 有两个**正交**的轴：
+    #
+    # * ``visibility``  —— 插件的 parts 渲染到哪（``["chat"]`` / ``["hud"]`` / 空）；
+    # * ``ai_behavior`` —— LLM 怎么处理：
+    #   ``"respond"``（**喂给 LLM 并立刻触发一个 AI 回合**，AI 的回复作为
+    #   猫娘气泡进聊天框）/ ``"read"``（只进上下文、不触发回合）/
+    #   ``"blind"``（完全不喂 LLM）。
+    #
+    # 本插件**既有**的卡片 / 新闻推送全是 ``ai_behavior="blind"``（AI 看不见，
+    # 否则会泄题 —— P4 §11）；那正是"猫娘一直安静"的根因。P11 是一条
+    # **独立的、显式的**新通道：``visibility=[]`` + ``ai_behavior="respond"`` ——
+    # 玩家只看到猫娘的气泡，看不到插件的原始提示（官方文档明说这种组合下
+    # "only the AI's reply is visible"）。
+    #
+    # **提示词不是台词**：``respond`` 会让猫娘用**自己的语气**生成回复，所以
+    # text 写的是"请提醒玩家点【玩法说明】"这类**指令**（含关键信息），
+    # 而不是把整句台词写死 —— 写死台词会让所有角色念同一句话。
+    #
+    # **P5 契约不受影响**：P11 的提示词里**只有玩法**，没有 heat / seed /
+    # 反转日 / 新闻真假 —— 局中不泄露的规则继续生效。
+    #
+    # **节流**：猫娘开口会打断玩家。每一次主动搭话都必须先过闸门
+    # （见 ``_meow_*`` 实例属性），绝不允许刷屏。
+
+    def _current_lanlan(self) -> str:
+        """当前角色名（拿不到就留空，让宿主自己兜底）。
+
+        官方 SDK 的 ``create_card`` 就是这么做的：``target_lanlan or
+        getattr(self._host_ctx, "current_lanlan", None)``。这里**只读**，
+        读不到就传 ``None`` —— 宿主会把消息转给默认角色
+        （历史日志：``proactive_message rerouted: lanlan=None missing``）。
+        """
+        for holder in (getattr(self.ctx, "_host_ctx", None), self.ctx):
+            if holder is None:
+                continue
+            name = getattr(holder, "current_lanlan", None)
+            if isinstance(name, str) and name.strip():
+                return name.strip()
+        return ""
+
+    async def _push_proactive(self, prompt: str, *, reason: str) -> bool:
+        """让猫娘**主动开口**（P11 主路径）。返回宿主是否受理了这次推送。
+
+        **绝不抛异常**：主动搭话是"锦上添花"，失败了也绝不能拖垮游戏。
+        和 ``_push_card`` 一样，一律用 ``except Exception`` 兜底 —— 宿主不同
+        版本导出的符号集不一致，写具体的异常类会 ``cannot import name``。
+        """
+        push = getattr(self.ctx, "push_message", None)
+        if not callable(push):
+            self.logger.info(f"宿主未提供 push_message（{reason}）：本次跳过主动搭话")
+            return False
+        try:
+            result = push(
+                # 玩家**看不到**插件的原始提示（只有猫娘的气泡进聊天框）。
+                visibility=[],
+                # 喂给 LLM 并**立刻触发一个 AI 回合** —— 猫娘用她自己的语气回。
+                ai_behavior="respond",
+                parts=[{"type": "text", "text": prompt}],
+                source=PLUGIN_ID,
+                target_lanlan=self._current_lanlan() or None,
+                # 比默认的 0 高一点（但远低于弹幕 / 提醒那几档），免得猫娘
+                # 的招呼在队列里被别的高优先级消息挤掉。
+                priority=2,
+            )
+            if hasattr(result, "__await__"):
+                await result
+            # 只在**成功**时记时间：接不住就没打断玩家，不该占掉冷却窗口。
+            self._meow_last_at = time.time()
+            return True
+        except Exception as error:  # pragma: no cover - 宿主侧异常
+            self.logger.warning(f"猫娘主动搭话失败（{reason}）：{error}")
+            return False
+
+    def _record_meow_fallback(self, topic: str, reason: str) -> None:
+        """记一条"兜底弹窗"：宿主**接不住**主动搭话时，面板弹拟态对话。
+
+        序号（``_meow_fallback_seq``）是面板的判据 —— 面板每 3 秒轮询一次
+        上下文，看到序号变了就知道"有一条新的猫娘消息要弹"。
+        """
+        self._meow_fallback_seq += 1
+        self._meow_fallback_line = fallback_line(topic)
+        self._meow_fallback_reason = reason
+
+    def _meow_block(self) -> dict[str, Any]:
+        """面板载荷的 ``meow`` 块：猫娘主动搭话的状态（**纯内存**）。
+
+        面板每秒轮询，这里**不能查库、不能问宿主**。
+        """
+        now = time.time()
+        cooldown_left = 0.0
+        if self._meow_call_last_at > 0.0:
+            cooldown_left = max(
+                0.0, MEOW_CALL_COOLDOWN_SECONDS - (now - self._meow_call_last_at)
+            )
+        return {
+            "greeted": bool(self._meow_greeted),
+            "can_call": cooldown_left <= 0.0,
+            "call_cooldown": round(cooldown_left, 1),
+            "fallback_seq": int(self._meow_fallback_seq),
+            "fallback_line": self._meow_fallback_line,
+            "fallback_reason": self._meow_fallback_reason,
+        }
+
+    @ui.action(
+        id="meow_greet",
+        label="猫娘招呼",
+        icon="chat",
+        tone="default",
+        group="settings",
+        order=5,
+    )
+    @plugin_entry(
+        id="meow_greet",
+        name="让猫娘打个招呼",
+        description=(
+            "玩家第一次打开《拟股喵喵》面板时调用："
+            "让外置猫娘主动说一句引导语（全局只说一次）。"
+        ),
+    )
+    async def meow_greet(self) -> Ok:
+        """首次加载引导：让外置猫娘**主动说一句引导语**。
+
+        **只说一次**（全局）：闸门是 ``settings.meow_greeted``。
+
+        说过了也**不重说** —— 猫娘开口会打断玩家，反复打招呼是骚扰。
+
+        宿主接不住时（老版本 / 主动搭话被拒）会退化成面板里的
+        "拟态外置对话"弹窗（由 ``_record_meow_fallback`` 记账）。
+        """
+        await self._ensure_settings_cache()
+        if self._meow_greeted:
+            return Ok(
+                {
+                    "action": "meow_greet",
+                    "spoken": False,
+                    "reason": "already_greeted",
+                    "topic": "greet",
+                    "line": "",
+                }
+            )
+        now = time.time()
+        if self._meow_last_at > 0.0 and (
+            now - self._meow_last_at
+        ) < MEOW_AUTO_COOLDOWN_SECONDS:
+            return Ok(
+                {
+                    "action": "meow_greet",
+                    "spoken": False,
+                    "reason": "cooldown",
+                    "topic": "greet",
+                    "line": "",
+                }
+            )
+        spoken = await self._push_proactive(GREET_PROMPT, reason="greet")
+        # **无论成功与否**都记下"打过招呼"：失败时已经弹过兜底弹窗了，
+        # 反复重试只会反复弹窗。
+        self._meow_greeted = True
+        await self._repo.set_setting(_SETTING_MEOW_GREETED, "1")
+        if not spoken:
+            self._record_meow_fallback("greet", "push_failed")
+        return Ok(
+            {
+                "action": "meow_greet",
+                "spoken": spoken,
+                "reason": "ok" if spoken else "push_failed",
+                "topic": "greet",
+                "line": "" if spoken else fallback_line("greet"),
+            }
+        )
+
+    @ui.action(
+        id="meow_call",
+        label="呼叫猫娘",
+        icon="chat",
+        tone="default",
+        group="settings",
+        order=6,
+    )
+    @plugin_entry(
+        id="meow_call",
+        name="呼叫猫娘",
+        description="玩家在面板上主动呼叫外置猫娘：让猫娘回一句提示或吐槽。",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": (
+                        "想问的话题（how_to_play / market / risk / catgirl）；"
+                        "留空则自动轮换，避免每次都是同一句。"
+                    ),
+                }
+            },
+            "required": [],
+        },
+    )
+    async def meow_call(self, topic: str = "") -> Ok:
+        """【呼叫猫娘】：玩家在面板上按一下，外置猫娘回一句。
+
+        **只挡连点**（``MEOW_CALL_COOLDOWN_SECONDS``），不挡"刚被打招呼就来提问"
+        —— 玩家主动要的回应必须给。
+        """
+        await self._ensure_settings_cache()
+        now = time.time()
+        chosen = str(topic or "").strip()
+        if not chosen:
+            chosen = rotate_topic(self._meow_call_count)
+        if (
+            self._meow_call_last_at > 0.0
+            and (now - self._meow_call_last_at) < MEOW_CALL_COOLDOWN_SECONDS
+        ):
+            return Ok(
+                {
+                    "action": "meow_call",
+                    "spoken": False,
+                    "reason": "cooldown",
+                    "topic": chosen,
+                    "line": fallback_line(chosen),
+                }
+            )
+        self._meow_call_count += 1
+        spoken = await self._push_proactive(call_prompt(chosen), reason="call")
+        self._meow_call_last_at = now
+        if not spoken:
+            self._record_meow_fallback(chosen, "push_failed")
+        return Ok(
+            {
+                "action": "meow_call",
+                "spoken": spoken,
+                "reason": "ok" if spoken else "push_failed",
+                "topic": chosen,
+                "line": "" if spoken else fallback_line(chosen),
+            }
+        )
+
+    async def _maybe_meow_nag(self, session: Session) -> dict[str, Any] | None:
+        """新手期唠叨：第 1 天**一笔没买**就按了「推进一拍 / 跳过本日」。
+
+        触发条件（三个都要满足）：
+
+        * 游戏日是**第 1 天**；
+        * 累计成交笔数是 **0**（真的什么都没做）；
+        * 还没唠叨过这一局（``settings.meow_nag_player`` 记 ``player_id``）。
+
+        返回给调用方的 ``meow`` 块（``None`` = 没唠叨）。调用方把它塞进
+        返回体，面板据此决定要不要弹"拟态外置对话"。
+        """
+        player = session.player
+        if int(player.day) != 1:
+            return None
+        if int(player.trade_count) > 0:
+            return None
+        player_id = str(player.id)
+        if not player_id or self._meow_nag_player == player_id:
+            return None
+        now = time.time()
+        if self._meow_last_at > 0.0 and (
+            now - self._meow_last_at
+        ) < MEOW_AUTO_COOLDOWN_SECONDS:
+            return None
+        spoken = await self._push_proactive(NAG_PROMPT, reason="nag")
+        self._meow_nag_player = player_id
+        await self._repo.set_setting(_SETTING_MEOW_NAG_PLAYER, player_id)
+        if not spoken:
+            self._record_meow_fallback("nag", "push_failed")
+        return {
+            "spoken": spoken,
+            "reason": "ok" if spoken else "push_failed",
+            "topic": "nag",
+            "line": "" if spoken else fallback_line("nag"),
+        }
+
+    # ------------------------------------------------------------------
     # 心跳与 tick 流水线（P3）
     # ------------------------------------------------------------------
 
@@ -3398,6 +3720,11 @@ class MockStockMeowPlugin(NekoPluginBase):
                     params={"day": skip_day_value + 1},
                 )
             )
+            # ── P11：新手期唠叨（第 1 天一笔没买就跳过）──────────────
+            # 用的是**按下那一刻**的 session（``_tick_once`` 重建了自己的
+            # Session，``session.player`` 仍是按下前的状态）—— 判据正是
+            # "玩家在第 1 天什么都没做就按了跳过本日"。
+            meow = await self._maybe_meow_nag(session)
             # 记下"今天已经跳过一次"（记的是**发起跳过时**的游戏日 = 规格说的
             # "当前游戏日"；``_commit_tick`` 不会写这一列，所以这里单独写）。
             #
@@ -3423,6 +3750,8 @@ class MockStockMeowPlugin(NekoPluginBase):
                         "skipped_to_day": skip_day_value + 1,
                         "ticks_advanced": steps,
                         "note": "这一局已经结束了。",
+                        # P11：猫娘有没有唠叨（面板据此弹兜底对话）
+                        "meow": meow,
                     }
                 )
             return Ok(
@@ -3439,6 +3768,8 @@ class MockStockMeowPlugin(NekoPluginBase):
                         if fresh.player.alive
                         else "这一天过完了，你也到了头。"
                     ),
+                    # P11：猫娘有没有唠叨（面板据此弹兜底对话）
+                    "meow": meow,
                 }
             )
 
@@ -3572,8 +3903,20 @@ class MockStockMeowPlugin(NekoPluginBase):
         fresh, fresh_error = await self._session_or_error(engine_config)
         if fresh_error is not None:
             return fresh_error
+        # ── P11：新手期唠叨（第 1 天一笔没买就推进）────────────────
+        # 用**按下那一刻**的 session（``_run_one_tick`` 重建了自己的 Session，
+        # ``session.player`` 仍是推进前的状态）。
+        meow = await self._maybe_meow_nag(session)
         if fresh is None:
-            return Ok({"action": "advance_tick", "ended": True, "note": "这一局已经结束了。"})
+            return Ok(
+                {
+                    "action": "advance_tick",
+                    "ended": True,
+                    "note": "这一局已经结束了。",
+                    # P11：猫娘有没有唠叨（面板据此弹兜底对话）
+                    "meow": meow,
+                }
+            )
         return Ok(
             {
                 "action": "advance_tick",
@@ -3587,6 +3930,8 @@ class MockStockMeowPlugin(NekoPluginBase):
                     if fresh.player.alive
                     else "走了一拍，你也到了头。"
                 ),
+                # P11：猫娘有没有唠叨（面板据此弹兜底对话）
+                "meow": meow,
             }
         )
 
@@ -4592,6 +4937,13 @@ class MockStockMeowPlugin(NekoPluginBase):
             else auto.strip().lower() not in ("0", "false", "off", "no", "manual")
         )
         self._onboarding_ack_cache = bool(values.get(_SETTING_ONBOARDING))
+        # ── P11：猫娘主动搭话的闸门（同样一次会话读回，之后全走内存）──
+        self._meow_greeted = bool(values.get(_SETTING_MEOW_GREETED))
+        self._meow_nag_player = str(values.get(_SETTING_MEOW_NAG_PLAYER) or "")
+        try:
+            self._meow_last_at = float(values.get(_SETTING_MEOW_LAST_AT) or 0.0)
+        except (TypeError, ValueError):
+            self._meow_last_at = 0.0
 
     def _resolve_speed(self) -> str:
         """当前生效的游戏速度档位（读内存缓存，不查库、不问宿主）。
@@ -4742,6 +5094,8 @@ class MockStockMeowPlugin(NekoPluginBase):
                     # ── P10：节奏与引导（结算页也要能看说明）────────────
                     "pace": pace,
                     "onboarding": onboarding,
+                    # ── P11：猫娘主动搭话的状态（纯内存）──────────────
+                    "meow": self._meow_block(),
                     "notice": "本局已经结算归档。下面是这一局的最终成绩。",
                 }
             return {
@@ -4750,6 +5104,8 @@ class MockStockMeowPlugin(NekoPluginBase):
                 # ── P10：空闲态也要有节奏块（玩家可以在开局前先调速度）──
                 "pace": pace,
                 "onboarding": onboarding,
+                # ── P11：空闲态也能呼叫猫娘（第一次打开就在这儿）──────
+                "meow": self._meow_block(),
             }
         return self._panel_payload(session, engine_config, pace, onboarding)
 
@@ -5444,6 +5800,8 @@ class MockStockMeowPlugin(NekoPluginBase):
             # ── P10：节奏（速度 / 自动·手动）与新手引导 ──────────────────
             "pace": pace or {},
             "onboarding": onboarding or {},
+            # ── P11：猫娘主动搭话的状态（纯内存）─────────────────────
+            "meow": self._meow_block(),
             "notice": "",
         }
 
