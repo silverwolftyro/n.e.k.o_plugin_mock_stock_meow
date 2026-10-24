@@ -161,14 +161,18 @@ def test_trade_buttons_keep_the_compact_row() -> None:
 
 
 def test_trade_buttons_have_sub_captions() -> None:
-    """设计图里两个大按钮下面各有一行小字（All In / Stop Loss）。"""
+    """设计图里两个大按钮下面各有一行小字。
+
+    P12：文案跟着按钮一起改了（「All In / Stop Loss」不再是事实，现在是按仓位买），
+    所以小字换成了「按上面的仓位买 / 卖」，但**层次结构不变**。
+    """
     code = _panel_code()
     assert "rrm-pill-captions" in code
     assert "rrm-pill-caption-buy" in code
     assert "rrm-pill-caption-sell" in code
     i18n = _i18n()
-    assert "visual.buy_all_sub" in i18n
-    assert "visual.sell_all_sub" in i18n
+    assert "panel.trade_execute_buy_sub" in i18n
+    assert "panel.trade_execute_sell_sub" in i18n
 
 
 # ---------------------------------------------------------------- ③ 行情卡片
@@ -311,7 +315,7 @@ def test_assets_are_still_inline_data_uris() -> None:
 
 
 def test_version_is_0_9_5() -> None:
-    """版本号 = 0.9.5。"""
-    assert 'version = "0.9.5"' in _TOML.read_text(encoding="utf-8")
+    """版本号 = 0.9.6。"""
+    assert 'version = "0.9.6"' in _TOML.read_text(encoding="utf-8")
     init = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.9.5"' in init
+    assert 'PLUGIN_VERSION = "0.9.6"' in init

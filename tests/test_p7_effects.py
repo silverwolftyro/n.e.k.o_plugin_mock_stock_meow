@@ -514,9 +514,12 @@ def test_panel_has_no_drift_button() -> None:
     source = _panel_code()
     assert "DriftButton" not in source
     assert "driftRate" not in source
-    # 买入 / 放贷一律用宿主原生 ActionButton
-    assert 'action={actionById("buy")}' in source
+    # 买入 / 放贷一律用**宿主原生**按钮（``ActionButton`` 或 ``Button``）。
+    # P12 把买入/卖出换成了 ``Button`` + ``callAction``（要进 P11.1 的全局锁），
+    # 但**仍然是宿主原生组件** —— 自定义包裹会破坏宿主按钮组的布局。
     assert 'action={actionById("daily_loan")}' in source
+    assert 'callAction("buy"' in source
+    assert 'callAction("sell"' in source
 
 
 def test_panel_emoji_seam_is_at_least_fifty() -> None:

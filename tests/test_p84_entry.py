@@ -158,12 +158,20 @@ def test_failed_actions_resync_the_context() -> None:
     code = _panel_code()
     assert "const resync = () =>" in code
     assert "onActionError" in code, "动作失败必须有统一的错误处理"
-    # 关键动作都要挂上。
-    for action in ("buy", "sell", "daily_claim", "daily_loan", "skip_day"):
+    # 走 ``ActionButton`` 的动作：按钮上必须挂 ``onError``。
+    for action in ("daily_claim", "daily_loan", "skip_day"):
         block = code.split(f'actionById("{action}")', 1)
         assert len(block) == 2, f"面板里找不到 {action} 按钮"
         tail = block[1][:400]
         assert "onActionError" in tail, f"{action} 失败后必须 resync"
+    # P12：买入 / 卖出换成了 ``Button`` + ``callAction``（为了进 P11.1 的
+    # 全局请求锁），所以它们的失败重同步由 ``callAction`` 统一负责 ——
+    # **失败分支里必须也有一次 refresh**。
+    for action in ("buy", "sell"):
+        assert f'callAction("{action}"' in code, f"面板里找不到 {action} 的调用"
+    call_body = code.split("const callAction = async", 1)[1].split("const callMeow", 1)[0]
+    assert "catch" in call_body, "callAction 必须有失败分支"
+    assert "api.refresh()" in call_body, "callAction 失败后也必须把上下文拉回来"
 
 
 # ---------------------------------------------------------------- 后端：LLM 工具
@@ -283,7 +291,7 @@ def test_panel_i18n_keys_all_exist() -> None:
 
 def test_version_is_bumped() -> None:
     raw = _PLUGIN_TOML.read_text(encoding="utf-8")
-    assert 'version = "0.9.5"' in raw
+    assert 'version = "0.9.6"' in raw
 
 
 def test_engine_and_mode_layers_are_still_untouched() -> None:

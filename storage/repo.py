@@ -413,6 +413,41 @@ class Repo:
             return False
         return True
 
+    async def cas_setting(self, key: str, expected: str, value: str) -> bool:
+        """**CAS**（compare-and-swap）写一条插件级设置。
+
+        只有当该键**当前的值**仍等于 ``expected`` 时才写进去；
+        返回 ``True`` = 写成功，``False`` = 别人先改了（调用方应当重读重试）。
+
+        **为什么要有这个**：剧情状态是一整块 JSON，"读 → 改 → 写回"。
+        两个地方（心跳的剧情判定、玩家的剧情选项）都这么干的话，不串行化
+        就会**丢更新**（玩家的选择被心跳那一写覆盖掉 ⇒ 钱发两次）。
+
+        用 CAS 而不是"加锁"是有原因的：**插件是单线程事件循环**，
+        持锁 ``await``（数据库往返）会把事件循环冻住 ——
+        那正是 P11.1 那个 ``Failed to query plugin UI action context``
+        （500 红色警告）的根因。CAS 全程**不持锁**。
+        """
+        try:
+            await self.ensure_schema()
+            session = await self._open_session()
+            try:
+                cursor = await session.execute(
+                    "UPDATE settings SET value = ? WHERE key = ? AND value = ?",
+                    (value, key, expected),
+                )
+                await session.commit()
+                return int(getattr(cursor, "rowcount", 0) or 0) > 0
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+        except DbUnavailableError:
+            return False
+        except Exception:  # pragma: no cover - 写设置失败不该拖垮主流程
+            return False
+
     async def mark_player_onboarding_seen(self, player_id: str) -> bool:
         """把某个 ``player_id`` 标记成"已经看过玩法说明"。
 

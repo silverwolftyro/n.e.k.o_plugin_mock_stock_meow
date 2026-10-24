@@ -154,6 +154,22 @@ from .storage.session import (
     load_snapshot,
     save_snapshot,
 )
+from .story import (
+    STORY_PUSH_COOLDOWN_SECONDS,
+    STORY_PUSH_PRIORITY,
+    chapter_by_id,
+    chapter_card,
+    chapter_prompt,
+    chapter_scene,
+    chapter_title,
+    choice_by_id,
+    choice_hint,
+    choice_label,
+    coalesce_key,
+    effect_of,
+    effect_tag,
+    next_chapter,
+)
 
 __all__ = ["MockStockMeowPlugin"]
 
@@ -161,7 +177,7 @@ __all__ = ["MockStockMeowPlugin"]
 PLUGIN_ID = "mock_stock_meow"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.9.5"
+PLUGIN_VERSION = "0.9.6"
 
 #: P10：游戏速度档位 → **真实时间**推进间隔的倍率。
 #:
@@ -194,6 +210,24 @@ _SETTING_ONBOARDING = "onboarding_ack"
 _SETTING_MEOW_GREETED = "meow_greeted"
 _SETTING_MEOW_NAG_PLAYER = "meow_nag_player"
 _SETTING_MEOW_LAST_AT = "meow_last_at"
+
+#: P12：剧情状态（``settings`` 表）的键名。
+#:
+#: 一个键存整份剧情状态（JSON）：演过哪几幕、当前待选哪一幕、埋了哪些点、
+#: 欠着多少债。**带 ``player`` 字段** —— 换一局就自动重置（剧情按局推进）。
+_SETTING_STORY_STATE = "story_state"
+
+#: P12：剧情判定的**最小间隔**（秒）。
+#:
+#: 剧情判定要读一次会话（查库），所以**不能**每秒都做。心跳本身是 1 秒一次，
+#: 这里再压一道 2 秒 ⇒ 判定频率上限 0.5 次/秒，开销可以忽略。
+STORY_CHECK_INTERVAL_SECONDS = 2.0
+
+#: P12：剧情效果的**兜底金额**（当"今日生活费"算不出来时用）。
+#:
+#: 剧情效果（接济 / 加注 / 借贷）都以"今日生活费"的倍数计。取不到生活费时
+#: 用这个值兜底 —— 效果给少了也比**给错一个天文数字**安全。
+STORY_EFFECT_FALLBACK_CASH = 20.0
 
 #: P11.1：手动推进类动作的**最小间隔**（秒）。
 #:
@@ -528,6 +562,25 @@ class MockStockMeowPlugin(NekoPluginBase):
         #: 【跳过本日】**不加**这个闸门：它本来就每天只能一次（游戏自己的
         #: ``skip_day_used``），而且"连续快进"是合法用法。
         self._last_advance_at: float = 0.0
+        #: ── P12：剧情状态（**纯内存缓存**，落库键 ``story_state``）────────
+        #:
+        #: 剧情按局推进，所以状态里带 ``player``（换一局就重置）。结构：
+        #: ``{"player": id, "seen": [...], "pending": "ch_x", "tags": [...],
+        #: "debt": {...} | None, "granted": 0.0, "reply": "..." | None}``。
+        #:
+        #: **纯内存**：面板每秒轮询，热路径上不能查库；真正落库的是
+        #: ``_story_commit_state``（只在"演了一幕"或"选了一次"时写）。
+        self._story_state: dict[str, Any] = {}
+        #: 剧情状态的 **CAS 基线**（读到的原文）。写回时用它判断
+        #: "有没有人抢先改过"—— 改过就重读重试（**不持锁**，见
+        #: ``Repo.cas_setting`` 的说明）。
+        self._story_raw: str | None = None
+        #: 剧情的**版本号**：每演一幕 +1，面板靠它判断"这一幕是不是新的"。
+        self._story_seq: int = 0
+        #: 上一次剧情推送的时间戳（全局冷却）。
+        self._story_last_push_at: float = 0.0
+        #: 上一次剧情判定的间戳（判定频率闸门）。
+        self._story_last_check_at: float = 0.0
         #: ── P11.1：面板上下文的**上一次快照** ─────────────────────────
         #:
         #: 上下文处理器拿不到锁时返回它（**非阻塞**兜底）——
@@ -2779,6 +2832,51 @@ class MockStockMeowPlugin(NekoPluginBase):
             "fallback_reason": self._meow_fallback_reason,
         }
 
+    def _story_block(self) -> dict[str, Any]:
+        """面板载荷的 ``story`` 块：剧情状态（**纯内存**，不查库）。
+
+        面板每秒轮询，这里**不能查库、不能问宿主**。
+
+        **一切从状态里读**（不读实例属性）—— 插件重启后实例属性会没，
+        但状态在库里，读出来就还在。
+
+        ``choices`` 只在**卡片投递失败**时才给（正常路径的选项按钮在
+        **聊天卡片**上，贴着外置 Yui 的气泡）—— 面板不重复画一套按钮，
+        免得两处状态打架。
+        """
+        state = self._story_state or {}
+        card_ok = bool(state.get("card_ok"))
+        choices: list[dict[str, Any]] = []
+        if not card_ok:
+            choices = [
+                {
+                    "id": str(item.get("id") or ""),
+                    "label": str(item.get("label") or ""),
+                    "hint": str(item.get("hint") or ""),
+                }
+                for item in (state.get("choices") or [])
+                if isinstance(item, dict)
+            ]
+        debt = state.get("debt") if isinstance(state.get("debt"), dict) else None
+        return {
+            "seq": int(self._story_seq),
+            "pending": str(state.get("pending") or ""),
+            "title": str(state.get("title") or ""),
+            "scene": str(state.get("scene") or ""),
+            "card_ok": card_ok,
+            "choices": choices,
+            "tags": [str(item) for item in (state.get("tags") or [])],
+            "debt": (
+                {
+                    "amount": round(float(debt.get("amount") or 0.0), 2),
+                    "due_day": int(debt.get("due_day") or 0),
+                    "paid": round(float(debt.get("paid") or 0.0), 2),
+                }
+                if debt
+                else None
+            ),
+        }
+
     @ui.action(
         id="meow_greet",
         label="猫娘招呼",
@@ -2949,6 +3047,596 @@ class MockStockMeowPlugin(NekoPluginBase):
         }
 
     # ------------------------------------------------------------------
+    # P12：剧情引擎（四幕叙事 + 外置 Yui 驱动）
+    # ------------------------------------------------------------------
+    #
+    # **红线**：这一整节都在**插件层**。引擎层、模式层一行没改；
+    # 500 局基线也不受影响（``tests/simulate.py`` 只 import ``engine.*`` 与
+    # ``modes.*``，**从不 import 插件层**）。
+    #
+    # **三件事必须分开**：
+    #
+    # 1. **判定**（``_story_tick``）—— 什么时候该演哪一幕。**读**，不写。
+    # 2. **呈现**（``_push_story_chapter``）—— 让**外置猫娘 Yui** 用她自己的
+    #    语气把这一幕说出来（``push_message(ai_behavior="respond")``），
+    #    再投一张**聊天卡片**，选项按钮就挂在 Yui 气泡旁边。
+    # 3. **结算**（``story_choice`` 动作）—— 玩家点了某个选项之后，
+    #    **数值效果**在这里生效（插件层改钱，照抄 ``_take_loan`` 的写法）。
+    #
+    # **为什么推送必须在锁外**：``push_message`` 会 ``await`` 宿主 IPC，
+    # 而插件是**单线程事件循环** —— 在持锁时 await 会冻住整个循环
+    # （P11.1 那个 500 红色警告的根因）。所以推送一律放在心跳里、
+    # **锁外**跑。
+
+    def _story_default_state(self, player_id: str) -> dict[str, Any]:
+        """一份"空剧情"的状态。"""
+        return {
+            "player": str(player_id or ""),
+            "seen": [],
+            "pending": "",
+            "tags": [],
+            "debt": None,
+            "granted": 0.0,
+            "reply": None,
+            # 这一幕的**展示层**也跟着存 —— 插件重启后内存里的东西全没了，
+            # 而这一幕还"待选"（玩家还没点），那就必须**原样还在**。
+            "title": "",
+            "scene": "",
+            "choices": [],
+            "card_ok": False,
+        }
+
+    async def _story_load_state(self, player_id: str) -> dict[str, Any]:
+        """读剧情状态（``settings`` 表一个键）；读不到就当"还没演过"。
+
+        顺带记下 **CAS 基线**（读到的原文）—— 下一次写回时用它判断
+        "有没有人抢先改过"。
+
+        换局（``player_id`` 变了）⇒ **状态重置**（剧情按局推进）。
+        """
+        raw = None
+        try:
+            raw = await self._repo.get_setting(_SETTING_STORY_STATE)
+        except Exception:  # pragma: no cover - 读不到就当空剧情
+            raw = None
+        state = self._story_default_state(player_id)
+        stored = None
+        if raw:
+            try:
+                stored = json.loads(raw)
+            except (TypeError, ValueError):
+                stored = None
+        mine = isinstance(stored, dict) and str(stored.get("player") or "") == str(
+            player_id or ""
+        )
+        if mine:
+            state.update(
+                {
+                    "seen": [str(item) for item in (stored.get("seen") or [])],
+                    "pending": str(stored.get("pending") or ""),
+                    "tags": [str(item) for item in (stored.get("tags") or [])],
+                    "debt": stored.get("debt"),
+                    "granted": float(stored.get("granted") or 0.0),
+                    "reply": stored.get("reply"),
+                    "title": str(stored.get("title") or ""),
+                    "scene": str(stored.get("scene") or ""),
+                    "choices": list(stored.get("choices") or []),
+                    "card_ok": bool(stored.get("card_ok")),
+                }
+            )
+            self._story_raw = raw
+        else:
+            # 不属于这一局（换局了 / 第一次）⇒ 基线为空，
+            # 下一次写回是"无条件覆盖"。
+            self._story_raw = None
+        self._story_state = state
+        return state
+
+    async def _story_commit_state(self) -> bool:
+        """把剧情状态写回（**CAS**，失败返回 ``False`` 让调用方重读重试）。
+
+        **全程不持锁** —— 持锁 ``await``（数据库往返）会冻住事件循环，
+        那正是 P11.1 那个 500 红色警告的根因。
+        """
+        raw = json.dumps(self._story_state, ensure_ascii=False)
+        try:
+            if self._story_raw is None:
+                ok = await self._repo.set_setting(_SETTING_STORY_STATE, raw)
+            else:
+                ok = await self._repo.cas_setting(
+                    _SETTING_STORY_STATE, self._story_raw, raw
+                )
+        except Exception as error:  # pragma: no cover - 写不进去也不影响游戏
+            self.logger.warning(f"剧情状态写入失败：{error}")
+            return False
+        if ok:
+            self._story_raw = raw
+        return bool(ok)
+
+    def _story_snapshot(
+        self, session: Session, engine_config: EngineConfig
+    ) -> dict[str, Any]:
+        """剧情判定用的**快照**（全是插件层已经算好的数字）。
+
+        **不读 heat / seed / 反转日** —— 那是 P5 契约的局中禁区，
+        剧情也一样不许碰。
+        """
+        player = session.player
+        prices = session.market.prices()
+        total_assets = player.total_asset(prices)
+        initial = float(player.initial_cash or 0.0)
+        loss_ratio = 0.0
+        if initial > 0.0:
+            loss_ratio = max(0.0, (initial - float(total_assets)) / initial)
+        try:
+            bill = float(self._next_living_cost(session.difficulty, engine_config))
+        except Exception:  # pragma: no cover - 兜底
+            bill = 0.0
+        return {
+            "day": int(player.day),
+            "cash": float(player.cash),
+            "next_bill": bill,
+            "initial_cash": initial,
+            "total_assets": float(total_assets),
+            "trade_count": int(player.trade_count),
+            "strikes": int(player.strikes),
+            "loss_ratio": float(loss_ratio),
+        }
+
+    async def _story_tick(self) -> None:
+        """剧情判定 + 呈现（**推送必须在锁外**跑）。
+
+        由心跳（``market_tick``）在 ``_run_ticks`` **之后**调用 —— 那里锁已经
+        归还了，和既有的 ``_loan_prompt_watchdog`` 同一形状。
+
+        **为什么"改状态"要进锁、"推送"要出锁**：
+
+        * 状态是一整块 JSON（``settings`` 表一个键），``_story_tick`` 与
+          ``story_choice`` 都是"读 → 改 → 写回" ⇒ 不串行化就会**丢更新**；
+        * 推送要 ``await`` 宿主 IPC，在持锁时 await 会**冻住事件循环**
+          （P11.1 那个 500 红色警告的根因）。
+        """
+        now = time.time()
+        if (
+            self._story_last_check_at > 0.0
+            and (now - self._story_last_check_at) < STORY_CHECK_INTERVAL_SECONDS
+        ):
+            return
+        self._story_last_check_at = now
+
+        try:
+            engine_config = await self._engine_config()
+            session, error = await self._session_or_error(engine_config)
+            if error is not None or session is None:
+                return
+            player_id = str(session.player.id)
+            state = await self._story_load_state(player_id)
+            snapshot = self._story_snapshot(session, engine_config)
+
+            # ── 自愈：旧版本写的状态里**没有展示层** ──────────────────
+            # （展示层是 P12 才加进状态的）。那一幕还"待选" ⇒ 补上，
+            # 否则面板弹窗是空的，玩家根本选不了。
+            pending = str(state.get("pending") or "")
+            if pending and not str(state.get("scene") or ""):
+                chapter = chapter_by_id(pending)
+                if chapter is not None:
+                    state["title"] = chapter_title(chapter)
+                    state["scene"] = chapter_scene(chapter, snapshot)
+                    state["choices"] = [
+                        {
+                            "id": str(choice.get("id") or ""),
+                            "label": choice_label(choice),
+                            "hint": choice_hint(choice),
+                        }
+                        for choice in (chapter.get("choices") or [])
+                    ]
+                    self._story_state = state
+                    await self._story_commit_state()
+
+            # ── 玩家刚选完 ⇒ 请 Yui 回应一句 ──────────────────────────
+            reply = state.get("reply")
+            if isinstance(reply, dict) and str(reply.get("prompt") or ""):
+                prompt = await self._story_take_reply(player_id)
+                if prompt:
+                    await self._push_story_reply(prompt)
+                return
+
+            # ── 该演新的一幕了吗？ ────────────────────────────────────
+            chapter = next_chapter(
+                snapshot,
+                state.get("seen") or [],
+                str(state.get("pending") or ""),
+            )
+            if chapter is None:
+                return
+            opened = await self._open_story_chapter(chapter, player_id, snapshot)
+            if opened is None:
+                return
+            await self._push_story_chapter(opened, snapshot)
+        except Exception as error:  # noqa: BLE001 - 剧情绝不能把心跳带崩
+            self.logger.error(f"剧情判定异常（不影响后续心跳）：{error}")
+
+    async def _story_take_reply(self, player_id: str) -> str:
+        """取走"要请 Yui 回应的那句提示词"（取走 = 清空）。
+
+        **CAS**（不持锁）：别人抢先改了就重读重试。
+        """
+        for _ in range(3):
+            state = await self._story_load_state(player_id)
+            reply = state.get("reply")
+            if not isinstance(reply, dict) or not str(reply.get("prompt") or ""):
+                return ""
+            prompt = str(reply.get("prompt") or "")
+            state["reply"] = None
+            self._story_state = state
+            if await self._story_commit_state():
+                return prompt
+        return ""
+
+    async def _open_story_chapter(
+        self,
+        chapter: dict[str, Any],
+        player_id: str,
+        snapshot: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """演一幕（改状态 → 落库）。返回这一幕（或 ``None``）。
+
+        **CAS**（不持锁）：状态被别人抢改了就重读重试；重试三次都失败
+        就放弃这一轮（下一轮心跳再说）。
+        """
+        for _ in range(3):
+            state = await self._story_load_state(player_id)
+            chapter_id = str(chapter.get("id") or "")
+            seen = [str(item) for item in (state.get("seen") or [])]
+            if not chapter_id or chapter_id in seen:
+                return None
+            if str(state.get("pending") or ""):
+                # 上一幕还没选完 —— 不开新的一幕（剧情是递进的）。
+                return None
+            seen.append(chapter_id)
+            state["seen"] = seen
+            state["pending"] = chapter_id
+            # ── 展示层**跟着状态存** ────────────────────────────────
+            # 插件重启后内存里的东西全没了，而这一幕还"待选"（玩家还没点）
+            # —— 那它必须**原样还在**（否则弹窗是空的，玩家选不了）。
+            state["title"] = chapter_title(chapter)
+            state["scene"] = chapter_scene(chapter, snapshot)
+            state["choices"] = [
+                {
+                    "id": str(choice.get("id") or ""),
+                    "label": choice_label(choice),
+                    "hint": choice_hint(choice),
+                }
+                for choice in (chapter.get("choices") or [])
+            ]
+            state["card_ok"] = False
+            self._story_state = state
+            if not await self._story_commit_state():
+                continue
+            self._story_seq += 1
+            return chapter
+        return None
+
+    async def _push_story_chapter(
+        self, chapter: dict[str, Any], snapshot: dict[str, Any]
+    ) -> None:
+        """让**外置猫娘 Yui** 说出这一幕，并把选项做成**聊天卡片**。
+
+        * 提示词走 ``push_message(visibility=[], ai_behavior="respond")``
+          —— 玩家只看到猫娘的气泡，看不到插件的原文（官方文档：这种组合下
+          "only the AI's reply is visible"）；
+        * ``coalesce_key`` 让同一章的连发**自动合并**（不刷屏）；
+        * 选项按钮在**聊天卡片**上（``data-neko-action``）—— 贴着 Yui 气泡，
+          面板里**不画**任何对话框。
+        """
+        chapter_id = str(chapter.get("id") or "")
+        prompt = chapter_prompt(chapter, snapshot)
+        if not prompt:
+            return
+
+        now = time.time()
+        if (
+            self._story_last_push_at > 0.0
+            and (now - self._story_last_push_at) < STORY_PUSH_COOLDOWN_SECONDS
+        ):
+            return
+
+        spoken = await self._push_story_voice(prompt, chapter_id)
+        if spoken:
+            self._story_last_push_at = time.time()
+        card_ok = await self._push_story_card(chapter, snapshot)
+        # ── 把"选项卡片送到了没有"记回状态（**跨重启存活**）──────────
+        # 面板据此决定：选项在**聊天卡片**上（外置，贴着 Yui 气泡），
+        # 还是由面板的沉浸模式**接管**（降级）。
+        await self._story_mark_card(card_ok and spoken)
+
+    async def _story_mark_card(self, card_ok: bool) -> None:
+        """把"选项卡片送到了没有"记回状态（CAS，失败重试）。"""
+        player_id = str((self._story_state or {}).get("player") or "")
+        if not player_id:
+            return
+        for _ in range(3):
+            state = await self._story_load_state(player_id)
+            if bool(state.get("card_ok")) == bool(card_ok):
+                return
+            state["card_ok"] = bool(card_ok)
+            self._story_state = state
+            if await self._story_commit_state():
+                return
+
+    async def _push_story_voice(self, prompt: str, chapter_id: str) -> bool:
+        """把提示词推给宿主，让**外置 Yui** 开口。返回宿主是否受理。
+
+        **绝不抛异常**：剧情是"锦上添花"，失败了也绝不能拖垮游戏。
+        """
+        push = getattr(self.ctx, "push_message", None)
+        if not callable(push):
+            self.logger.info(f"宿主未提供 push_message（story:{chapter_id}）：本次跳过")
+            return False
+        try:
+            result = push(
+                # ``visibility=[]`` ⇒ 插件原文**不显示**，只有 AI 的回复进聊天框。
+                visibility=[],
+                # ``respond`` ⇒ 喂给 LLM 并**立刻触发一个 AI 回合**（猫娘开口）。
+                ai_behavior="respond",
+                parts=[{"type": "text", "text": prompt}],
+                source=PLUGIN_ID,
+                target_lanlan=self._current_lanlan() or None,
+                # 剧情比日常搭话重要，但不该挤掉提醒类消息（memo = 8）。
+                priority=STORY_PUSH_PRIORITY,
+                # 同一章的连发**合并成最新的** ⇒ 不刷屏。
+                coalesce_key=coalesce_key(chapter_id),
+            )
+            if hasattr(result, "__await__"):
+                await result
+            return True
+        except Exception as error:  # pragma: no cover - 宿主侧异常
+            self.logger.warning(f"剧情推送失败（{chapter_id}）：{error}")
+            return False
+
+    async def _push_story_card(
+        self, chapter: dict[str, Any], snapshot: dict[str, Any]
+    ) -> bool:
+        """把这一幕的**选项**做成聊天卡片（按钮挂在 Yui 气泡旁边）。
+
+        卡片 API 不存在（老版本宿主）⇒ 返回 ``False``，面板的沉浸模式接管。
+        """
+        creator = getattr(self.ctx, "create_card", None)
+        if not callable(creator):
+            self.logger.info("宿主未提供卡片 API（story）：选项交给面板沉浸模式")
+            return False
+        spec = chapter_card(chapter, snapshot)
+        try:
+            await creator(
+                html=spec["html"],
+                summary=spec["summary"],
+                css=spec["css"],
+                actions=spec["actions"],
+            )
+            return True
+        except Exception as error:  # pragma: no cover - 宿主侧异常
+            self.logger.warning(f"剧情卡片投递失败（{chapter.get('id')}）：{error}")
+            return False
+
+    async def _push_story_reply(self, prompt: str) -> None:
+        """玩家选完之后的**一句回应**（同样走外置 Yui）。"""
+        await self._push_story_voice(prompt, "reply")
+
+    # ------------------------------------------------------------------
+    # P12：剧情选项（聊天卡片按钮的回调入口）
+    # ------------------------------------------------------------------
+
+    @ui.action(
+        id="story_choice",
+        label="剧情选项",
+        icon="chat",
+        tone="default",
+        group="story",
+        order=1,
+    )
+    @plugin_entry(
+        id="story_choice",
+        name="剧情选项",
+        description="在聊天卡片上选择剧情选项（外置猫娘演的四幕叙事）。",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "chapter_id": {"type": "string", "description": "章节 id"},
+                "choice_id": {"type": "string", "description": "选项 id"},
+            },
+            "required": ["chapter_id", "choice_id"],
+        },
+    )
+    @_locked
+    async def story_choice(self, chapter_id: str, choice_id: str) -> Ok:
+        """玩家点了某个剧情选项。
+
+        **数值效果在这一刻生效**（插件层改钱，和 ``_take_loan`` 同一写法）：
+
+        * ``cash``  —— 一次性给一笔钱（接济 / 不甘心加注）；
+        * ``debt``  —— 给一笔钱，同时记一笔**到期要还**的债。
+
+        效果**只对当前这一局**有效，且**每幕只能选一次**（选了就把
+        ``pending`` 清掉）—— 卡片按钮重复点不会重复发钱。
+        """
+        engine_config = await self._engine_config()
+        session, error = await self._session_or_error(engine_config)
+        if error is not None:
+            return error
+        if session is None:
+            return _err("not_joined")
+
+        player_id = str(session.player.id)
+        chapter = chapter_by_id(str(chapter_id or ""))
+        choice = choice_by_id(chapter, str(choice_id or ""))
+        if chapter is None or choice is None:
+            return _err("story_unknown_choice")
+
+        snapshot = self._story_snapshot(session, engine_config)
+        effect = effect_of(choice)
+        unit = self._story_unit_cash(session, engine_config)
+
+        kind = str(effect.get("type") or "none")
+        granted = 0.0
+        debt_amount = 0.0
+        due_day = 0
+        if kind == "cash":
+            granted = round(unit * float(effect.get("multiplier") or 0.0), 2)
+        elif kind == "debt":
+            granted = round(unit * float(effect.get("cash_multiplier") or 0.0), 2)
+            debt_amount = round(unit * float(effect.get("repay_multiplier") or 0.0), 2)
+            due_day = int(session.player.day) + int(effect.get("due_days") or 3)
+
+        # ── 先"认领"这个选项（CAS），**再**发钱 ────────────────────────
+        # 顺序反了会双发：先发钱再 CAS，CAS 失败重试就会发第二次。
+        claimed = False
+        for _ in range(3):
+            state = await self._story_load_state(player_id)
+            pending = str(state.get("pending") or "")
+            if not pending or pending != str(chapter_id or ""):
+                return _err("story_no_pending")
+            tags = [str(item) for item in (state.get("tags") or [])]
+            tag = effect_tag(choice)
+            if tag and tag not in tags:
+                tags.append(tag)
+            state["tags"] = tags
+            state["granted"] = round(float(state.get("granted") or 0.0) + granted, 2)
+            if debt_amount > 0.0:
+                state["debt"] = {
+                    "amount": debt_amount,
+                    "due_day": due_day,
+                    "paid": 0.0,
+                    "chapter_id": str(chapter_id or ""),
+                }
+            # 选完了 ⇒ 这一幕不再是"待选"，并记下**要请 Yui 回应的那句提示**。
+            state["pending"] = ""
+            state["reply"] = {
+                "prompt": self._story_reply_prompt(
+                    chapter, choice, snapshot, granted, debt_amount
+                ),
+            }
+            self._story_state = state
+            if await self._story_commit_state():
+                claimed = True
+                break
+        if not claimed:
+            return _err("story_busy")
+
+        # ── 认领成功 ⇒ 数值生效（插件层改钱，和 ``_take_loan`` 同一写法）──
+        player = session.player
+        if granted > 0.0:
+            player.cash = round(player.cash + granted, 6)
+            now = time.time()
+            try:
+                await self._repo.transaction(
+                    [
+                        (
+                            "UPDATE players SET cash = ?, updated_at = ? WHERE id = ?",
+                            (player.cash, now, player.id),
+                        )
+                    ]
+                )
+            except (DbUnavailableError, sqlite3.Error) as db_error:
+                return _err("db_unavailable", db_error)
+
+        return Ok(
+            {
+                "action": "story_choice",
+                "chapter_id": str(chapter_id or ""),
+                "choice_id": str(choice.get("id") or ""),
+                "label": choice_label(choice),
+                "granted": granted,
+                "debt": self._story_state.get("debt"),
+                "cash_after": round(player.cash, 6),
+                "note": "选项已生效。",
+            }
+        )
+
+    def _story_unit_cash(
+        self, session: Session, engine_config: EngineConfig
+    ) -> float:
+        """剧情效果金额单位**（今日生活费）。
+
+        取不到就用 ``STORY_EFFECT_FALLBACK_CASH`` 兜底 —— 效果给少了也比
+        **给错一个天文数字**安全。
+        """
+        try:
+            cost = float(
+                daily_living_cost(
+                    session.player.mode,
+                    session.player.day,
+                    session.market.seed,
+                    engine_config,
+                )
+            )
+        except Exception:  # pragma: no cover - 兜底
+            cost = 0.0
+        if cost <= 0.0:
+            cost = float(STORY_EFFECT_FALLBACK_CASH)
+        return cost
+
+    @staticmethod
+    def _story_reply_prompt(
+        chapter: dict[str, Any] | None,
+        choice: dict[str, Any] | None,
+        snapshot: dict[str, Any],
+        granted: float,
+        debt_amount: float,
+    ) -> str:
+        """玩家选完之后，请**外置 Yui** 回应的那句提示词。"""
+        from .meow import MASTER
+
+        title = chapter_title(chapter or {})
+        label = choice_label(choice or {})
+        if debt_amount > 0.0:
+            detail = f"他借到了 {granted:.0f}，但要还 {debt_amount:.0f}"
+        elif granted > 0.0:
+            detail = f"他拿到了 {granted:.0f}"
+        else:
+            detail = "他什么都没拿"
+        return (
+            f"《拟股喵喵》剧情「{title}」里，{MASTER} 选了「{label}」——{detail}。\n"
+            "请立刻主动开口，用你自己的语气回应他这一下：把选择的代价说清楚，"
+            "别迎合他，也别把他骂到自闭。"
+        )
+
+    # ------------------------------------------------------------------
+    # P12：剧情到期还债（**在 tick 的日终结算里**，所以天然随 tick 落库）
+    # ------------------------------------------------------------------
+
+    def _story_apply_debt(
+        self, player: Player, state: dict[str, Any], day: int
+    ) -> float:
+        """剧情借贷**到期扣款**（从现金里扣；扣不动就欠着，**绝不判死**）。
+
+        **只在内存里改现金** —— 调用方（tick 流水线）随后会把玩家整行写回，
+        所以不需要额外的一次数据库写入，也不会与 tick 抢写。
+
+        返回实际扣掉的钱。
+        """
+        debt = state.get("debt")
+        if not isinstance(debt, dict):
+            return 0.0
+        try:
+            amount = float(debt.get("amount") or 0.0)
+            due_day = int(debt.get("due_day") or 0)
+            paid = float(debt.get("paid") or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+        if amount <= 0.0 or due_day <= 0 or int(day) < due_day:
+            return 0.0
+        remaining = max(0.0, amount - paid)
+        if remaining <= 0.0:
+            state["debt"] = None
+            return 0.0
+        take = min(remaining, max(0.0, float(player.cash)))
+        player.cash = round(float(player.cash) - take, 6)
+        debt["paid"] = round(paid + take, 6)
+        if debt["paid"] >= amount - 0.005:
+            state["debt"] = None
+        return take
+
+    # ------------------------------------------------------------------
     # 心跳与 tick 流水线（P3）
     # ------------------------------------------------------------------
 
@@ -2971,6 +3659,13 @@ class MockStockMeowPlugin(NekoPluginBase):
                 await self._run_ticks(due)
         except Exception as error:  # noqa: BLE001 - 心跳绝不能把定时器带崩
             self.logger.error(f"市场心跳异常（不影响后续 tick）：{error}")
+        # ── P12：剧情判定（**在锁外** —— ``_run_ticks`` 已经把锁还回来了）──
+        # 推送外置猫娘要 ``await`` 宿主 IPC，绝不能在持锁时 await
+        # （那会冻住事件循环，就是 P11.1 那个 500 红色警告的根因）。
+        try:
+            await self._story_tick()
+        except Exception as error:  # noqa: BLE001 - 剧情绝不能把心跳带崩
+            self.logger.error(f"剧情判定异常（不影响后续心跳）：{error}")
         # P7.3：网贷弹窗的 30 秒超时兜底（前端冻住时的最后一道保险）。
         # 它自己持锁（``_run_ticks`` 已经把锁还回来了），所以放在这里不会嵌套。
         try:
@@ -3206,6 +3901,25 @@ class MockStockMeowPlugin(NekoPluginBase):
                 # 面板要显示"猫娘今天动没动手"：靠**累计成交笔数**的增量。
                 self._catgirl_daily = dict(daily.catgirl_daily)
                 self._catgirl_trades_seen = int(daily.catgirl_daily.get("trades", 0))
+            # ── P12：剧情借贷到期扣款（**在 tick 里**）────────────────
+            # 只改内存里的 ``player.cash``；``_commit_tick`` 随后会把玩家整行
+            # 写回 ⇒ 不用额外一次数据库写入，也不会与 tick 抢写（没有丢更新）。
+            # 扣不动就**欠着**（绝不判死）—— 借钱的人已经够惨了。
+            try:
+                story_state = await self._story_load_state(str(player.id))
+                repaid = self._story_apply_debt(player, story_state, int(player.day))
+                if repaid > 0.0:
+                    if await self._story_commit_state():
+                        journal.touch_player(player)
+                        self.logger.info(
+                            f"剧情借贷到期扣款 {repaid:.2f}，剩余现金 {player.cash:.2f}"
+                        )
+                    else:
+                        # 状态没写回去（有人抢改了）⇒ **撤销这次扣款**，
+                        # 下一轮心跳再来 —— 现金和债务记录必须一致。
+                        player.cash = round(player.cash + repaid, 6)
+            except Exception as error:  # noqa: BLE001 - 剧情绝不能把结算带崩
+                self.logger.warning(f"剧情还债异常（不影响结算）：{error}")
 
         # ── P5.5：死因称号的文案层覆盖（引擎零改动）───────────────
         # 引擎给的称号里还有"低保"字样；这里按 death_reason 改写，
@@ -5961,6 +6675,19 @@ class MockStockMeowPlugin(NekoPluginBase):
             "onboarding": onboarding or {},
             # ── P11：猫娘主动搭话的状态（纯内存）─────────────────────
             "meow": self._meow_block(),
+            # ── P12：手续费率（**只读** ``engine_config.fees``）────────
+            # 面板要算"预计买入多少 / 预计花费多少 / 剩余现金"，
+            # 用的是**引擎那一套费率**（``buy_fee`` / ``sell_fee``）——
+            # 抄进载荷只是为了让面板**本地**算，拖滑块时零往返。
+            # **不改任何费率**（读，不是写）。
+            "fees": {
+                "buy_rate": round(float(engine_config.fees.buy_rate), 6),
+                "sell_rate": round(float(engine_config.fees.sell_rate), 6),
+                "stamp_tax_rate": round(float(engine_config.fees.stamp_tax_rate), 6),
+            },
+            # ── P12：剧情状态（纯表现层 + 选项降级通道）────────────────
+            # **不含任何猫娘立绘**：猫娘在外置气泡里说，面板只放纯文本场景。
+            "story": self._story_block(),
             "notice": "",
         }
 

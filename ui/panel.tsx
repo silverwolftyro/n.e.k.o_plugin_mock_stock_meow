@@ -66,6 +66,7 @@ import {
   Modal,
   Page,
   Select,
+  Slider,
   Stack,
   StatusBadge,
   Step,
@@ -284,6 +285,47 @@ type Meow = {
   fallback_reason?: string
 }
 
+/**
+ * P12：手续费率（**只读** ``engine_config.fees``）。
+ *
+ * 面板要算"预计买入多少 / 预计花费多少 / 剩余现金"，用的是**引擎那一套
+ * 费率**（``buy_fee`` / ``sell_fee``）—— 抄进载荷只是为了让面板**本地**
+ * 算，拖滑块时零往返。**不改任何费率**（读，不是写）。
+ */
+type Fees = {
+  buy_rate?: number
+  sell_rate?: number
+  stamp_tax_rate?: number
+}
+
+/**
+ * P12：剧情状态（四幕叙事 + 外置 Yui）。
+ *
+ * **纯表现**：面板只显示"这一幕的文字"和（降级时的）选项按钮 ——
+ * 猫娘在外置气泡里说，**面板不画立绘、不画对话框**。
+ */
+type StoryChoice = {
+  id?: string
+  label?: string
+  hint?: string
+}
+
+type Story = {
+  /** 每演一幕 +1 —— 面板靠它判断"这一幕是不是新的"。 */
+  seq?: number
+  /** 当前待选的章节 id（选完就清空）。 */
+  pending?: string
+  title?: string
+  /** 纯文本场景（**不含任何立绘**）。 */
+  scene?: string
+  /** 聊天卡片投递成功了吗？失败时选项由面板接管。 */
+  card_ok?: boolean
+  /** 只有 ``card_ok === false`` 时才有内容。 */
+  choices?: StoryChoice[]
+  tags?: string[]
+  debt?: { amount?: number; due_day?: number; paid?: number } | null
+}
+
 type State = {
   stage?: string
   day?: number
@@ -322,6 +364,10 @@ type State = {
   onboarding?: Onboarding
   /** P11：猫娘主动搭话的状态。 */
   meow?: Meow
+  /** P12：手续费率（只读）。 */
+  fees?: Fees
+  /** P12：剧情状态。 */
+  story?: Story
 }
 
 /** P5.5 改动 4：天台虚惊一场的三屏。 */
@@ -569,6 +615,74 @@ const RRM_CSS = `
 .rrm-root .neko-grid.rrm-trade-row {
   grid-template-columns: repeat(2, minmax(0, 48%));
   justify-content: center;
+}
+
+/* ── P12：仓位控制（滑块 + 百分比快捷键）+ 实时预览 ──────────────────
+   滑块是宿主**原生**的 input[type=range]（.neko-slider）—— 我们只调宽度，
+   **不加任何定位、层叠、滤镜、透明**（0.8.0 的崩溃红线一条没破）。
+   百分比快捷键是四个普通按钮，选中的那个上高亮色。 */
+.rrm-root .neko-slider { width: 100%; }
+.rrm-root .neko-grid.rrm-trade-pct {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+.rrm-root .neko-button.rrm-pct {
+  height: 34px;
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 17px;
+  white-space: nowrap;
+}
+.rrm-root .neko-button.rrm-pct-on {
+  background: linear-gradient(180deg, #a4e5ff 0%, #7bbcff 100%);
+  color: #16305c;
+  border: none;
+}
+.rrm-root .neko-grid.rrm-trade-previews {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.rrm-root .neko-grid.rrm-trade-previews .neko-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #7b8ca6;
+}
+
+/* ── P12：剧情沉浸模式（宿主原生 Modal size="full"）─────────────────
+   宿主 Modal 的遮罩本来就是固定定位铺满整屏（**宿主自己的**），
+   所以全面板覆盖**零危险 CSS**。这里只有**纯文本场景** ——
+   猫娘在外置气泡里说，面板不画立绘、不画对话框。
+
+   下面这两条只改**高度**（宿主那个 full 尺寸只撑宽、不撑高）：
+   把弹窗拉满 92vh，body 自己滚动 —— 这就是"沉浸模式"该有的样子。
+   （只用了 display / flex / height，**没有**定位、层叠、滤镜、透明。） */
+.rrm-root .neko-modal[data-size="full"] {
+  height: 92vh;
+  display: flex;
+  flex-direction: column;
+}
+.rrm-root .neko-modal[data-size="full"] .neko-modal-body {
+  flex: 1 1 auto;
+  max-height: none;
+}
+.rrm-root .rrm-story-scene {
+  white-space: pre-wrap;
+  font-size: 16px;
+  line-height: 2;
+}
+.rrm-root .rrm-story-choices { display: grid; gap: 8px; }
+.rrm-root .rrm-story-fallback-hint {
+  font-size: 12px;
+  color: #7b8ca6;
+}
+.rrm-root .neko-button.rrm-story-choice {
+  width: 100%;
+  height: 48px;
+  padding: 0 14px;
+  font-size: 15px;
+  font-weight: 700;
+  text-align: left;
 }
 
 /* P8.1：标的下拉框别孤零零横跨整屏 —— 限宽 + 居中。 */
@@ -1722,6 +1836,31 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     })
   }, [meow.fallback_seq, meow.fallback_line, meow.fallback_reason])
 
+  // ── P12：剧情沉浸模式（宿主原生 ``Modal size="full"``）──────────────
+  //
+  // **猫娘在外置气泡里说，面板这里只放纯文本场景** —— 面板**不画立绘、
+  // 不画对话框**（外置已经有 Yui 了）。
+  //
+  // 正常路径：**选项按钮在聊天卡片上**（贴着 Yui 气泡），面板只展示这一幕
+  // 的场景文字；只有**卡片投递失败**时，面板才接管选项按钮（优雅降级）。
+  const story = state.story || {}
+  const [storyOpen, setStoryOpen] = useState(false)
+  // 用**章节 id**做键（而不是 ``seq``）—— ``seq`` 是内存计数，插件重启就归零，
+  // 那样"重启前就开着、还没选完"的那一幕就再也弹不出来了。
+  const storyPendingRef = useRef("")
+  useEffect(() => {
+    const pending = String(story.pending || "")
+    if (!pending) {
+      // 这一幕演完了（玩家选完）⇒ 收起，并允许下一幕再弹。
+      storyPendingRef.current = ""
+      setStoryOpen(false)
+      return
+    }
+    if (pending === storyPendingRef.current) return
+    storyPendingRef.current = pending
+    setStoryOpen(true)
+  }, [story.pending, story.seq])
+
   // ── P11.1：全局请求锁 ────────────────────────────────────────────
   //
   // 宿主执行任何 UI action **之前**都会先 `get_ui_context()`（**5 秒预算**），
@@ -1760,6 +1899,13 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       return result
     } catch (error: any) {
       showToast(String((error && error.message) || error), "danger")
+      // 失败**也要**把上下文拉回来 —— 面板不能停在旧状态
+      // （比如这一局已经结束了，屏幕上的按钮全是死的）。见 P7.4 的 resync。
+      try {
+        await props.api.refresh()
+      } catch (_error) {
+        // 拉不到就算了。
+      }
       return null
     } finally {
       busyRef.current = false
@@ -1776,6 +1922,29 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       spoken ? t("panel.meow_called") : t("panel.meow_fallback_toast"),
       spoken ? "info" : "warning"
     )
+  }
+
+  /**
+   * 【执行买入】：按滑块定的仓位买入。
+   *
+   * 走 ``callAction`` ⇒ **纳入 P11.1 的全局请求锁**（狂点只会被静默丢弃，
+   * 不会并发打爆宿主那次 ``get_ui_context``）。
+   */
+  const executeBuy = async () => {
+    if (buyAmount <= 0) {
+      showToast(t("visual.no_money"), "warning")
+      return
+    }
+    await callAction("buy", { stock_id: effectiveStockId, amount: buyAmount })
+  }
+
+  /** 【执行卖出】：按滑块定的仓位卖出。 */
+  const executeSell = async () => {
+    if (sellAmount <= 0) {
+      showToast(t("visual.nothing_to_sell"), "warning")
+      return
+    }
+    await callAction("sell", { stock_id: effectiveSellStockId, amount: sellAmount })
   }
   /** 关掉《玩法说明》＝"玩家看过了"：把已读标记记回 player_id。 */
   const closeGuide = () => {
@@ -2035,14 +2204,40 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   // 濒死档：数字**偶尔闪红**（用 JS 定时器切颜色，不用 CSS 动画）。
   const flashColor = flashOn ? "var(--danger)" : undefined
 
-  // ── P7.2：一键梭哈 / 一键割肉的数量 ─────────────────────────────
+  // ── P12：仓位控制（滑块 + 百分比快捷键）+ 实时预览 ────────────────
+  //
+  // **为什么要把"一键梭哈"改掉**：全有或全无只有两个选项，玩家没有
+  // "投一半"这个真实存在的动作 —— 而"投一半"恰恰是反诈教育里最该
+  // 练的一手。
+  //
+  // **预览怎么算准**：手续费率是**引擎那一套**（``state.fees``，只读），
+  // 所以"预计花费"和插件真正扣的钱**一致**（不是 0.995 那种经验折算）。
+  const [positionPct, setPositionPct] = useLocalState<number>("rrm.position_pct", 100)
+  const pct = Math.max(0, Math.min(100, Number(positionPct || 0)))
+  const buyRate = Number(state.fees?.buy_rate || 0)
+  const sellRate = Number(state.fees?.sell_rate || 0)
+  const stampRate = Number(state.fees?.stamp_tax_rate || 0)
+  const cash = Math.max(0, Number(state.cash || 0))
+
   const selectedStockRow = stocks.find((stock) => stock.id === effectiveStockId)
-  const buyAllAmount =
-    selectedStockRow && selectedStockRow.price > 0
-      ? Math.floor((Math.max(0, Number(state.cash || 0)) * 0.995) / selectedStockRow.price)
-      : 0
+  const buyPrice = selectedStockRow ? Number(selectedStockRow.price || 0) : 0
+  // 买入：预算 = 现金 × 仓位；按 ``notional × (1 + buy_rate) <= 预算`` 倒推数量。
+  const buyBudget = (cash * pct) / 100
+  const buyNotional = buyRate > -1 ? buyBudget / (1 + buyRate) : 0
+  const buyAmount = buyPrice > 0 ? Math.floor(buyNotional / buyPrice) : 0
+  const buyCost = buyAmount * buyPrice * (1 + buyRate)
+  const buyCashAfter = Math.max(0, cash - buyCost)
+
   const selectedPosition = positions.find((item) => item.stock_id === effectiveSellStockId)
   const sellAllAmount = selectedPosition ? Number(selectedPosition.sellable || 0) : 0
+  const sellPrice = selectedPosition ? Number(selectedPosition.price || 0) : 0
+  // 卖出：回款 = 数量 × 价 × (1 - 卖出手续费 - 印花税)（印花税单边收）。
+  const sellAmount = Math.floor((sellAllAmount * pct) / 100)
+  const sellIncome = sellAmount * sellPrice * (1 - sellRate - stampRate)
+  const sellCashAfter = cash + sellIncome
+
+  // ── P7.2：一键梭哈 / 一键割肉的数量 ─────────────────────────────
+  const buyAllAmount = buyAmount
 
   // ── P7：终局 Emoji 海 ───────────────────────────────────────────
   const emojiSea = useMemo(() => {
@@ -2349,6 +2544,77 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     onClose: () => setMeowFallback(null),
   })
 
+  /** P12：选了某个剧情选项（**只有卡片投递失败时面板才会接管**）。 */
+  const chooseStory = async (choiceId: string) => {
+    const result = await callAction("story_choice", {
+      chapter_id: String(story.pending || ""),
+      choice_id: choiceId,
+    })
+    if (result === null) return
+    showToast(t("panel.story_choice_done"), "info")
+  }
+
+  // ── P12：剧情沉浸模式（宿主原生 ``Modal size="full"``）──────────────
+  //
+  // **为什么不用自己写全屏**：宿主原生 ``Modal`` 的遮罩本来就是
+  // ``position: fixed; inset: 0`` ⇒ 它**天然**铺满整个面板视口。
+  // 我们**一个危险 CSS 都不用写**（``position`` / ``inset`` / ``z-index``
+  // 全是宿主自己的）。
+  //
+  // **面板里画什么**：只有**纯文本场景**。猫娘在外置气泡里说，
+  // 面板**不画立绘、不画对话框**；正常路径的选项按钮在**聊天卡片**上，
+  // 只有卡片投递失败时这里才接管选项（优雅降级）。
+  const storyChoices = (story.choices || []) as StoryChoice[]
+  const storyCardOk = story.card_ok !== false
+  const storyDebt = story.debt || null
+  const storyModal = h(
+    Modal,
+    {
+      open: storyOpen,
+      title: String(story.title || t("panel.story_modal_title")),
+      onClose: () => setStoryOpen(false),
+      size: "full",
+      children: h(
+        Stack,
+        { gap: 12 },
+        h("div", { className: "rrm-story-scene" }, String(story.scene || "")),
+        storyDebt
+          ? h(Alert, {
+              tone: "warning",
+              message: t("panel.story_debt", {
+                amount: Number(storyDebt.amount || 0).toFixed(2),
+                days: Math.max(
+                  0,
+                  Number(storyDebt.due_day || 0) - Number(state.day || 0)
+                ),
+              }),
+            })
+          : null,
+        storyCardOk
+          ? h(Alert, { tone: "info", message: t("panel.story_modal_hint") })
+          : h(
+              "div",
+              { className: "rrm-story-choices" },
+              h("div", { className: "rrm-story-fallback-hint" }, t("panel.story_choose_here")),
+              storyChoices.map((choice) =>
+                h(
+                  Button,
+                  {
+                    key: String(choice.id || ""),
+                    className: "rrm-story-choice",
+                    disabled: busy,
+                    onClick: () => {
+                      void chooseStory(String(choice.id || ""))
+                    },
+                  },
+                  String(choice.label || "")
+                )
+              )
+            )
+      ),
+    }
+  )
+
   // ── 局终：展示归档的结算报告 ─────────────────────────────────────
   if (state.stage === "finished" && state.settlement) {
     const report = state.settlement
@@ -2386,6 +2652,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             </Card>
             {guideModal}
             {meowModal}
+            {storyModal}
             {danmakuCard}
           </Stack>
         </Page>
@@ -2572,6 +2839,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
           ) : null}
           {guideModal}
           {meowModal}
+          {storyModal}
           {danmakuCard}
         </Stack>
       </Page>
@@ -2653,6 +2921,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
           {paceCard}
           {guideModal}
           {meowModal}
+          {storyModal}
           {danmakuCard}
         </Stack>
       </Page>
@@ -2763,6 +3032,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
         {boomModal}
         {guideModal}
         {meowModal}
+        {storyModal}
 
         {/* ── P7.2 ⓪：状态条（压缩成一行徽标，别占地方）────────────── */}
         <Inline gap={8} wrap align="center">
@@ -2923,13 +3193,50 @@ export default function Panel(props: PluginSurfaceProps<State>) {
           </Stack>
         </Card>
 
-        {/* ── P8.0 ④：下半区 · 操作台 ────────────────────────────────
-            「一键梭哈 / 一键割肉」升级成**胶囊状大按钮**（`rrm-pill`，
-            flex:1 各占一半宽，带一点点薄荷绿 / 珊瑚粉微光）；
-            辅助按钮（分析 / 领工资 / 借高利贷 / 拒绝 / 跳过本日）**缩小**
-            （`rrm-mini`）放在大按钮下面。 */}
+        {/* ── P12：操作台 · 仓位控制 + 预览 + 执行 ───────────────────
+            「一键梭哈 / 一键割肉」两个极端被换成：
+            **仓位滑块 + 百分比快捷键 + 实时预览 + 【执行买入/执行卖出】**。
+
+            * 滑块是宿主**原生** ``Slider``（``input[type=range]``）——
+              零自绘、零危险 CSS；
+            * 预览用**引擎那一套费率**（``state.fees``），所以"预计花费"
+              和真扣的钱**一致**；
+            * 执行按钮走 ``callAction`` ⇒ **纳入 P11.1 的全局请求锁**
+              （``ActionButton`` 不支持 ``disabled``，也进不了这把锁）。 */}
         <Card title={t("panel.trade")}>
           <Stack gap={12}>
+            {/* ── 仓位：滑块 + 百分比快捷键 ─────────────────────────── */}
+            <Stack gap={6}>
+              <Inline gap={8} align="center" justify="space-between">
+                <Text>{t("panel.trade_position")}</Text>
+                <Text>{t("panel.trade_pct", { pct: pct })}</Text>
+              </Inline>
+              <Slider
+                min={0}
+                max={100}
+                step={5}
+                value={pct}
+                showValue={false}
+                onChange={(value: any) => {
+                  setPositionPct(Number(value))
+                }}
+              />
+              <Grid cols={4} gap={6} className="rrm-trade-pct">
+                {[25, 50, 75, 100].map((option) =>
+                  h(Button, {
+                    key: option,
+                    className: pct === option ? "rrm-pct rrm-pct-on" : "rrm-pct",
+                    disabled: busy,
+                    onClick: () => {
+                      setPositionPct(option)
+                    },
+                    children: t("panel.trade_pct", { pct: option }),
+                  })
+                )}
+              </Grid>
+              <Text>{t("panel.trade_position_hint")}</Text>
+            </Stack>
+
             {/* ── P8.0 ④：两个胶囊大按钮**并排**独占一行 ──────────────
                 真机教训（0.9.0 首轮）：它们原本和 `Select` 挤在同一行，
                 `Select` 抢走了几乎全部宽度 ⇒ 两个大按钮被压成竖排细条、
@@ -2939,58 +3246,61 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                 而那个壳是 `inline-grid`（收缩到内容宽），`flex: 1 1 0` 落不到
                 真正的 flex 子项上。
                 所以这里用 **`Grid cols={2}`** —— 网格列天生等分，不管子项
-                是裸 `<button>` 还是带壳的 `ActionButton`。 */}
+                是裸 `<button>` 还是带壳的 `ActionButton`。
+
+                P12：两个按钮从 `ActionButton` 换成 **`Button` + `callAction`** ——
+                `ActionButton` 既不支持 `disabled`，也进不了 P11.1 的全局
+                请求锁（狂点会绕过"点击即禁用"）。 */}
             <Grid cols={2} gap={8} className="rrm-trade-row">
-              {buyAllAmount > 0 ? (
-                <ActionButton
-                  className="rrm-pill rrm-pill-buy"
-                  action={actionById("buy")}
-                  label={t("visual.buy_all")}
-                  tone="primary"
-                  values={{ stock_id: effectiveStockId, amount: buyAllAmount }}
-                  onError={onActionError}
-                />
-              ) : (
-                <Button
-                  className="rrm-pill rrm-pill-buy"
-                  onClick={() => {
-                    showToast(t("visual.no_money"), "warning")
-                  }}
-                >
-                  {t("visual.buy_all")}
-                </Button>
-              )}
-              {sellAllAmount > 0 ? (
-                <ActionButton
-                  className="rrm-pill rrm-pill-sell"
-                  action={actionById("sell")}
-                  label={t("visual.sell_all")}
-                  tone="danger"
-                  values={{ stock_id: effectiveSellStockId, amount: sellAllAmount }}
-                  onError={onActionError}
-                />
-              ) : (
-                <Button
-                  className="rrm-pill rrm-pill-sell"
-                  onClick={() => {
-                    showToast(t("visual.nothing_to_sell"), "warning")
-                  }}
-                >
-                  {t("visual.sell_all")}
-                </Button>
-              )}
+              <Button
+                className="rrm-pill rrm-pill-buy"
+                disabled={busy}
+                onClick={() => {
+                  void executeBuy()
+                }}
+              >
+                {t("panel.trade_execute_buy")}
+              </Button>
+              <Button
+                className="rrm-pill rrm-pill-sell"
+                disabled={busy}
+                onClick={() => {
+                  void executeSell()
+                }}
+              >
+                {t("panel.trade_execute_sell")}
+              </Button>
             </Grid>
 
-            {/* P9.0：设计图里两个大按钮下面各有一行小字（All In / Stop Loss），
-                这里用同宽两列补上，操作台才有「主副标题」的层次。 */}
+            {/* ── P9.0：两个大按钮下面各有一行小字（主副标题的层次）────
+                P12：文案跟着按钮一起改了 ——「All In / Stop Loss」不再是事实
+                （现在是按仓位买），所以换成「按上面的仓位买 / 卖」。 */}
             <Inline gap={8} className="rrm-pill-captions">
               <span className="rrm-pill-caption rrm-pill-caption-buy">
-                {t("visual.buy_all_sub")}
+                {t("panel.trade_execute_buy_sub")}
               </span>
               <span className="rrm-pill-caption rrm-pill-caption-sell">
-                {t("visual.sell_all_sub")}
+                {t("panel.trade_execute_sell_sub")}
               </span>
             </Inline>
+
+            {/* ── 实时预览（两列，跟上面的按钮对齐）────────────────── */}
+            <Grid cols={2} gap={8} className="rrm-trade-previews">
+              <Text>
+                {t("panel.trade_buy_preview", {
+                  amount: buyAmount,
+                  cost: buyCost.toFixed(2),
+                  cash: buyCashAfter.toFixed(2),
+                })}
+              </Text>
+              <Text>
+                {t("panel.trade_sell_preview", {
+                  amount: sellAmount,
+                  income: sellIncome.toFixed(2),
+                  cash: sellCashAfter.toFixed(2),
+                })}
+              </Text>
+            </Grid>
 
             {/* ── 标的：买入 / 卖出各一行选择器（不跟大按钮抢宽度）──── */}
             <Inline gap={10} wrap={false} align="center" className="rrm-select-row">

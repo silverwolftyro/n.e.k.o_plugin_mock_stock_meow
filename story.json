@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "note": "P12.0 剧情数据。四个章节按玩家败的顺序推进；prompt 是给外置猫娘 Yui 的**指令**（不是台词），scene 是面板沉浸模式显示的纯文本场景。",
+  "chapters": [
+    {
+      "id": "ch1_tuition",
+      "order": 1,
+      "title": "第一章 · 拿零花钱试试",
+      "requires": [],
+      "trigger": { "type": "join" },
+      "prompt": "《拟股喵喵》里 {MASTER_NAME} 刚开户：手里是家里给的零花钱（家底），每天要交一次生活费，亏光了家底就破产。这是他第一次下场。\n请立刻主动开口，用你自己的语气把这一幕说清楚——这是他在拿零花钱试水，第一步怎么走会决定后面怎么收场；顺便提一句面板上的仓位滑块，可以只投一部分，别一上来就梭哈。",
+      "scene": "第一天。手里是家里给的零花钱，账上写着这是你的家底。\n每天要交一次生活费，交不上就等于宣告破产。\n你第一次决定：拿多少去试水。",
+      "choices": [
+        {
+          "id": "small",
+          "label": "先拿一小笔试试",
+          "hint": "留够生活费，剩下的才敢输",
+          "effect": { "type": "none", "tag": "cautious" }
+        },
+        {
+          "id": "all",
+          "label": "一把梭哈",
+          "hint": "不甘心还没开始 —— 全押了痛快",
+          "effect": { "type": "none", "tag": "all_in" }
+        }
+      ]
+    },
+    {
+      "id": "ch2_cutoff",
+      "order": 2,
+      "title": "第二章 · 断供",
+      "requires": ["ch1_tuition"],
+      "trigger": {
+        "type": "watch",
+        "min_loss_ratio": 0.1,
+        "or_strikes": 1,
+        "or_cash_below_bill": true
+      },
+      "prompt": "《拟股喵喵》里 {MASTER_NAME} 的日子开始不好过了：生活费快交不上了，手里的钱和当初的家底比已经少了一大截。\n请立刻主动开口，用你自己的语气把这种「断供」的感觉说给他听——提醒他钱是有限的、饭钱是雷打不动的；可以点一下面板上的仓位滑块，把投入比例调低一点，别把最后一点也搭进去。",
+      "scene": "账上的数字和第一天对不上了。\n下一笔生活费还差一截，你开始算：还剩几天能撑。\n钱不够的时候，人会开始想一些以前不想的事。",
+      "choices": [
+        {
+          "id": "hold",
+          "label": "认栽，先缩回去",
+          "hint": "缩回小仓位，先把饭钱保住",
+          "effect": { "type": "none", "tag": "shrink" }
+        },
+        {
+          "id": "ask",
+          "label": "硬扛，找亲戚接济",
+          "hint": "开口是丢脸，但丢脸总比断饭强",
+          "effect": { "type": "cash", "multiplier": 3.0, "tag": "relief" }
+        }
+      ]
+    },
+    {
+      "id": "ch3_sunk",
+      "order": 3,
+      "title": "第三章 · 不服输想回本",
+      "requires": ["ch2_cutoff"],
+      "trigger": {
+        "type": "watch",
+        "min_loss_ratio": 0.25,
+        "or_trade_count": 8
+      },
+      "prompt": "《拟股喵喵》里 {MASTER_NAME} 已经亏掉了家底的一大截，而且他自己清楚：再这么下去只会更难看。可他不想认。\n请立刻主动开口，用你自己的语气把这种「不服输」的心思说破——已经亏进去的那些叫沉没成本，赢回来之前不甘心；提醒他这种心理最容易让人加倍下注，而加倍下注的人往往亏得更快。",
+      "scene": "你开始算一笔账：亏掉的那些，到底要不要算进去。\n算进去就只剩一个念头——把它赚回来。\n已经投进去的钱不会回来，但你还想着它。",
+      "choices": [
+        {
+          "id": "stop",
+          "label": "算了，收手",
+          "hint": "别再把沉没成本算进去 —— 守住剩下的",
+          "effect": { "type": "none", "tag": "quit" }
+        },
+        {
+          "id": "again",
+          "label": "再搏一把",
+          "hint": "不甘心加倍下注，赢回来就都赚回来了",
+          "effect": { "type": "cash", "multiplier": 2.0, "tag": "sunk" }
+        }
+      ]
+    },
+    {
+      "id": "ch4_usury",
+      "order": 4,
+      "title": "第四章 · 借高利贷",
+      "requires": ["ch3_sunk"],
+      "trigger": {
+        "type": "watch",
+        "min_loss_ratio": 0.35,
+        "or_cash_below_bill": true
+      },
+      "prompt": "《拟股喵喵》里 {MASTER_NAME} 已经走到头上了：钱不够吃饭，而他刚亏过一轮，不甘心就此认输，只能去借高利贷。\n请立刻主动开口，用你自己的语气把这一步说清楚——高利贷借到手的是救命钱，还回去的是命；提醒他利息会吃掉本金，而借钱下注的人往往是在拿别人的钱赌自己的不甘心。",
+      "scene": "这是最后一条路了。\n借钱的人拿到的是救命钱，还回去的是利息——而利息会一点一点吃掉本金。\n你已经亏过一轮，所以这次你想借来的不是钱，是翻本的资格。",
+      "choices": [
+        {
+          "id": "no",
+          "label": "不借，宁可认输",
+          "hint": "这条路的尽头你看得见",
+          "effect": { "type": "none", "tag": "refuse" }
+        },
+        {
+          "id": "yes",
+          "label": "借！先活过这周",
+          "hint": "到手五千，三天后还六千",
+          "effect": {
+            "type": "debt",
+            "cash_multiplier": 5.0,
+            "repay_multiplier": 6.0,
+            "due_days": 3,
+            "tag": "usury"
+          }
+        }
+      ]
+    }
+  ]
+}

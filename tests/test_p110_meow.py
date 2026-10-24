@@ -163,10 +163,19 @@ def test_existing_cards_stay_blind() -> None:
     push_card = _method_body(init, "_push_card")
     assert 'ai_behavior="blind"' in push_card, "卡片推送必须保持 blind"
     assert 'ai_behavior="respond"' not in push_card
-    # 整个插件里，"respond" 的**真实代码行**只许有一处（主动搭话通道）。
+    # 整个插件里，"respond" 的**真实代码行**只许出现在**外置猫娘开口**的
+    # 那两条通道上：P11 的主动搭话（``_push_proactive``）与 P12 的剧情
+    # （``_push_story_voice``）。别的地方一律不许 —— 卡片/新闻改成 respond
+    # 就等于把局中情报喂给 LLM（P5 §11 的泄题防线就破了）。
     # （注释里提到它是正常的 —— 注释是给人看的。）
     responds = re.findall(r'^\s+ai_behavior="respond",\s*$', init, re.M)
-    assert len(responds) == 1, "respond 只许用在主动搭话通道这一条"
+    assert len(responds) == 2, (
+        "respond 只许用在两条外置开口通道上（主动搭话 + 剧情），"
+        f"实际 {len(responds)} 处"
+    )
+    for method in ("_push_proactive", "_push_story_voice"):
+        body = _method_body(init, method)
+        assert 'ai_behavior="respond"' in body, f"{method} 必须是 respond 通道"
 
 
 def test_proactive_bridge_maps_respond_to_proactive() -> None:
@@ -623,6 +632,6 @@ def test_panel_uses_only_dictionary_keys() -> None:
 
 
 def test_version_is_0_9_5() -> None:
-    """版本号 = 0.9.5。"""
-    assert 'version = "0.9.5"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.9.5"' in _init_text()
+    """版本号 = 0.9.6。"""
+    assert 'version = "0.9.6"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.9.6"' in _init_text()
