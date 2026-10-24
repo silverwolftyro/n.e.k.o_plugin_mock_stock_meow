@@ -3,16 +3,13 @@
   "plugin.description": "拟股喵喵：纯虚构反诈沙盘，养套杀 + 每日账单斩杀",
   "notice.anti_fraud.short": "纯虚构反诈沙盘。所有标的、价格、代币均为虚构，无现金价值。",
   "notice.anti_fraud.full": "本游戏是纯虚构、纯娱乐的反诈教学游戏。不提供充值、提现、兑换、真实行情对接、投资建议或任何金融服务。",
-
   "status.stage": "当前阶段",
   "status.engine_ready": "引擎状态",
   "status.ready": "已就绪",
   "status.not_ready": "尚未接入",
-
   "phase.honeymoon": "蜜月期",
   "phase.trap": "陷阱期",
   "phase.slaughter": "收割期",
-
   "common.ok": "操作成功",
   "common.failed": "操作失败",
   "common.canceled": "已取消",
@@ -22,7 +19,6 @@
   "common.seed_copy": "复制种子",
   "common.seed_copied": "种子已复制",
   "common.unknown": "未知",
-
   "error.engine_not_ready": "游戏引擎尚未接入。",
   "error.engine_error": "引擎出了点问题。",
   "error.no_archive": "当前没有进行中的存档，请先加入一局。",
@@ -30,7 +26,7 @@
   "error.no_active_game": "没有进行中的对局。",
   "error.db_unavailable": "数据库不可用，请检查插件数据目录权限。",
   "error.not_at_daily_boundary": "现在不是日终结算时刻。",
-  "error.no_pending_action": "当前没有可撤销的强制卖出。",
+  "error.no_pending_action": "没有待处理的强制处置。",
   "error.invalid_action": "未知的操作。",
   "error.invalid_mode": "未知的游戏模式。",
   "error.stock_not_found": "找不到该标的。",
@@ -40,7 +36,6 @@
   "error.invalid_amount": "数量不合法。",
   "error.t_plus_one_locked": "T+1 限制：今日买入的标的明日才能卖出。",
   "error.already_joined": "你已经在局中了。",
-  "error.no_pending_action": "没有待处理的强制处置。",
   "error.loan_already_taken": "今天已经借过一次了。",
   "error.loan_pending": "上一笔高利贷还没到期，别再借了。",
   "error.welfare_already_claimed": "本周工资已领过。",
@@ -55,7 +50,6 @@
   "error.analysis_limit_reached": "今天的分析机会用完了，明天再来。",
   "error.card_channel_unavailable": "卡片暂时发不出去，不影响本局。",
   "error.settlement_already_archived": "本局已经结算归档了。",
-
   "market.title": "拟股喵喵行情",
   "market.holdings": "持仓",
   "market.cash": "现钱",
@@ -67,21 +61,17 @@
   "market.tag_stable": "稳定",
   "market.tag_neutral": "中性",
   "market.tag_explosive": "爆炸",
-
-  "panel.subtitle": "纯虚构反诈沙盘 · P2 持久化版",
+  "panel.subtitle": "拟股喵喵 · 纯虚构反诈沙盘 · P8 清丽版",
   "panel.placeholder": "市场面板将在 P5 阶段接入，当前展示 P2 的行情与持仓基础数据。",
-
   "action.buy": "买入",
   "action.sell": "卖出",
   "action.analyze": "分析",
   "action.analyze_cost_token": "分析消耗 5 代币",
   "action.analyze_cost_tick": "分析消耗 1 个 tick",
-
   "analysis.green": "评级：偏稳（绿）",
   "analysis.yellow": "评级：不明（黄）",
   "analysis.red": "评级：危险（红）",
   "analysis.note": "分析只给模糊倾向：不给精确数值，也不预告下一次异动。",
-
   "catgirl.alive": "存活",
   "catgirl.dead": "已被斩杀",
   "catgirl.cash": "现钱",
@@ -89,12 +79,10 @@
   "catgirl.holdings_value": "{value}（{count} 只）",
   "catgirl.survived_days": "存活天数",
   "catgirl.death_broadcast": "猫娘在第 {day} 天被斩杀了，死因：{reason}",
-
   "pawnbroker.title": "二道贩子",
   "pawnbroker.reminder": "你的现钱不足以支付明日生活费，系统将以回收价 {ratio} 强制卖出 {stock}。接受 / 拒绝（拒绝则斩杀）。",
   "pawnbroker.forced_sell": "二道贩子以回收价 {price} 收走了 {stock}。",
   "pawnbroker.forced_buy": "二道贩子以溢价价 {price} 卖给你 {stock}。",
-
   "settlement.title": "结算",
   "settlement.death_reason": "死因",
   "settlement.seed": "本局种子",
@@ -106,13 +94,11 @@
   "settlement.catgirl_silence": "猫娘站在旁边，什么都没说。",
   "settlement.beat_down": "你连这个纯虚构的游戏都玩不过。全球最聪明的钱，正在真实市场里等着你。别去。",
   "settlement.help": "如果你或身边的人正在经历类似情况，可以搜索“国家反诈中心”。",
-
   "news.true": "真新闻",
   "news.fake": "假新闻",
   "news.vague": "模糊新闻",
   "news.thunder": "雷新闻",
   "news.noise": "噪音新闻",
-
   "daily.title": "每日结算",
   "daily.living_cost": "今日生活费",
   "daily.relief": "工资",
@@ -125,24 +111,20 @@
   "daily.missed": "已连续 {days} 天没领工资",
   "daily.debt": "高利贷余额",
   "daily.pending_relief": "现在去领能拿回",
-
   "welfare.title": "工资",
   "welfare.missed_warn": "连着七天不去领，第八天日终就没人保你了。",
   "loan.title": "高利贷",
   "loan.warning": "借五百还六百。这不是帮助，是他们唯一的利润来源。",
-
   "news.kind.bullish": "偏多",
   "news.kind.bearish": "偏空",
   "news.kind.vague": "含糊",
   "news.kind.noise": "噪音",
   "news.truth_note": "新闻的真假只有结算时才揭晓。",
-
   "mode.classic_arcade": "街机",
   "mode.classic_beginner": "入门",
   "mode.classic_advanced": "进阶",
   "mode.classic_hell": "地狱",
   "mode.infinite": "无限",
-
   "identity.label.debt": "还债的",
   "identity.label.prove": "证明自己的",
   "identity.label.quick": "不想打工的",
@@ -152,13 +134,10 @@
   "identity.echo.debt": "你入场时说想帮家里还债。现在家里要帮你还债了。",
   "identity.echo.prove": "你入场时说想证明自己。你证明了：满仓的人，死得最快。",
   "identity.echo.quick": "你入场时说想快点赚到钱。你确实很快——快到连饭都忘了吃。",
-
   "death.welfare_neglect": "连续七天没去领工资。制度不养闲人 —— 但这条命是你自己的，不是这份工资的。",
-
   "death_scene.screen1": "你站在天台上。风很大。\n你想起入场那天说的话：“{identity_quote}”",
   "death_scene.screen2": "……然后你醒了。\n你趴在出租屋的桌子上，手机屏幕还亮着，股市 K 线还在跳。\n是猫娘把你摇醒的。她说：“你刚才说梦话，说什么‘再借一笔就能回本’。”",
   "death_scene.screen3": "你死了。死因：{death_reason_label}。存活天数：{days} 天。\n但你醒过来了。\n现实里，你还有机会不玩这个游戏。",
-
   "death_reason.starved": "饿死",
   "death_reason.liquidated": "爆仓",
   "death_reason.loan_default": "贷款违约",
@@ -166,7 +145,6 @@
   "death_reason.harvested": "被精准收割",
   "death_reason.inaction": "无为而治",
   "death_reason.unknown": "出局",
-
   "card.harvest.title": "收割",
   "card.welfare.title": "工资到账",
   "card.welfare.ledger": "这周打工赚的 {amount}。够活 {days} 天。如果你不碰股市的话。",
@@ -177,10 +155,7 @@
   "card.news_flash.title": "突发新闻",
   "card.pawnbroker.title": "二道贩子来敲门",
   "card.achievement.title": "称号解锁",
-
   "panel.title": "拟股喵喵行情",
-  "panel.subtitle": "拟股喵喵 · 纯虚构反诈沙盘 · P8 清丽版",
-  "panel.placeholder": "市场面板将在 P5 阶段接入，当前展示 P2 的行情与持仓基础数据。",
   "panel.idle": "当前没有进行中的对局，请先加入一局。",
   "panel.idle_title": "开局",
   "panel.idle_hint": "点下面的按钮直接开一局 —— 不用打字，不用等。",
@@ -234,7 +209,7 @@
   "panel.news_hint": "（局中只看得到分类，标题正文要点开才给）",
   "panel.news_detail": "新闻详情",
   "panel.settlement": "结算报告",
-  "panel.settlement_image_alt": "一只瘫在空钱包上的猫",
+  "panel.settlement_image_alt": "一个空空如也的钱包",
   "panel.settlement_notice": "这一局已经自动结算归档，下面是最终成绩。",
   "panel.settlement_title_dead": "结算报告：你的钱呢？",
   "panel.settlement_title_alive": "结算报告：你居然活下来了",
@@ -268,29 +243,23 @@
   "panel.pawnbroker_hint": "现钱不足以支付明日生活费，二道贩子要按回收价收走你 {amount} 份仓位（{reason}）。",
   "panel.pawnbroker_reject": "拒绝（账单我自己扛）",
   "panel.pawnbroker_accept": "接受（就这样）",
-
   "taunt.heavy_delisted.1": "你在 {stock} 上压了 {weight} 的仓位。它今天退市了。退市这两个字，是我签的第一批文件之一。",
   "taunt.heavy_delisted.2": "{weight} 的仓位，押在一只刚退市的票上。你不叫赌，你叫帮忙。",
   "taunt.heavy_delisted.3": "{stock} 退市了。你那 {weight} 的仓位，现在只是一段历史记录。",
-
   "taunt.cash_kill.1": "账单 {bill}，你口袋 {cash}。差额 {gap}。我可以按八折帮你平掉——或者你继续坐着，看它长成零。",
   "taunt.cash_kill.2": "你撑了 {days} 天。账单是 {bill}，你手上是 {cash}。数字对不上，人就对不上了。",
   "taunt.cash_kill.3": "{title}。听着挺体面，可这局里你只是没交上钱。",
   "taunt.cash_kill.4": "我见过很多人像你一样。他们后来怎样了？我不说。",
-
   "taunt.add_down.1": "{n} 次了。你每次跌两成就加一成仓，教科书上这叫摊薄成本，散户圈这叫给坑添土。",
   "taunt.add_down.2": "同一个标的，今天第 {n} 次买入，均价 {avg}。你不是在建仓，你是在证明自己第一次买错了。",
   "taunt.add_down.3": "{n} 笔了。你加仓的手速，比我挂单还快。",
-
   "taunt.catgirl_dead.1": "别看我。我今天也没交上生活费，账面五十万不算数。咱俩一起等工资，谁也别笑谁。",
   "taunt.catgirl_dead.2": "我死了。你还活着——这一局里这算好消息，说明你比我更会拖。",
   "taunt.catgirl_dead.3": "{days} 天。我在这行干得比你久，最后还是栽在账单上。你别学我。",
   "taunt.catgirl_dead.4": "你别问我以前亏过多少。我不说。",
-
   "taunt.harvest.1": "你把 {weight} 的仓位压在它身上的时候，我在另一边挂好了单。教科书说这是风险，我说是常识。",
   "taunt.harvest.2": "{stock}，一刀 {severity}。我这边只动了一次手，你那边赔了 {loss}。",
   "taunt.harvest.3": "收割期到了。你重仓的那只，恰好是我最想卖的那只。",
-
   "error.director_disabled": "这一版是开源纯净版：没有导演模式，剧情得自己走。",
   "error.director_bad_op": "导演看不懂这条指令。",
   "error.director_stock_not_found": "导演指的那只标的，市场里没有。",
@@ -345,7 +314,6 @@
   "visual.roster_persona": "人设",
   "visual.emoji_sea_title": "本局纪念碑",
   "visual.emoji_sea_caption": "小丑与墓碑各一半，数量说明一切。",
-
   "visual.assets_rich": "零花钱",
   "visual.assets_broke": "家底",
   "visual.assets_dying": "棺材本",
@@ -389,9 +357,9 @@
   "taunt.reject.2": "硬气。硬气不能当饭吃，明天账单照样来。",
   "taunt.reject.3": "你拒绝了被压价收割。恭喜，你只是把收割推迟了。",
   "taunt.analyze.1": "花钱买建议？我这儿的建议不值这个价，但我不拦着。",
-
   "director.note.boom": "屏幕已经被 {count} 个小丑占领 {seconds} 秒。",
-
   "visual.no_money": "你兜里一分钱都没有，梭哈不了。",
-  "visual.nothing_to_sell": "你手里没东西可以割。"
+  "visual.nothing_to_sell": "你手里没东西可以割。",
+  "visual.buy_all_sub": "All In · 放手一搏",
+  "visual.sell_all_sub": "Stop Loss · 及时止损"
 }

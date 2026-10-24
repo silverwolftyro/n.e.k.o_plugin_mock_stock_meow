@@ -8,7 +8,7 @@
 会写出：
 
 * ``ui/assets/avatar-<alias>.png`` —— 6 个群友的圆形头像（源文件）；
-* ``ui/assets/meow-bankrupt.png`` / ``meow-loan.png`` —— 梗图（源文件）；
+* ``ui/assets/meow-loan.png`` —— 网贷弹窗梗图（源文件）；
 * ``ui/assets/avatars.ts`` —— 上面这些 PNG 的 **base64 data URI** 编译产物。
 
 为什么面板里用的是 data URI 而不是 ``<img src="./assets/xxx.png">``：
@@ -19,6 +19,11 @@ PNG 原图仍然保留在仓库里当**源文件**，人可读、可替换。
 
 这里**不含任何违禁元素**（规避同类作品的审查风险）。
 头像也不用 Emoji 字形 —— PIL 的内置位图字体画不出彩色 Emoji，改用几何符号。
+
+P9.0：**结算页的「破产猫」梗图已整个删掉**。那张图是 PIL 画的黄色猫瘫在
+灰钱包上，远看就是个土豆 —— 玩家直呼辣眼睛。现在结算页的配图改成面板里
+**纯 CSS 拼的扁平空钱包**（见 ``ui/panel.tsx`` 的 ``BankruptArt``），
+既不用素材文件，也没有 PIL 手绘那种廉价感。
 """
 
 from __future__ import annotations
@@ -131,24 +136,6 @@ def draw_avatar(kind: str, bg: str, ink: str) -> Image.Image:
     return img
 
 
-def draw_bankrupt_cat() -> Image.Image:
-    """结算页梗图：一只猫瘫在空钱包上。"""
-    img = Image.new("RGBA", (MEME_W * MEME_SCALE, MEME_H * MEME_SCALE), (0, 0, 0, 0))
-    draw = ScaledDraw(ImageDraw.Draw(img), MEME_SCALE)
-    draw.ellipse([18, 92, 142, 116], fill=(226, 232, 240, 255))
-    draw.rounded_rectangle([52, 70, 112, 96], radius=8, fill=(203, 213, 225, 255))
-    draw.rounded_rectangle([72, 78, 92, 88], radius=4, fill=(148, 163, 184, 255))
-    draw.ellipse([52, 52, 112, 84], fill=(255, 214, 165, 255))
-    draw.polygon([(58, 56), (66, 36), (78, 52)], fill=(255, 214, 165, 255))
-    draw.polygon([(88, 52), (100, 36), (106, 58)], fill=(255, 214, 165, 255))
-    circle(draw, 82, 46, 20, (255, 214, 165, 255))
-    draw.line([(72, 44), (78, 48)], fill=(120, 113, 108, 255), width=2)
-    draw.line([(88, 48), (94, 44)], fill=(120, 113, 108, 255), width=2)
-    draw.arc([38, 44, 76, 82], start=270, end=60, fill=(255, 214, 165, 255), width=5)
-    circle(draw, 124, 78, 7, (253, 224, 71, 255))
-    return img
-
-
 def draw_loan_paw() -> Image.Image:
     """网贷弹窗梗图：一只猫爪按着合同。"""
     img = Image.new("RGBA", (MEME_W * MEME_SCALE, MEME_H * MEME_SCALE), (0, 0, 0, 0))
@@ -207,7 +194,6 @@ def main() -> None:
         entries.append((alias, data_uri(path)))
 
     print("--- 生成梗图 ---")
-    save(draw_bankrupt_cat(), "meow-bankrupt.png")
     save(draw_loan_paw(), "meow-loan.png")
 
     print("--- 写 ui/assets/avatars.ts ---")
@@ -245,9 +231,6 @@ def main() -> None:
         lines.append(f"    fallback: {json.dumps(FALLBACK_EMOJI[alias], ensure_ascii=False)},")
         lines.append("  },")
     lines.append("}")
-    lines.append("")
-    lines.append("/** 结算页梗图（破产猫）。 */")
-    lines.append(f"export const MEOW_BANKRUPT = {json.dumps(data_uri(ASSETS / 'meow-bankrupt.png'))}")
     lines.append("")
     lines.append("/** 网贷弹窗梗图（猫爪按着合同）。 */")
     lines.append(f"export const MEOW_LOAN = {json.dumps(data_uri(ASSETS / 'meow-loan.png'))}")

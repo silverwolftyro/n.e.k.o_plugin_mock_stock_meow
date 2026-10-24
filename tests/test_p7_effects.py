@@ -494,7 +494,8 @@ def test_panel_cards_are_direct_stack_children() -> None:
     assert "<div className=" not in source
     # 面板主体是 Stack，Page 上挂防御性 CSS 的作用域类
     assert 'className="rrm-root"' in source
-    assert "<Stack gap={12}>" in source
+    # P9.0：卡片之间的间距从 12 调到 16（设计图说「别挤在一起」）。
+    assert "gap={16}" in source, "主 Stack 的间距必须是 16"
 
 
 def test_panel_critical_is_only_an_alert_and_a_red_number() -> None:

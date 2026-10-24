@@ -309,7 +309,7 @@ def test_worktree_has_no_crlf_files() -> None:
 
 
 def test_version_is_0_7_4() -> None:
-    """版本号 = 0.9.1。
+    """版本号 = 0.9.2。
 
     版本史：
 
@@ -321,13 +321,13 @@ def test_version_is_0_7_4() -> None:
     * 0.8.3 —— P7.3：弹窗防死锁（网贷弹窗逃生通道 + 超时兜底 + 轰炸硬截止）。
     * 0.8.4 —— P7.4：入口打通（面板开局按钮 + ``@llm_tool`` + 轮询自愈）。
     * 0.9.0 —— P8：正式化《拟股喵喵》+ 清丽轻科技风 UI 重构。
-    * 0.9.1 —— P8.1：结算页占位符/枚举修复 + K 线开局提示 + 操作区与梗图打磨。
+    * 0.9.2 —— P8.1：结算页占位符/枚举修复 + K 线开局提示 + 操作区与梗图打磨。
     """
     from plugins.mock_stock_meow import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.9.1"
+    assert PLUGIN_VERSION == "0.9.2"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.9.1"' in toml
+    assert 'version = "0.9.2"' in toml
 
 
 # ------------------------------------------------- ⑥ 面板文案全走 i18n

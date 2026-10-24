@@ -79,7 +79,7 @@ import {
 } from "@neko/plugin-ui"
 import type { HostedAction, PluginSurfaceProps, Tone } from "@neko/plugin-ui"
 
-import { AVATARS, MEOW_BANKRUPT, MEOW_LOAN } from "./assets/avatars"
+import { AVATARS, MEOW_LOAN } from "./assets/avatars"
 
 type KlinePoint = [number, number]
 
@@ -313,8 +313,8 @@ const PHASE_TONE: Record<string, Tone> = {
  * canvas 画不出来 CSS 变量（canvas 只认字面色值），所以这里写死同样的
  * 十六进制，两边必须同步改。
  */
-const TREND_UP = "#5AC8A8"
-const TREND_DOWN = "#FF6B81"
+const TREND_UP = "#35BFA0"
+const TREND_DOWN = "#F2677F"
 
 /**
  * P8.0：**清丽轻科技风**（从暗色调赛博朋克彻底翻面）。
@@ -344,70 +344,158 @@ const RRM_CSS = `
 .rrm-root .neko-stack > *, .rrm-root .neko-card-body > * { min-width: 0; }
 .rrm-root .neko-key-value-value { overflow-wrap: anywhere; }
 
-/* ── ① 主题变量覆写：一次改动，宿主所有组件跟着变浅 ─────────────── */
+/* ── ① 主题变量覆写（P9.0：轻盈透明的二次元科技风）──────────────────
+   色值取自设计图：背景 #EAF4FE → #F6FBFF，卡片 #F0F7FF（近白蓝），
+   绿胶囊 #E7F8F0、粉胶囊 #FBE6EA，强调蓝 #5B8FF9，正文深蓝 #1F2D3D。
+   毛玻璃用「半透明白 + 柔光投影」近似（宿主不支持背景模糊效果）。 */
 .rrm-root {
-  --text: #22304a;
-  --muted: #6b7a90;
-  --primary: #4c7df0;
-  --success: #5ac8a8;
-  --danger: #ff6b81;
-  --border: rgba(148, 163, 184, 0.26);
-  --surface: rgba(255, 255, 255, 0.72);
+  --text: #1f2d3d;
+  --muted: #7b8ca6;
+  --primary: #5b8ff9;
+  --success: #17916f;
+  --danger: #d6486a;
+  --border: rgba(142, 171, 219, 0.22);
+  --surface: rgba(255, 255, 255, 0.85);
   --surface-strong: #ffffff;
-  --bg: #eef4fb;
-  --radius-md: 16px;
-  background: linear-gradient(180deg, #e9f1fa 0%, #f6fafe 42%, #ffffff 100%);
+  --bg: #eaf2ff;
+  --radius-md: 20px;
+  background: linear-gradient(180deg, #eaf2ff 0%, #f8fbff 100%);
   color: var(--text);
 }
 
-/* ── ② 卡片：半透明白 + 16px 圆角 + 极淡阴影 ──────────────────────── */
+/* ── ② 毛玻璃卡片：半透明白底 + 20px 大圆角 + 极柔的蓝影 ─────────── */
 .rrm-root .neko-card {
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 16px;
-  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.06);
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 20px;
+  box-shadow: 0 10px 30px rgba(142, 171, 219, 0.15);
 }
-.rrm-root .neko-card-title { color: #1f2a44; font-weight: 760; }
-.rrm-root .neko-heading { color: #1f2a44; }
+.rrm-root .neko-card-header { padding: 16px 18px 0; }
+.rrm-root .neko-card-body { padding: 14px 18px 18px; gap: 16px; }
+.rrm-root .neko-card-title { color: #1f2d3d; font-size: 16px; font-weight: 700; letter-spacing: 0.5px; }
+.rrm-root .neko-heading { color: #1f2d3d; }
 .rrm-root .neko-text { color: #6b7a90; }
+
+/* ── ③ 页面标题：24px 加粗深蓝（设计图的标题规格）────────────────── */
+.rrm-root .neko-page { gap: 16px; }
+.rrm-root .neko-page-title { font-size: 24px; font-weight: 700; color: #1f2d3d; letter-spacing: 0.5px; }
+.rrm-root .neko-page-subtitle { color: #a8bacd; font-size: 13px; }
+
+/* ── ④ 状态徽标 = 浅蓝胶囊 Tag（像游戏里的标签）───────────────────── */
 .rrm-root .neko-badge {
-  background: rgba(255, 255, 255, 0.86);
-  border-color: rgba(148, 163, 184, 0.28);
-  color: #55637a;
-}
-
-/* ── ③ 按钮：胶囊化 + 柔和色调 ───────────────────────────────────── */
-.rrm-root .neko-button {
+  background: #e4efff;
+  border: 1px solid rgba(91, 143, 249, 0.16);
+  color: #5b8ff9;
   border-radius: 999px;
-  background: rgba(76, 125, 240, 0.10);
-  border-color: rgba(76, 125, 240, 0.30);
-  color: #3563d4;
-  font-weight: 700;
+  font-size: 12px;
+  font-weight: 600;
 }
-.rrm-root .neko-button[data-tone="success"] {
-  background: rgba(90, 200, 168, 0.14);
-  border-color: rgba(90, 200, 168, 0.44);
-  color: #2e9e80;
-}
-.rrm-root .neko-button[data-tone="danger"] {
-  background: rgba(255, 107, 129, 0.12);
-  border-color: rgba(255, 107, 129, 0.42);
-  color: #e04e66;
-}
+.rrm-root .neko-badge[data-tone="success"] { background: #e7f8f0; color: #17916f; border-color: rgba(23, 145, 111, 0.24); }
+.rrm-root .neko-badge[data-tone="warning"] { background: #fff3de; color: #b3760f; border-color: rgba(240, 178, 74, 0.28); }
+.rrm-root .neko-badge[data-tone="danger"] { background: #fde9ed; color: #d6486a; border-color: rgba(214, 72, 106, 0.26); }
 
-/* ── ④ 操作台的两个大胶囊按钮（各占一半宽，带一点微光）────────────── */
+/* ── ⑤ 大数字统计块（赚亏 / 现钱 / 身家）────────────────────────── */
+.rrm-root .neko-stat {
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 18px;
+  box-shadow: 0 8px 22px rgba(142, 171, 219, 0.13);
+}
+.rrm-root .neko-stat-label { color: #9fb2c6; font-size: 12px; }
+
+/* ── ⑥ 行情方块卡：两层结构（名字 + 涨跌 / 走势 + 现价）──────────── */
+.rrm-root .neko-card.rrm-tile {
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 18px;
+  box-shadow: 0 8px 22px rgba(142, 171, 219, 0.14);
+  padding: 12px 14px;
+}
+.rrm-root .neko-card.rrm-tile .neko-card-body { padding: 0; gap: 8px; }
+.rrm-root .rrm-tile-head { display: flex; align-items: center; gap: 8px; width: 100%; }
+.rrm-root .rrm-tile-foot { display: flex; align-items: center; gap: 10px; width: 100%; }
+/* 迷你走势要**撑满**卡片宽度 —— 否则走势和现价之间会空一大片。 */
+.rrm-root canvas.rrm-spark,
+.rrm-root div.rrm-spark {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+}
+.rrm-root .rrm-stock-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 700;
+  font-size: 13px;
+  color: #3d5575;
+}
+.rrm-root .rrm-tile-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rrm-root .rrm-price {
+  margin-left: auto;
+  font-size: 15px;
+  font-weight: 700;
+  color: #3a5478;
+  white-space: nowrap;
+}
+.rrm-root .rrm-change-pill {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: 800;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.rrm-root .rrm-change-up { background: #e7f8f0; color: #17916f; }
+.rrm-root .rrm-change-down { background: #fde9ed; color: #d6486a; }
+.rrm-root .rrm-change-flat { background: #eef3fa; color: #7b8ca6; }
+
+/* ── ⑦ K 线：柱子带纵向渐变（设计图的「光影」），底下垫一层网格 ─────── */
+.rrm-root .rrm-kline-wrap {
+  background-image: repeating-linear-gradient(180deg, rgba(142, 171, 219, 0.10) 0px, rgba(142, 171, 219, 0.10) 1px, rgba(255, 255, 255, 0) 1px, rgba(255, 255, 255, 0) 40px);
+}
+.rrm-root .rrm-kline-bar-up { background: linear-gradient(180deg, #6fd8bd 0%, rgba(90, 200, 168, 0.22) 100%); }
+.rrm-root .rrm-kline-bar-down { background: linear-gradient(180deg, #ff8fa4 0%, rgba(255, 107, 129, 0.22) 100%); }
+
+/* ── ⑧ 操作台的两个大胶囊按钮：渐变质感 + 56px 高 + 18px 粗体 ─────── */
 .rrm-root .neko-button.rrm-pill {
   flex: 1 1 0;
   min-width: 0;
-  padding: 13px 14px;
-  font-size: 16px;
+  height: 56px;
+  padding: 0 16px;
+  font-size: 18px;
   font-weight: 800;
   letter-spacing: 1px;
-  border-radius: 999px;
+  border-radius: 28px;
+  border: none;
   /* 真机教训：按钮被压窄时中文会**竖着排**（一字一行），难看且读不出来。
      锁死不换行，宁可两行空间也要横着排。 */
   white-space: nowrap;
 }
+.rrm-root .neko-button.rrm-pill-buy {
+  background: linear-gradient(90deg, #a4e5ff 0%, #7bbcff 100%);
+  color: #16305c;
+  box-shadow: 0 10px 24px rgba(123, 188, 255, 0.45);
+}
+.rrm-root .neko-button.rrm-pill-sell {
+  background: linear-gradient(90deg, #ffc5d3 0%, #ff96b2 100%);
+  color: #8a1e3c;
+  box-shadow: 0 10px 24px rgba(255, 150, 178, 0.45);
+}
+/* 按钮下面那行小字（设计图里的 All In / Stop Loss 副标题） */
+.rrm-root .rrm-pill-captions { display: flex; gap: 8px; width: 100%; }
+.rrm-root .rrm-pill-caption {
+  width: 48%;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+.rrm-root .rrm-pill-caption-buy { color: #2f6fbf; }
+.rrm-root .rrm-pill-caption-sell { color: #d2496e; }
+
 /* ActionButton 会把按钮包进一个 div（class 名 neko-action-control），
    而那个壳在宿主里是 inline-grid（收缩到内容宽）—— 不改它的话，
    网格里的列会被撑歪，两个按钮就不是各占一半。
@@ -443,49 +531,98 @@ const RRM_CSS = `
   font-weight: 600;
   letter-spacing: 0.5px;
 }
-.rrm-root .neko-button.rrm-pill-buy {
-  background: rgba(90, 200, 168, 0.16);
-  border-color: rgba(90, 200, 168, 0.46);
-  color: #1f8a6e;
-  box-shadow: 0 8px 22px rgba(90, 200, 168, 0.18);
-}
-.rrm-root .neko-button.rrm-pill-sell {
-  background: rgba(255, 107, 129, 0.14);
-  border-color: rgba(255, 107, 129, 0.46);
-  color: #e04e66;
-  box-shadow: 0 8px 22px rgba(255, 107, 129, 0.18);
+
+/* ── ⑨ 浅蓝胶囊 Tag（标题栏那一行）──────────────────────────────── */
+.rrm-root .rrm-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: #e4efff;
+  border: 1px solid rgba(91, 143, 249, 0.16);
+  color: #5b8ff9;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
 }
 
-/* ── ⑤ 辅助按钮：缩小、变轻 ─────────────────────────────────────── */
+/* ── ⑩ 破产配图：CSS 拼的扁平空钱包（不再用那张黄色土豆图）────────── */
+.rrm-root .rrm-wallet-scene {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 0 2px;
+}
+.rrm-root .rrm-wallet {
+  display: flex;
+  align-items: stretch;
+  width: 200px;
+  height: 124px;
+  border-radius: 18px;
+  overflow: hidden;
+  background: linear-gradient(180deg, #eaf2ff 0%, #cfdefb 100%);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 12px 28px rgba(142, 171, 219, 0.28);
+}
+.rrm-root .rrm-wallet-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+.rrm-root .rrm-wallet-slot {
+  width: 62px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(142, 171, 219, 0.35);
+}
+.rrm-root .rrm-wallet-tear { font-size: 26px; line-height: 1; }
+.rrm-root .rrm-wallet-flap {
+  width: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, #9cc0f5 0%, #7ba8f0 100%);
+  border-left: 1px solid rgba(255, 255, 255, 0.55);
+}
+.rrm-root .rrm-wallet-clasp {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: #ffffff;
+  box-shadow: 0 2px 6px rgba(60, 96, 160, 0.35);
+}
+.rrm-root .rrm-wallet-spark { font-size: 42px; line-height: 1; }
+
+/* ── ⑪ 辅助按钮：缩小、变轻 ─────────────────────────────────────── */
 .rrm-root .neko-button.rrm-mini {
   padding: 5px 12px;
   font-size: 12px;
   font-weight: 650;
+  border-radius: 999px;
 }
 
-/* ── ⑥ 群友头像（网格卡片里的小圆头像）──────────────────────────── */
+/* ── ⑫ 群友头像（方块卡里的小圆头像）──────────────────────────── */
 .rrm-root .rrm-avatar {
   width: 22px;
   height: 22px;
   border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.9);
   background: rgba(255, 255, 255, 0.9);
   vertical-align: middle;
-}
-.rrm-root .rrm-stock-name {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 700;
-  font-size: 14px;
-  color: #22304a;
+  flex: 0 0 auto;
 }
 
-/* ── ⑦ P7.2 遗留的三档字体（只改字体，不改布局）──────────────────── */
+/* ── ⑬ P7.2 遗留的三档字体（只改字体，不改布局）──────────────────── */
 .rrm-font-rich { font-family: "YouYuan", "Yuanti SC", "Hiragino Maru Gothic ProN", "Microsoft YaHei UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
 .rrm-font-broke { font-weight: 300; }
 .rrm-font-dying { font-weight: 500; }
-.rrm-root .neko-button.rrm-escape { font-size: 11px; padding: 2px 8px; color: var(--muted); }
+.rrm-root .neko-button.rrm-escape { font-size: 11px; padding: 2px 8px; color: var(--muted); border-radius: 999px; }
 `
 
 function money(value: number | undefined | null): string {
@@ -551,12 +688,27 @@ function changeText(value: number | undefined | null): string {
   return `${sign}${pct.toFixed(2)}%`
 }
 
-/** 涨绿跌红。 */
+/**
+ * 涨绿跌红（P9.0）。
+ *
+ * 用的是设计图那一档**柔和**的薄荷绿 / 珊瑚粉 —— 它们要落在浅色胶囊底上，
+ * 不能用纯饱和色（浅绿底 + 亮绿字会糊成一片）。
+ */
 function changeColor(value: number | undefined | null): string {
   const pct = Number(value || 0) * 100
-  if (pct > 0.001) return "var(--success)"
-  if (pct < -0.001) return "var(--danger)"
-  return "var(--muted)"
+  if (pct > 0.001) return "#17916f"
+  if (pct < -0.001) return "#d6486a"
+  return "#8ba0bd"
+}
+
+/** 把 #RRGGBB 变成 rgba(r,g,b,a) —— canvas 画渐变面积时要用。 */
+function hexAlpha(hex: string, alpha: number): string {
+  const value = String(hex || "").replace("#", "")
+  if (value.length !== 6) return hex
+  const r = parseInt(value.slice(0, 2), 16)
+  const g = parseInt(value.slice(2, 4), 16)
+  const b = parseInt(value.slice(4, 6), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
 /**
@@ -602,7 +754,13 @@ function BigStat(props: {
  * 画一条折线；万一宿主环境拿不到 2D 上下文，就**降级成柱子**（纯 div，
  * 不依赖任何定位 / 动画），绝不抛错、绝不崩面板。
  */
-function Sparkline(props: { points: number[]; up: boolean; title?: string }) {
+function Sparkline(props: {
+  points: number[]
+  up: boolean
+  title?: string
+  width?: number
+  height?: number
+}) {
   const canvasRef = useRef<any>(null)
   const [broken, setBroken] = useState(false)
   const values = props.points || []
@@ -636,18 +794,60 @@ function Sparkline(props: { points: number[]; up: boolean; title?: string }) {
         if (value < min) min = value
       }
       const span = max - min || 1
-      const pad = 2
+      const pad = 3
       const step = values.length > 1 ? (width - pad * 2) / (values.length - 1) : 0
-      ctx.strokeStyle = props.up ? TREND_UP : TREND_DOWN
-      ctx.lineWidth = 1.6
+      const color = props.up ? TREND_UP : TREND_DOWN
+      if (values.length < 2) {
+        // 刚开盘只有一两个点 —— 画一条**两端淡出的平直基线**。
+        // （孤零零一个小点看着像渲染坏了，不像「还没数据」。）
+        const base = ctx.createLinearGradient(0, 0, width, 0)
+        base.addColorStop(0, hexAlpha(color, 0))
+        base.addColorStop(0.5, hexAlpha(color, 0.55))
+        base.addColorStop(1, hexAlpha(color, 0))
+        ctx.strokeStyle = base
+        ctx.lineWidth = 2
+        ctx.lineCap = "round"
+        ctx.beginPath()
+        ctx.moveTo(1, height / 2)
+        ctx.lineTo(width - 1, height / 2)
+        ctx.stroke()
+        return
+      }
+      const coords = values.map((value, index) => ({
+        x: pad + step * index,
+        y: height - pad - ((value - min) / span) * (height - pad * 2),
+      }))
+      // P9.0：折线底下垫一层**渐变面积** —— 设计图里那条「会发光的走势带」。
+      try {
+        const area = ctx.createLinearGradient(0, 0, 0, height)
+        area.addColorStop(0, hexAlpha(color, 0.34))
+        area.addColorStop(1, hexAlpha(color, 0))
+        ctx.beginPath()
+        ctx.moveTo(coords[0].x, height)
+        coords.forEach((point) => ctx.lineTo(point.x, point.y))
+        ctx.lineTo(coords[coords.length - 1].x, height)
+        ctx.closePath()
+        ctx.fillStyle = area
+        ctx.fill()
+      } catch (error) {
+        // 老浏览器没有渐变 API —— 少一层面积而已，不影响读数。
+      }
+      ctx.strokeStyle = color
+      ctx.lineWidth = 1.8
+      ctx.lineJoin = "round"
+      ctx.lineCap = "round"
       ctx.beginPath()
-      values.forEach((value, index) => {
-        const x = pad + step * index
-        const y = height - pad - ((value - min) / span) * (height - pad * 2)
-        if (index === 0) ctx.moveTo(x, y)
-        else ctx.lineTo(x, y)
+      coords.forEach((point, index) => {
+        if (index === 0) ctx.moveTo(point.x, point.y)
+        else ctx.lineTo(point.x, point.y)
       })
       ctx.stroke()
+      // 末端点一个小圆点（设计图的折线末端有个实心点）。
+      const tail = coords[coords.length - 1]
+      ctx.beginPath()
+      ctx.arc(tail.x, tail.y, 2, 0, Math.PI * 2)
+      ctx.fillStyle = color
+      ctx.fill()
     } catch (error) {
       setBroken(true)
     }
@@ -675,6 +875,7 @@ function Sparkline(props: { points: number[]; up: boolean; title?: string }) {
       "div",
       {
         title: props.title,
+        className: "rrm-spark",
         style: {
           display: "flex",
           alignItems: "flex-end",
@@ -687,8 +888,9 @@ function Sparkline(props: { points: number[]; up: boolean; title?: string }) {
 
   return h("canvas", {
     ref: canvasRef,
-    width: 84,
-    height: 26,
+    className: "rrm-spark",
+    width: props.width || 84,
+    height: props.height || 26,
     title: props.title,
     style: { display: "block" },
   })
@@ -736,43 +938,50 @@ function StockTile(props: { stock: Stock; t: Translate }) {
   const stock = props.stock
   const t = props.t
   const up = Number(stock.change || 0) >= 0
+  const change = Number(stock.change || 0)
+  const tone = change > 0.001 ? "up" : change < -0.001 ? "down" : "flat"
+  // P9.0：卡片改成**设计图的两层结构** ——
+  //   上层：股票名（+ 群友头像）  ····  右侧是涨跌胶囊
+  //   下层：迷你走势（带渐变面积）  ····  右侧是现价
   return h(
     Card,
     { className: "rrm-tile" },
     h(
-      Stack,
-      { gap: 6 },
+      "div",
+      { className: "rrm-tile-head" },
       h(
         "span",
         { className: "rrm-stock-name" },
         h(RosterAvatar, { alias: stock.roster_alias }),
-        stock.display_name || stock.name
+        h(
+          "span",
+          { className: "rrm-tile-name-text" },
+          stock.display_name || stock.name
+        )
       ),
+      h(
+        "span",
+        {
+          className: `rrm-change-pill rrm-change-${tone}`,
+          title: t("visual.change_title"),
+          style: { color: changeColor(stock.change) },
+        },
+        changeText(stock.change)
+      )
+    ),
+    h(
+      "div",
+      { className: "rrm-tile-foot" },
       h(Sparkline, {
         points: (stock.spark || []).map((point) => point[1]),
         up,
         title: t("visual.trend_title"),
+        width: 200,
+        height: 30,
       }),
       h(
         "span",
-        {
-          title: t("visual.change_title"),
-          style: {
-            fontSize: "26px",
-            fontWeight: 800,
-            color: changeColor(stock.change),
-            whiteSpace: "nowrap",
-            lineHeight: "1.1",
-          },
-        },
-        changeText(stock.change)
-      ),
-      h(
-        "span",
-        {
-          title: t("visual.price_title"),
-          style: { fontSize: "12px", color: "var(--muted)" },
-        },
+        { className: "rrm-price", title: t("visual.price_title") },
         money(stock.price)
       )
     )
@@ -788,38 +997,33 @@ function PositionTile(props: { position: Position; t: Translate }) {
   const position = props.position
   const t = props.t
   const pnl = Number(position.unrealized_pnl || 0)
-  const color =
-    pnl > 0.001 ? "var(--success)" : pnl < -0.001 ? "var(--danger)" : "var(--muted)"
+  const tone = pnl > 0.001 ? "up" : pnl < -0.001 ? "down" : "flat"
+  // P9.0：和行情卡同一套两层结构（名字 + 盈亏胶囊 / 市值）。
   return h(
     Card,
     { className: "rrm-tile" },
     h(
-      Stack,
-      { gap: 4 },
+      "div",
+      { className: "rrm-tile-head" },
       h(
         "span",
         { className: "rrm-stock-name" },
-        position.display_name || position.name
+        h("span", { className: "rrm-tile-name-text" }, position.display_name || position.name)
       ),
       h(
         "span",
         {
+          className: `rrm-change-pill rrm-change-${tone}`,
           title: t("visual.pnl_title"),
-          style: {
-            fontSize: "26px",
-            fontWeight: 800,
-            color,
-            whiteSpace: "nowrap",
-            lineHeight: "1.1",
-          },
+          style: { color: changeColor(pnl) },
         },
         `${pnl > 0 ? "+" : ""}${money(pnl)}`
-      ),
-      h(
-        "span",
-        { style: { fontSize: "12px", color: "var(--muted)" } },
-        money(position.market_value)
       )
+    ),
+    h(
+      "div",
+      { className: "rrm-tile-foot" },
+      h("span", { className: "rrm-price" }, money(position.market_value))
     )
   )
 }
@@ -868,32 +1072,31 @@ function Kline(props: {
   const max = Math.max.apply(null, prices)
   const min = Math.min.apply(null, prices)
   const span = max - min || 1
-  // 0.8.1：不再按档位改 K 线颜色（家道中落的视觉降级已回滚，见 RRM_CSS 注释）。
-  const up = TREND_UP
-  const down = TREND_DOWN
   const bars = points.map((point, index) => {
     const tick = point[0]
     const price = point[1]
     const barHeight = Math.max(2, Math.round(((price - min) / span) * (height - 16)))
     const previous = index > 0 ? points[index - 1][1] : price
-    const color = price >= previous ? up : down
+    // P9.0：柱子改成**纵向渐变**（顶上实、底下化开），底下再垫一层网格线 ——
+    // 这就是设计图里那条 K 线区的「光影」。
     return h("div", {
       key: tick,
       title: `tick ${tick} · ${price.toFixed(4)}`,
+      className: price >= previous ? "rrm-kline-bar-up" : "rrm-kline-bar-down",
       style: {
         flex: "1 1 0",
         minWidth: "3px",
         maxWidth: "16px",
         height: `${barHeight}px`,
         marginRight: "2px",
-        background: color,
-        borderRadius: "2px",
+        borderRadius: "3px",
       },
     })
   })
   return h(
     "div",
     {
+      className: "rrm-kline-wrap",
       style: {
         display: "flex",
         alignItems: "flex-end",
@@ -903,6 +1106,43 @@ function Kline(props: {
       },
     },
     ...bars
+  )
+}
+
+/**
+ * P9.0：结算页的**扁平空钱包**插画 —— 纯 CSS 拼的，不依赖任何素材文件。
+ *
+ * 0.9.1 那张「破产猫猫」是 PIL 画的：一只黄色猫瘫在灰色钱包上，远看就是个
+ * 土豆，玩家直呼辣眼睛。这次彻底删掉那张图，改成设计图同款的扁平线性风格：
+ * 浅蓝渐变的钱包身 + 深蓝搭扣 + 一滴泪 + 飞出去的钞票。
+ *
+ * 没用 ``position`` / ``filter``，纯 flex 布局 ⇒ 不会踩 0.8.0 那四个雷。
+ */
+function BankruptArt(props: { alt: string }) {
+  return h(
+    "div",
+    {
+      className: "rrm-wallet-scene",
+      role: "img",
+      title: props.alt,
+      "aria-label": props.alt,
+    },
+    h("span", { className: "rrm-wallet-spark" }, "💸"),
+    h(
+      "div",
+      { className: "rrm-wallet" },
+      h(
+        "div",
+        { className: "rrm-wallet-body" },
+        h("div", { className: "rrm-wallet-slot" }),
+        h("div", { className: "rrm-wallet-tear" }, "💧")
+      ),
+      h(
+        "div",
+        { className: "rrm-wallet-flap" },
+        h("div", { className: "rrm-wallet-clasp" })
+      )
+    )
   )
 }
 
@@ -1325,7 +1565,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
         if (event && typeof event.preventDefault === "function") event.preventDefault()
       },
     },
-    h("span", null, `${t("panel.title")} · ${stageLabel}`),
+    h("span", { className: "rrm-tag" }, `${t("panel.title")} · ${stageLabel}`),
     // 开源纯净版**不剧透**导演台：连提示都不给（入口本身插件层还会再挡一次）。
     directorEnabled
       ? h(
@@ -1540,17 +1780,11 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             }
           >
             <Stack gap={12}>
-              {/* P8.1：破产猫图放大 + 居中（内联 data URI）。
-                  PNG 源图已提到 320×240，放大后依然清晰。 */}
-              {h(
-                "div",
-                { style: { display: "flex", justifyContent: "center" } },
-                h("img", {
-                  src: MEOW_BANKRUPT,
-                  alt: t("panel.settlement_image_alt"),
-                  style: { width: "240px", height: "180px", borderRadius: "14px" },
-                })
-              )}
+              {/* P9.0：结算页配图换成**纯 CSS 拼的扁平空钱包**。
+                  0.9.1 那张「破产猫」是 PIL 画的黄色土豆，看着像廉价表情包 ——
+                  这次直接废掉这张图（素材文件也一并删掉），改成设计图同款的
+                  扁平线性风格钱包。 */}
+              {h(BankruptArt, { alt: t("panel.settlement_image_alt") })}
               <Alert tone="info" message={t("panel.settlement_notice")} />
               <KeyValue
                 items={[
@@ -1829,7 +2063,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
 
   return (
     <Page className="rrm-root" title={t("panel.title")} subtitle={t("panel.subtitle")}>
-      <Stack className={stageClass} gap={12}>
+      <Stack className={stageClass} gap={16}>
         {h("style", null, RRM_CSS)}
         {/* ── 0.8.1 病危表现：**只有**一条红色 Alert 警告条（文档流内）。
             绝不用闪烁 / 半透明 / 遮罩 —— 那是 0.8.0 崩 UI 的根因。───── */}
@@ -1964,7 +2198,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             <Text>{t("panel.no_stocks")}</Text>
           ) : (
             <Stack gap={10}>
-              <Columns fluid minWidth={228} gap={12}>
+              <Columns fluid minWidth={228} gap={16}>
                 {visibleStocks.map((stock) => h(StockTile, { key: stock.id, stock, t }))}
               </Columns>
               {hiddenStockCount > 0 ? (
@@ -1980,7 +2214,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             {positions.length === 0 ? (
               <Text>{t("panel.no_positions")}</Text>
             ) : (
-              <Columns fluid minWidth={196} gap={12}>
+              <Columns fluid minWidth={196} gap={16}>
                 {positions.map((position) =>
                   h(PositionTile, { key: position.stock_id, position, t })
                 )}
@@ -2054,6 +2288,17 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                 </Button>
               )}
             </Grid>
+
+            {/* P9.0：设计图里两个大按钮下面各有一行小字（All In / Stop Loss），
+                这里用同宽两列补上，操作台才有「主副标题」的层次。 */}
+            <Inline gap={8} className="rrm-pill-captions">
+              <span className="rrm-pill-caption rrm-pill-caption-buy">
+                {t("visual.buy_all_sub")}
+              </span>
+              <span className="rrm-pill-caption rrm-pill-caption-sell">
+                {t("visual.sell_all_sub")}
+              </span>
+            </Inline>
 
             {/* ── 标的：买入 / 卖出各一行选择器（不跟大按钮抢宽度）──── */}
             <Inline gap={10} wrap={false} align="center" className="rrm-select-row">

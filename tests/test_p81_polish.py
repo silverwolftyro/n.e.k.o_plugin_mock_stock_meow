@@ -236,11 +236,20 @@ def test_select_rows_are_width_limited() -> None:
 # ---------------------------------------------------------------- ⑤ 梗图与空闲态
 
 
-def test_bankrupt_cat_is_bigger_and_centred() -> None:
-    """破产猫图要**放大**（240×180）并且**居中**。"""
+def test_bankrupt_cat_is_replaced_by_a_css_wallet() -> None:
+    """破产配图改成**纯 CSS 拼的扁平空钱包**（P9.0）。
+
+    0.9.1 那张「破产猫」是 PIL 画的黄色土豆，玩家点名太丑 —— 图和素材文件
+    一起废掉了，现在结算页的配图是面板里 CSS 拼出来的钱包。
+    """
     code = _panel_code()
-    assert 'width: "240px", height: "180px"' in code, "破产猫要放大到 240×180"
-    assert "justifyContent: \"center\"" in code, "破产猫要居中"
+    assert "MEOW_BANKRUPT" not in code, "黄色土豆那张图不许再回来"
+    assert "function BankruptArt(" in code, "结算页要改成 CSS 拼的空钱包"
+    assert "rrm-wallet" in code
+    css = _panel_css()
+    assert ".rrm-root .rrm-wallet {" in css
+    assert ".rrm-root .rrm-wallet-scene {" in css
+    assert "justify-content: center" in css, "钱包要居中"
 
 
 def test_meme_source_images_are_high_resolution() -> None:
@@ -249,7 +258,9 @@ def test_meme_source_images_are_high_resolution() -> None:
         from PIL import Image
     except ImportError:  # pragma: no cover - 环境没 PIL 就跳过尺寸断言
         return
-    for name in ("meow-bankrupt.png", "meow-loan.png"):
+    # P9.0：结算页的「破产猫」PNG 已删除（改成 CSS 拼的空钱包），
+    # 这里只剩网贷弹窗那张猫爪图。
+    for name in ("meow-loan.png",):
         path = _ASSETS_DIR / name
         assert path.exists(), f"缺 {name}"
         assert Image.open(path).size == (320, 240), f"{name} 必须是 320×240"
@@ -335,6 +346,6 @@ def test_assets_are_still_inline_data_uris() -> None:
 
 
 def test_version_is_0_9_1() -> None:
-    """版本号 = 0.9.1。"""
+    """版本号 = 0.9.2。"""
     toml = _TOML.read_text(encoding="utf-8")
-    assert 'version = "0.9.1"' in toml
+    assert 'version = "0.9.2"' in toml

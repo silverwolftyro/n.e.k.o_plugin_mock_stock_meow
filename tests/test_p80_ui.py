@@ -154,28 +154,29 @@ def test_panel_overrides_the_host_theme_variables() -> None:
     """浅色风靠**重新定义宿主 CSS 变量**实现（一次改动全局生效）。"""
     css = _panel_css()
     for token in (
-        "--success: #5ac8a8",
-        "--danger: #ff6b81",
-        "--surface: rgba(255, 255, 255, 0.72)",
-        "--radius-md: 16px",
+        "--success: #17916f",
+        "--danger: #d6486a",
+        "--surface: rgba(255, 255, 255, 0.85)",
+        "--radius-md: 20px",
     ):
         assert token in css, f"主题变量少了 {token}"
     assert ".rrm-root {" in css
 
 
 def test_cards_use_the_frosted_treatment() -> None:
-    """卡片是半透明白 + 16px 圆角 + 极淡阴影。"""
+    """卡片是半透明白 + 20px 大圆角 + 极柔的蓝影（P9.0 设计图规格）。"""
     css = _panel_css()
-    assert "background: rgba(255, 255, 255, 0.72)" in css
-    assert "border-radius: 16px" in css
-    assert "box-shadow: 0 6px 20px rgba(15, 23, 42, 0.06)" in css
+    assert "background: rgba(255, 255, 255, 0.85)" in css
+    assert "border-radius: 20px" in css
+    assert "box-shadow: 0 10px 30px rgba(142, 171, 219, 0.15)" in css
+    assert "border: 1px solid rgba(255, 255, 255, 0.6)" in css
 
 
 def test_trend_colors_are_mint_and_coral() -> None:
     """涨 = 薄荷绿，跌 = 珊瑚粉（canvas 里画不出 CSS 变量，只能写死）。"""
     source = _panel_text()
-    assert 'const TREND_UP = "#5AC8A8"' in source
-    assert 'const TREND_DOWN = "#FF6B81"' in source
+    assert 'const TREND_UP = "#35BFA0"' in source
+    assert 'const TREND_DOWN = "#F2677F"' in source
 
 
 def test_background_gradient_is_vertical_only() -> None:
@@ -291,8 +292,12 @@ def test_assets_folder_exists_with_avatars_and_memes() -> None:
     """``ui/assets/`` 是真的静态资源目录。"""
     assert _ASSETS_DIR.is_dir()
     pngs = sorted(p.name for p in _ASSETS_DIR.glob("*.png"))
-    assert len(pngs) >= 8, pngs
-    assert any("bankrupt" in name for name in pngs)
+    # P9.0：结算页那张「破产猫」PNG 已删（改成 CSS 拼的空钱包），少一张。
+    assert len(pngs) >= 7, pngs
+    # P9.0：破产猫那张 PNG 已删（结算页改成 CSS 拼的空钱包），
+    # 网贷弹窗那张猫爪图还在。
+    assert any("loan" in name for name in pngs)
+    assert not any("bankrupt" in name for name in pngs), "黄色土豆那张图不许再回来"
     assert any("loan" in name for name in pngs)
     for alias in ("星辰", "Wehos", "老王", "小明", "熬夜怪", "潜水员"):
         assert ( _ASSETS_DIR / f"avatar-{alias}.png").exists(), alias
@@ -301,7 +306,8 @@ def test_assets_folder_exists_with_avatars_and_memes() -> None:
 def test_assets_are_inlined_as_data_uri() -> None:
     """面板用的是**内联 data URI**（宿主不服务插件目录，相对路径必然 404）。"""
     avatars_ts = (_ASSETS_DIR / "avatars.ts").read_text(encoding="utf-8")
-    assert avatars_ts.count("data:image/png;base64,") >= 8
+    # P9.0：破产猫那张图删了，data URI 少一条（6 个头像 + 1 张猫爪图）。
+    assert avatars_ts.count("data:image/png;base64,") >= 7
     source = _panel_text()
     assert 'from "./assets/avatars"' in source
 
@@ -323,12 +329,18 @@ def test_roster_avatars_are_rendered_next_to_stock_names() -> None:
     assert "entry.fallback" in source
 
 
-def test_settlement_and_loan_modal_use_images() -> None:
-    """结算页与网贷弹窗用最基础的 ``<img>`` 渲染梗图。"""
+def test_loan_modal_uses_an_image_and_settlement_uses_css_art() -> None:
+    """网贷弹窗用 ``<img>`` 渲染梗图；结算页改成**纯 CSS 拼的空钱包**。
+
+    P9.0：0.9.1 那张「破产猫」是 PIL 画的黄色土豆，玩家直呼辣眼睛 ——
+    这张图和它的素材文件一起废掉了，结算页配图改成 CSS 拼的扁平空钱包。
+    """
     source = _panel_text()
-    assert "MEOW_BANKRUPT" in source
     assert "MEOW_LOAN" in source
     assert 'h("img"' in source
+    assert "MEOW_BANKRUPT" not in source, "黄色土豆那张图不许再回来"
+    assert "BankruptArt" in source, "结算页要改成 CSS 拼的空钱包"
+    assert "rrm-wallet" in source
 
 
 def test_no_tobacco_motifs_anywhere() -> None:

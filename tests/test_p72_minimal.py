@@ -150,7 +150,11 @@ def test_market_tiles_have_no_professional_columns() -> None:
     assert "visual.change_title" in tile
     assert "money(stock.price)" in tile
     assert "changeText(stock.change)" in tile
-    assert 'fontSize: "26px"' in tile
+    # P9.0：涨跌不再是一行「超大号数字」，而是设计图规格的**胶囊徽标**，
+    # 卡片也改成**上下两层**（名字 + 涨跌 / 走势 + 现价）。
+    assert "rrm-change-pill" in tile, "涨跌必须是胶囊徽标"
+    assert "rrm-tile-head" in tile and "rrm-tile-foot" in tile, "行情卡必须是两层结构"
+    assert "rrm-price" in tile, "现价要有自己的样式"
 
 
 def test_position_tiles_only_keep_name_value_and_pnl() -> None:
@@ -163,16 +167,27 @@ def test_position_tiles_only_keep_name_value_and_pnl() -> None:
     assert "visual.pnl_title" in tile
     assert "unrealized_pnl" in tile
     assert "market_value" in tile
-    assert 'fontSize: "26px"' in tile
+    # P9.0：持仓卡也换成胶囊徽标（P7.2 的「26px 超大号」规格已作废）。
+    assert "rrm-change-pill" in tile, "持仓卡的盈亏也要是胶囊徽标"
+    assert "rrm-price" in tile, "持仓卡的市值要有自己的样式"
 
 
-def test_change_numbers_are_huge_and_colored() -> None:
-    """涨跌数字必须**超大号 + 红绿**（红/绿走宿主变量）。"""
+def test_change_numbers_are_colored() -> None:
+    """涨跌必须**红绿分明**。
+
+    P7.2 时代的规格是「超大号数字」（``fontSize: "26px"``）；P9.0 按设计图
+    改成了**胶囊徽标** —— 规格变了，但「涨绿跌红」这条不变式**必须还在**：
+    颜色一律走 ``changeColor``，并且胶囊底色分涨 / 跌两套。
+    """
     code = _panel_code()
-    assert 'fontSize: "26px"' in code
-    assert "changeColor(stock.change)" in code
+    assert "changeColor(stock.change)" in code, "涨跌颜色必须走 changeColor"
     assert "var(--success)" in code
     assert "var(--danger)" in code
+    css = _panel_css()
+    assert ".rrm-root .rrm-change-up" in css, "涨要用薄荷绿胶囊"
+    assert ".rrm-root .rrm-change-down" in css, "跌要用珊瑚粉胶囊"
+    assert "#17916f" in css, "涨色要跟着设计图走"
+    assert "#d6486a" in css, "跌色要跟着设计图走"
 
 
 def test_sparkline_is_present_and_safe() -> None:
