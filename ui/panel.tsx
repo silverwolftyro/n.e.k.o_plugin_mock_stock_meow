@@ -92,6 +92,36 @@ type KlinePoint = [number, number]
  */
 type Translate = (key: string, params?: Record<string, any>) => string
 
+/**
+ * 把后端的**内部枚举**翻译成界面文案。
+ *
+ * P8.1 事故：结算页把 ``starved`` / ``quick`` 这种英文枚举直接怼在玩家脸上，
+ * 连 ``{mode}`` 占位符都原样漏了出来。这里统一走 i18n 词典，
+ * **翻不到就显示破折号** —— 宁可空着，也不能让玩家看见内部 key。
+ */
+function enumText(t: Translate, prefix: string, raw: unknown): string {
+  const key = String(raw || "")
+  if (!key) return "—"
+  // 宿主 t() 在 key 缺失时返回 key 本身；这里用 defaultValue="" 把它变空串。
+  const text = t(`${prefix}.${key}`, { defaultValue: "" })
+  return text || "—"
+}
+
+/**
+ * P8.1：空闲态的猫娘**开场嘲讽**候选键。
+ *
+ * 面板每 3 秒轮询一次，所以这个随机值必须**在组件挂载时定一次**，
+ * 不能每次渲染都摇 —— 否则玩家会眼睁睁看着话术自己变。
+ */
+const IDLE_TAUNT_KEYS = [
+  "panel.idle_taunt_1",
+  "panel.idle_taunt_2",
+  "panel.idle_taunt_3",
+  "panel.idle_taunt_4",
+  "panel.idle_taunt_5",
+  "panel.idle_taunt_6",
+]
+
 type Stock = {
   id: string
   name: string
@@ -389,6 +419,30 @@ const RRM_CSS = `
   min-width: 0;
 }
 .rrm-root .neko-action-control > .neko-button.rrm-pill { width: 100%; }
+
+/* P8.1：两个胶囊按钮**紧凑并排**，各占 48% 宽（各留 2% + 间距在中间），
+   整排**居中** —— 0.9.0 的 1fr 两列看着太散，像两张不相干的卡片。 */
+.rrm-root .neko-grid.rrm-trade-row {
+  grid-template-columns: repeat(2, minmax(0, 48%));
+  justify-content: center;
+}
+
+/* P8.1：标的下拉框别孤零零横跨整屏 —— 限宽 + 居中。 */
+.rrm-root .neko-inline.rrm-select-row { justify-content: center; }
+.rrm-root .neko-inline.rrm-select-row .neko-select { max-width: 360px; }
+
+/* P8.1：K 线卡的标的框同样限宽。它这行左边顶着卡片标题、右边跟着
+   「拉这只的K线」按钮和行情文案，所以**不居中**（居中会和左对齐的卡片
+   标题脱节），只把满宽的下拉框收成 360px。 */
+.rrm-root .neko-inline.rrm-kline-row .neko-select { max-width: 360px; }
+
+/* P8.1：K 线数据不足时的提示语 —— 浅灰、居中、不抢戏。 */
+.rrm-root .rrm-kline-warming {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
 .rrm-root .neko-button.rrm-pill-buy {
   background: rgba(90, 200, 168, 0.16);
   border-color: rgba(90, 200, 168, 0.46);
@@ -770,21 +824,50 @@ function PositionTile(props: { position: Position; t: Translate }) {
   )
 }
 
-/** K 线：用 div 拼出来的迷你蜡烛图（宿主画不了 SVG）。 */
+/**
+ * K 线：用 div 拼出来的迷你蜡烛图（宿主画不了 SVG）。
+ *
+ * P8.1：**刚开盘不再画一根顶天立地的柱子。**
+ *
+ * 0.9.0 的 K 线高度是按「价格区间」归一化的（min→2px，max→满格）。
+ * 点数少的时候区间极窄，于是**最后一根柱子永远是满格** ——
+ * 开局第一眼就是一根又高又孤立的绿柱，极其突兀。
+ *
+ * 现在点数不足 ``MIN_KLINE_POINTS`` 时**不画柱子**，改成在图表区正中
+ * 摆一句浅灰提示（「市场刚开盘，积累数据中……」），等点数攒够了自然接管。
+ */
+const MIN_KLINE_POINTS = 5
+
 function Kline(props: {
   points: KlinePoint[]
   emptyText: string
+  warmingText: string
 }) {
   const points = props.points || []
+  // P8.0：K 线是**上半区的主视觉** —— 更高、更抢眼。
+  const height = 232
   if (points.length === 0) {
     return h("div", null, h("span", null, props.emptyText))
+  }
+  if (points.length < MIN_KLINE_POINTS) {
+    return h(
+      "div",
+      {
+        className: "rrm-kline-warming",
+        style: {
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          height: `${height}px`,
+        },
+      },
+      h("span", null, props.warmingText)
+    )
   }
   const prices = points.map((point) => point[1])
   const max = Math.max.apply(null, prices)
   const min = Math.min.apply(null, prices)
   const span = max - min || 1
-  // P8.0：K 线是**上半区的主视觉** —— 更高、更抢眼。
-  const height = 232
   // 0.8.1：不再按档位改 K 线颜色（家道中落的视觉降级已回滚，见 RRM_CSS 注释）。
   const up = TREND_UP
   const down = TREND_DOWN
@@ -831,6 +914,14 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null)
   const [newsDetail, setNewsDetail] = useState<Record<string, any> | null>(null)
   const [dismissedProposal, setDismissedProposal] = useState<string>("")
+  // ── P8.1：空闲态的猫娘**开场嘲讽** ──────────────────────────────
+  // 面板每 3 秒轮询一次，所以随机值必须**在挂载时摇一次**并锁住 ——
+  // 否则玩家会眼睁睁看着话术每 3 秒自己换一句（比没有还瘆人）。
+  const [idleTauntKey] = useState<string>(() => {
+    const index = Math.floor(Math.random() * IDLE_TAUNT_KEYS.length)
+    return IDLE_TAUNT_KEYS[index] || IDLE_TAUNT_KEYS[0]
+  })
+  const idleTaunt = t(idleTauntKey)
   // ── P6 档 2：按需拉到的 K 线（局中载荷只带前 20 只，其余现拉）────
   const [klineDetail, setKlineDetail] = useState<Record<string, any> | null>(null)
   // ── P5.5 改动 4：天台三屏（1 → 2 → 3，间隔自动推进）─────────────
@@ -1346,7 +1437,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       { gap: 6 },
       h(Text, null, t("visual.danmaku_hint")),
       danmakuList.length === 0
-        ? h(Text, null, t("visual.danmaku_empty"))
+        ? h(Text, null, state.stage === "idle" ? idleTaunt : t("visual.danmaku_empty"))
         : h(
             Stack,
             { gap: 4 },
@@ -1371,6 +1462,9 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     const scene = (report.death_scene || null) as DeathScene | null
     const achievements =
       (state.achievements || report.achievements || null) as Achievements | null
+    // P8.1：结算页也要能「再来一局」。老版本插件没把 join 挂成 UI action 时
+    // 就**不渲染**这个按钮 —— 绝不能拿一个空 action 去调。
+    const joinAction = actionById("join")
 
     // ── P5.5 改动 4：天台虚惊一场（分三屏，第三屏是结算数据）──────
     if (scene && sceneScreen < 3) {
@@ -1390,7 +1484,8 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                       setSceneScreen(3)
                     }}
                   >
-                    {t("panel.death_scene_skip")}
+                    {/* P8.1：嘲讽版「跳过」。 */}
+                    {t("panel.death_scene_skip_mock")}
                   </Button>
                 </Inline>
               </Stack>
@@ -1420,29 +1515,64 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       })
     }
 
+    // ── P8.1：结算页的三处「内部枚举不许见光」──────────────────────
+    //   ① 标签用了带占位符的 "panel.mode"（"模式：{mode}"），而这里
+    //      t() **没有传参** ⇒ 玩家看到的就是字面量「{mode}」。
+    //      结算页的模式是**一行里的一个值**，所以标签单独给一个"模式"。
+    //   ② 死因 / 结局 / 入场身份之前直接显示 starved / quick 这种英文枚举。
+    const deadReport = Boolean(report.death_reason)
+    const modeText = String(report.mode || "")
+    const modeValue = modeText === "infinite"
+      ? t("panel.mode_infinite")
+      : modeText
+        ? `${t("panel.mode_classic")} · ${report.mode_name || modeText}`
+        : "—"
+
     return (
       <Page className="rrm-root" title={t("panel.title")} subtitle={t("panel.subtitle")}>
         <Stack gap={12}>
           {h("style", null, RRM_CSS)}
           {titleBar}
-          <Card title={t("panel.settlement")}>
+          {/* P8.1：破产了就把标题换成嘲讽版（活下来也有话说）。 */}
+          <Card
+            title={
+              deadReport ? t("panel.settlement_title_dead") : t("panel.settlement_title_alive")
+            }
+          >
             <Stack gap={12}>
-              {/* P8.0：结算页配图（瘫在空钱包上的猫）—— 内联 data URI。 */}
-              {h("img", {
-                src: MEOW_BANKRUPT,
-                alt: t("panel.settlement_image_alt"),
-                style: { width: "160px", height: "120px", borderRadius: "12px" },
-              })}
+              {/* P8.1：破产猫图放大 + 居中（内联 data URI）。
+                  PNG 源图已提到 320×240，放大后依然清晰。 */}
+              {h(
+                "div",
+                { style: { display: "flex", justifyContent: "center" } },
+                h("img", {
+                  src: MEOW_BANKRUPT,
+                  alt: t("panel.settlement_image_alt"),
+                  style: { width: "240px", height: "180px", borderRadius: "14px" },
+                })
+              )}
               <Alert tone="info" message={t("panel.settlement_notice")} />
               <KeyValue
                 items={[
-                  { key: "mode", label: t("panel.mode"), value: report.mode_name || report.mode },
+                  { key: "mode", label: t("panel.mode_label"), value: modeValue },
                   { key: "days", label: t("panel.days_survived"), value: report.days_survived },
                   { key: "trades", label: t("panel.trades"), value: report.trade_count },
-                  { key: "reason", label: t("panel.death_reason"), value: report.death_reason || "—" },
+                  {
+                    key: "reason",
+                    label: t("panel.death_reason"),
+                    value: enumText(t, "death_reason", report.death_reason),
+                  },
                   { key: "title", label: t("panel.death_title"), value: report.death_title || "—" },
-                  { key: "ending", label: t("panel.ending"), value: report.ending || "—" },
-                  { key: "identity", label: t("panel.identity"), value: report.identity || "—" },
+                  {
+                    key: "ending",
+                    label: t("panel.ending"),
+                    value: enumText(t, "ending", report.ending),
+                  },
+                  {
+                    key: "identity",
+                    label: t("panel.identity"),
+                    value: enumText(t, "identity.label", report.identity),
+                  },
                 ]}
               />
               {/* P5.5 改动 2：身份呼应句 —— 只在死亡结算页出现 */}
@@ -1476,7 +1606,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                     {
                       key: "catgirl_reason",
                       label: t("panel.death_reason"),
-                      value: catgirlResult.death_reason || "—",
+                      value: enumText(t, "death_reason", catgirlResult.death_reason),
                     },
                   ]}
                 />
@@ -1484,6 +1614,18 @@ export default function Panel(props: PluginSurfaceProps<State>) {
               {/* P5.5 改动 3：猫娘沉默旁白（在猫娘播报之后） */}
               {report.catgirl_silence ? <Text>{report.catgirl_silence}</Text> : null}
               <Text>{report.anti_fraud_notice || ""}</Text>
+              {/* P8.1：结算完别让玩家干瞪眼 —— 给一个**带嘲讽**的再来一局。 */}
+              {joinAction ? (
+                <Inline gap={8} align="center">
+                  <ActionButton
+                    action={joinAction}
+                    label={t("panel.settlement_again")}
+                    tone="primary"
+                    values={{ mode: "classic_arcade" }}
+                    onError={onActionError}
+                  />
+                </Inline>
+              ) : null}
             </Stack>
           </Card>
 
@@ -1733,7 +1875,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
               <Text>{t("panel.kline_empty")}</Text>
             ) : (
               <>
-                <Inline gap={8} wrap align="center">
+                <Inline gap={8} wrap align="center" className="rrm-kline-row">
                   <Select
                     value={klineStockId}
                     options={stockOptions}
@@ -1759,7 +1901,11 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                     </Text>
                   ) : null}
                 </Inline>
-                <Kline points={klinePoints} emptyText={t("panel.kline_empty")} />
+                <Kline
+                  points={klinePoints}
+                  emptyText={t("panel.kline_empty")}
+                  warmingText={t("panel.kline_warming")}
+                />
               </>
             )}
           </Stack>
@@ -1868,7 +2014,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                 真正的 flex 子项上。
                 所以这里用 **`Grid cols={2}`** —— 网格列天生等分，不管子项
                 是裸 `<button>` 还是带壳的 `ActionButton`。 */}
-            <Grid cols={2} gap={10}>
+            <Grid cols={2} gap={8} className="rrm-trade-row">
               {buyAllAmount > 0 ? (
                 <ActionButton
                   className="rrm-pill rrm-pill-buy"
@@ -1910,7 +2056,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             </Grid>
 
             {/* ── 标的：买入 / 卖出各一行选择器（不跟大按钮抢宽度）──── */}
-            <Inline gap={10} wrap={false} align="center">
+            <Inline gap={10} wrap={false} align="center" className="rrm-select-row">
               <Select
                 value={effectiveStockId}
                 options={stockOptions}
@@ -1919,7 +2065,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             </Inline>
             <Text>{t("visual.buy_all_hint")}</Text>
 
-            <Inline gap={10} wrap={false} align="center">
+            <Inline gap={10} wrap={false} align="center" className="rrm-select-row">
               <Select
                 value={effectiveSellStockId}
                 options={positionOptions}

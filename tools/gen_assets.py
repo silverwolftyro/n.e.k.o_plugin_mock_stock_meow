@@ -35,6 +35,51 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 ASSETS = Path(__file__).resolve().parents[1] / "ui" / "assets"
 SIZE = 64
+# P8.1：梗图在结算页要放大到 240×180 显示，源图太小会被拉糊。
+# 这里把梗图画布整体放大 2 倍（160×120 → 320×240），坐标全是整数 ⇒ 边缘依旧锐利。
+MEME_SCALE = 2
+MEME_W = 160
+MEME_H = 120
+
+
+class ScaledDraw:
+    """把 160×120 的原始坐标画到 ``MEME_SCALE`` 倍大的画布上。
+
+    梗图的绘制代码写的是 160×120 的"手写坐标"，这里用一层薄包装把
+    坐标整体放大 —— 不用改任何一行动画逻辑，改图只要改 ``MEME_SCALE``。
+    """
+
+    def __init__(self, draw: ImageDraw.ImageDraw, k: int) -> None:
+        self._draw = draw
+        self._k = k
+
+    def _box(self, box):
+        return [value * self._k for value in box]
+
+    def _points(self, points):
+        return [(x * self._k, y * self._k) for x, y in points]
+
+    def _scale_width(self, kwargs):
+        if "width" in kwargs and kwargs["width"]:
+            kwargs["width"] = max(1, int(kwargs["width"] * self._k))
+        return kwargs
+
+    def ellipse(self, box, **kwargs):
+        return self._draw.ellipse(self._box(box), **self._scale_width(kwargs))
+
+    def rounded_rectangle(self, box, radius=0, **kwargs):
+        return self._draw.rounded_rectangle(
+            self._box(box), radius=radius * self._k, **self._scale_width(kwargs)
+        )
+
+    def polygon(self, points, **kwargs):
+        return self._draw.polygon(self._points(points), **kwargs)
+
+    def line(self, points, **kwargs):
+        return self._draw.line(self._points(points), **self._scale_width(kwargs))
+
+    def arc(self, box, start=0, end=360, **kwargs):
+        return self._draw.arc(self._box(box), start, end, **self._scale_width(kwargs))
 
 
 def circle(draw: ImageDraw.ImageDraw, cx: float, cy: float, r: float, fill, outline=None, width=1):
@@ -88,8 +133,8 @@ def draw_avatar(kind: str, bg: str, ink: str) -> Image.Image:
 
 def draw_bankrupt_cat() -> Image.Image:
     """结算页梗图：一只猫瘫在空钱包上。"""
-    img = Image.new("RGBA", (160, 120), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
+    img = Image.new("RGBA", (MEME_W * MEME_SCALE, MEME_H * MEME_SCALE), (0, 0, 0, 0))
+    draw = ScaledDraw(ImageDraw.Draw(img), MEME_SCALE)
     draw.ellipse([18, 92, 142, 116], fill=(226, 232, 240, 255))
     draw.rounded_rectangle([52, 70, 112, 96], radius=8, fill=(203, 213, 225, 255))
     draw.rounded_rectangle([72, 78, 92, 88], radius=4, fill=(148, 163, 184, 255))
@@ -106,8 +151,8 @@ def draw_bankrupt_cat() -> Image.Image:
 
 def draw_loan_paw() -> Image.Image:
     """网贷弹窗梗图：一只猫爪按着合同。"""
-    img = Image.new("RGBA", (160, 120), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
+    img = Image.new("RGBA", (MEME_W * MEME_SCALE, MEME_H * MEME_SCALE), (0, 0, 0, 0))
+    draw = ScaledDraw(ImageDraw.Draw(img), MEME_SCALE)
     draw.rounded_rectangle([26, 24, 122, 104], radius=6, fill=(255, 255, 255, 255),
                            outline=(203, 213, 225, 255), width=2)
     for index in range(5):

@@ -432,7 +432,8 @@ def test_panel_has_no_layout_breaking_css() -> None:
         # 伪元素**画东西**（content）就是遮罩层的前奏 —— 一律禁。
         # 注意 `*, *::before, *::after { box-sizing: border-box }` 这种
         # 标准 reset 里出现 ::before / ::after 是无害的，所以不按名字禁。
-        "content:",
+        # （`content:` 单独查，见下面的正则 —— `justify-content:` 这种
+        #   flex 属性里也含 "content" 子串，不能一刀切。）
         # 径向渐变一律禁（P8.0 只用**纵向** linear-gradient，见下面的守卫）。
         "radial-gradient",
         "rrm-stage-",
@@ -445,6 +446,11 @@ def test_panel_has_no_layout_breaking_css() -> None:
     )
     for token in css_forbidden:
         assert token not in css, f"注入的 CSS 里不许再出现 {token}"
+
+    # ``content:``（伪元素画东西）单独查 —— ``justify-content:`` / ``align-content:``
+    # 这些 **flex 属性**里也含 "content" 子串，不能一刀切。
+    for match in re.finditer(r"(?<![\w-])content\s*:", css):
+        raise AssertionError(f"注入的 CSS 里不许再出现 content: 属性（{match.group(0)}）")
 
     # P8.0：渐变**解禁**，但只准**纵向**的 linear-gradient。
     #

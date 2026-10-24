@@ -362,12 +362,14 @@ def test_panel_css_still_has_no_layout_breaking_declarations() -> None:
         "filter:",
         "clip-path",
         "inset:",
-        "content:",
         "opacity",
         "@keyframes",
         "radial-gradient",
     ):
         assert token not in css, f"注入的 CSS 里不许再出现 {token}"
+    # ``content:``（伪元素画东西 = 遮罩层前奏）单独查 —— ``justify-content:``
+    # 这类 **flex 属性**里也含 "content" 子串，不能一刀切。
+    assert not re.search(r"(?<![\w-])content\s*:", css), "注入的 CSS 里不许再出现 content: 属性"
     for match in re.finditer(r"animation:\s*([^;]+);", css):
         value = match.group(1).strip().replace("!important", "").strip()
         assert value == "none", value

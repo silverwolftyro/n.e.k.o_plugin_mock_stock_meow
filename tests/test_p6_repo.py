@@ -309,7 +309,7 @@ def test_worktree_has_no_crlf_files() -> None:
 
 
 def test_version_is_0_7_4() -> None:
-    """版本号 = 0.9.0。
+    """版本号 = 0.9.1。
 
     版本史：
 
@@ -321,12 +321,13 @@ def test_version_is_0_7_4() -> None:
     * 0.8.3 —— P7.3：弹窗防死锁（网贷弹窗逃生通道 + 超时兜底 + 轰炸硬截止）。
     * 0.8.4 —— P7.4：入口打通（面板开局按钮 + ``@llm_tool`` + 轮询自愈）。
     * 0.9.0 —— P8：正式化《拟股喵喵》+ 清丽轻科技风 UI 重构。
+    * 0.9.1 —— P8.1：结算页占位符/枚举修复 + K 线开局提示 + 操作区与梗图打磨。
     """
     from plugins.mock_stock_meow import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.9.0"
+    assert PLUGIN_VERSION == "0.9.1"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.9.0"' in toml
+    assert 'version = "0.9.1"' in toml
 
 
 # ------------------------------------------------- ⑥ 面板文案全走 i18n
@@ -351,7 +352,7 @@ def test_panel_i18n_keys_all_exist() -> None:
 
 
 def test_panel_dynamic_i18n_keys_all_exist() -> None:
-    """面板里两处**动态** ``t(`...`)`` 的取值域在 i18n 里都有条目。"""
+    """面板里**动态** ``t(`...`)`` 的取值域在 i18n 里都有条目。"""
     table = _i18n()
     for key in (
         "phase.honeymoon",
@@ -363,10 +364,18 @@ def test_panel_dynamic_i18n_keys_all_exist() -> None:
     ):
         assert key in table, f"动态 i18n 键缺失：{key}"
 
+    # P8.1：结算页的**英文枚举**翻译（死因 / 入场身份 / 结局）也走动态键，
+    # 形态是 ``${prefix}.${key}`` —— 前缀固定，取值由后端给。
+    for prefix in ("death_reason", "identity.label", "ending"):
+        assert any(key.startswith(prefix + ".") for key in table), (
+            f"动态 i18n 前缀 {prefix}. 在词典里一条都没有"
+        )
+
     dynamic = set(re.findall(r"\bt\(\s*`([^`]*)`", _PANEL_SOURCE))
     assert dynamic == {
         'analysis.${analysis.rating}',
         'phase.${state.phase || "honeymoon"}',
+        '${prefix}.${key}',
     }, f"面板的动态 i18n 键形态变了，需要同步检查取值域：{dynamic}"
 
 
