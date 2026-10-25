@@ -158,16 +158,49 @@ FALLBACK_LINES: dict[str, str] = {
 FALLBACK_LINE_DEFAULT = FALLBACK_LINES[MEOW_DEFAULT_TOPIC]
 
 
+#: **主动搭话** —— 玩家长时间没有任何操作，猫娘主动开口。
+#:
+#: 触发阈值与节流语义对齐宿主 N.E.K.O 的 Focus 系统
+#: （``VISIT_IDLE_TIMEOUT_S`` = 300 秒 / ``FOCUS_CHARGE_ENTER`` = 0.6 /
+#: ``FOCUS_IDLE_*_RETENTION`` = 0.8），详见 ``emotion.py``。
+#:
+#: 同样**只讲玩家状态**，不带任何游戏机制、内部状态或数值。
+IDLE_PROMPT = (
+    "《拟股喵喵》的面板上，" + MASTER + " 已经好一阵子没动静了 —— "
+    "既没买也没卖，人就杵在屏幕前发呆。\n"
+    "请主动开口，用你自己的语气搭一句话："
+    "可以调侃他在发呆，可以随口问一句他在想什么，"
+    "也可以自顾自说点别的；"
+    "但别提任何游戏机制、内部状态或具体数值，也不要预言接下来会发生什么。"
+)
+
+
 # ----------------------------------------------------------------------
 # 取用函数
 # ----------------------------------------------------------------------
 
-def call_prompt(topic: str = "") -> str:
-    """按话题取【呼叫猫娘】的提示词；未知话题回落到默认。"""
+
+def call_prompt(topic: str = "", emotion_block: str = "") -> str:
+    """按话题取【呼叫猫娘】的提示词；未知话题回落到默认。
+
+    ``emotion_block`` 是**运行时**拼上的情绪块（定性标签 + 约束清单）——
+    静态提示词里**永远**没有它，所以 P4 §11 的静态扫描守卫依然守得住。
+    """
     key = str(topic or "").strip()
     if key in CALL_PROMPTS:
-        return CALL_PROMPTS[key]
-    return CALL_PROMPT_DEFAULT
+        base = CALL_PROMPTS[key]
+    else:
+        base = CALL_PROMPT_DEFAULT
+    if emotion_block:
+        return f"{base}\n{emotion_block}"
+    return base
+
+
+def idle_prompt(emotion_block: str = "") -> str:
+    """主动搭话的提示词（可带情绪块）。"""
+    if emotion_block:
+        return f"{IDLE_PROMPT}\n{emotion_block}"
+    return IDLE_PROMPT
 
 
 def fallback_line(topic: str = "") -> str:

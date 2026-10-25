@@ -47,6 +47,7 @@ import random
 import sqlite3
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -101,6 +102,18 @@ from .cards import (
 )
 from .cards import (
     t as i18n_text,
+)
+from .combo import (
+    COMBO_MODES,
+    ComboTracker,
+)
+from .emotion import (
+    EmotionProfile,
+    build_profile,
+    consecutive_losses,
+    holding_loss_ratio,
+    render_prompt_block,
+    summarize,
 )
 from .engine.config import (
     STREAM_CATGIRL as STREAM_CATGIRL,
@@ -159,6 +172,7 @@ from .meow import (
     NAG_PROMPT,
     call_prompt,
     fallback_line,
+    idle_prompt,
     rotate_topic,
 )
 from .modes import get_mode
@@ -198,13 +212,90 @@ from .story import (
     reply_prompt,
 )
 
+#: P16.0 · 入门档初始资金乘数（新手期「先甜后苦」的放水口径）。
+BEGINNER_CASH_MULTIPLIER = 1.2
+
+#: P16.0 · 哪些档位享受**新手期放水**（前两关）。
+#:
+#: 街机 = 新手村、入门 = 断供前夕 —— 这两关的诉求是「先甜」；
+#: 进阶与地狱是**收割场**，放水会直接毁掉压迫感，所以**不给**。
+SOFTENED_MODES: tuple[str, ...] = ("classic_arcade", "classic_beginner")
+
+#: P16.0 · 蜜月期新闻真实度（**插件层覆写**，引擎默认值一个字节都没动）。
+#:
+#: 引擎默认 ``true_ratio_honeymoon = 0.60`` / ``truth_ratio_honeymoon = 0.70``；
+#: 插件层在运行时把它们提到 0.85 ⇒ 新手期的新闻更值得相信，
+#: 玩家更容易赚到第一桶金 —— 这正是后续收割成立的前提。
+HONEYMOON_TRUE_RATIO = 0.85
+HONEYMOON_TRUTH_RATIO = 0.85
+
+#: P16.0 · 玩家「无操作」的判定阈值（秒）。
+#:
+#: **对齐宿主 N.E.K.O**：``config/visit_settings.py`` 的
+#: ``VISIT_IDLE_TIMEOUT_S = 300``（双方 300 秒没有一行往来就算空闲）。
+#: 插件层不自己拍一个数字 —— 跟宿主保持一致，玩家在两个系统里感受到
+#: 是同一个「发呆」尺度。
+IDLE_PROACTIVE_SECONDS = 300.0
+
+#: P16.0 · 搭话 charge 的**每分钟衰减系数**。
+#:
+#: **对齐宿主 N.E.K.O 的 Focus 语义**：``FOCUS_IDLE_SILENT_RETENTION`` /
+#: ``FOCUS_IDLE_REPLIED_RETENTION`` 都是 ``0.8`` —— 空闲只让「搭话欲望」
+#: 衰减，**不产生触发**（触发只由玩家的输入驱动）。
+PROACTIVE_CHARGE_RETENTION = 0.8
+
+#: P16.0 · 允许主动搭话的 charge 门槛。
+#:
+#: 对齐宿主 ``FOCUS_CHARGE_ENTER = 0.6``：charge 高于它说明玩家刚有过
+#: 互动，不该打扰；低于它才搭话。
+PROACTIVE_CHARGE_ENTER = 0.6
+
+
+def _apply_beginner_softening(config: EngineConfig) -> EngineConfig:
+    """P16.0 · 新手期放水：**插件层**覆写引擎配置的新闻真实度。
+
+    引擎的默认值**一个字节都没动**（``engine/config.py`` 保持原样），
+    覆写只发生在运行时 ⇒ ``tests/simulate.py``（用默认配置）跑出来的
+    500 局基线**逐字节全等**。
+
+    代价要说清楚：真实游戏的新手期比基线模拟器**更友好** ——
+    模拟器不再是真实游戏的忠实代理。这是产品决策（先甜后苦），
+    不是引擎回归。
+
+    **只给前两关**（见 ``SOFTENED_MODES``）：后两档是收割场，
+    放水会直接毁掉压迫感。
+    """
+    news = replace(
+        config.news,
+        true_ratio_honeymoon=HONEYMOON_TRUE_RATIO,
+        truth_ratio_honeymoon=HONEYMOON_TRUTH_RATIO,
+    )
+    return replace(config, news=news)
+
+
+def _softened_config_for(mode: str, config: EngineConfig) -> EngineConfig:
+    """按档位决定要不要放水。
+
+    * 前两关（街机 / 入门）⇒ 返回覆写过 ``news`` 的配置；
+    * 其余档位（进阶 / 地狱 / 无限）⇒ **原样返回**，一个字节都不改。
+
+    注意：覆写后的配置**只喂给模式层**（``ModeContext``）——
+    模式层只用 ``ctx.engine_config.news`` 生成新闻，
+    费率 / heat / 市场那几段压根没动过。
+    """
+    if mode not in SOFTENED_MODES:
+        return config
+    return _apply_beginner_softening(config)
+
+
 __all__ = ["MockStockMeowPlugin"]
+
 
 #: 插件 ID，与 [plugin].id 保持一致。
 PLUGIN_ID = "mock_stock_meow"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.9.10"
+PLUGIN_VERSION = "0.10.0"
 
 #: P10：游戏速度档位 → **真实时间**推进间隔的倍率。
 #:
@@ -531,6 +622,22 @@ class MockStockMeowPlugin(NekoPluginBase):
         #: 引擎配置缓存（心跳每秒都读配置太浪费）。
         self._engine_config_cache: EngineConfig | None = None
         self._engine_config_cached_at: float = 0.0
+        # ── P16.0：玩家情绪画像（**只在内存里**）────────────────────
+        #: 搭话前 / 结算时按需刷新；猫娘开口时读它。
+        #: **局中绝不进玩家可见的载荷**（守 P4 §14）——
+        #: 结算页给的是另一套玩家可见文案（``emotion_summary``）。
+        self._emotion_profile: EmotionProfile | None = None
+        #: 玩家最后一次**主动操作**的时间（epoch 秒）。
+        self._last_player_action_at: float = time.time()
+        #: 搭话 charge（0~1）：玩家越活跃，charge 越高，越不需要被搭话。
+        self._proactive_charge: float = 1.0
+        #: 上次 charge 衰减的时间戳。
+        self._proactive_charge_at: float = time.time()
+        #: 上次主动搭话的时间（epoch 秒）。
+        self._idle_meow_at: float = 0.0
+        # ── P16.0：连击（**纯表现层** —— 一个游戏数值都不改）──────────
+        #: 街机档的「爽感」配件：连续买中上涨的股票就叠一层连击。
+        self._combo = ComboTracker()
         #: 业务配置缓存（``config.example.toml`` 的那些段；P7 的
         #: ``[director]`` / ``[visual]`` 从这里读）。
         self._business_config_cache: dict[str, Any] | None = None
@@ -933,7 +1040,10 @@ class MockStockMeowPlugin(NekoPluginBase):
                 player=player,
                 market=market,
                 difficulty=difficulty,
-                engine_config=engine_config,
+                # ── P16.0：前两关的新手期放水**只作用在模式层**──────
+                # （模式层只用 ``ctx.engine_config.news`` 生成新闻，
+                #  费率 / heat / 市场那几段没动过）
+                engine_config=_softened_config_for(mode, engine_config),
                 mode=mode,
                 now=now,
             )
@@ -1041,6 +1151,8 @@ class MockStockMeowPlugin(NekoPluginBase):
         # 记住玩家 id：局终后 ``market_state.player_id`` 被清空，面板要靠它
         # 去找归档的结算报告（P4 历史问题 4）。
         self._last_player_id = player_id
+        # P16.0：新的一局 ⇒ 连击从头开始（纯表现层）。
+        self._combo.reset()
         # P5：第 1 天的新闻卡片（**只推第一条**，与新闻类型无关）。
         if setup_outcome is not None:
             await self._push_first_news_card(list(setup_outcome.news))
@@ -1377,6 +1489,7 @@ class MockStockMeowPlugin(NekoPluginBase):
     @_locked
     async def buy(self, stock_id: str, amount: float) -> Ok:
         """买入。手续费计入持仓成本；买入行为会影响上头指数。"""
+        self._touch_player_action()
         engine_config = await self._engine_config()
         session, error = await self._session_or_error(engine_config)
         if error is not None:
@@ -1425,6 +1538,10 @@ class MockStockMeowPlugin(NekoPluginBase):
         )
         market.fee_pool += trade.fee
         market.total_fees += trade.fee
+        # ── P16.0：连击（**纯表现层**）——记一笔「刚买进」──────────────
+        # 等下一次价格推进后判定这笔是不是买中了。**不改任何数值**。
+        if session.mode in COMBO_MODES:
+            self._combo.add_entry(stock_id, trade.price, trade.amount)
 
         trade_id = await self._persist_trade(session, trade, stock_id)
         # P5：连续补仓 ≥3 次 → 猫娘嘲讽。
@@ -1519,6 +1636,7 @@ class MockStockMeowPlugin(NekoPluginBase):
     @_locked
     async def sell(self, stock_id: str, amount: float) -> Ok:
         """卖出。印花税只在卖出方向收取（现实方式，单边）。"""
+        self._touch_player_action()
         engine_config = await self._engine_config()
         session, error = await self._session_or_error(engine_config)
         if error is not None:
@@ -1655,6 +1773,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         * 这句话**只在这里**出现，``@ui.context`` 载荷里没有它 ——
           想拿到就得花分析次数（这正是方案 B 的"有成本"）。
         """
+        self._touch_player_action()
         engine_config = await self._engine_config()
         session, error = await self._session_or_error(engine_config)
         if error is not None:
@@ -2259,6 +2378,10 @@ class MockStockMeowPlugin(NekoPluginBase):
         )
         # ── P5.5 改动 5：称号图鉴 ────────────────────────────────
         achievements = await self._achievements_payload(player.id, session.identity)
+        # ── P16.0：本局情绪画像（**结算页才有**，局中不给）────────────
+        # 一句话彩蛋，不含任何数值、不含 heat、不含局中秘密。
+        final_profile = await self._build_emotion_profile(session)
+        self._emotion_profile = final_profile
         return {
             "player_id": report.player_id,
             "mode": report.mode,
@@ -2300,6 +2423,9 @@ class MockStockMeowPlugin(NekoPluginBase):
             # ── P5.5 改动 4/5/7 ───────────────────────────────────
             "death_scene": death_scene,
             "achievements": achievements,
+            # ── P16.0：本局情绪画像（**结算页才有**，局中不给）────────
+            # 一句话彩蛋，不含任何数值、不含 heat、不含局中秘密。
+            "emotion_summary": summarize(final_profile),
             "anti_fraud_notice": ANTI_FRAUD_NOTICE,
         }
 
@@ -3032,7 +3158,12 @@ class MockStockMeowPlugin(NekoPluginBase):
                 }
             )
         self._meow_call_count += 1
-        spoken = await self._push_proactive(call_prompt(chosen), reason="call")
+        # ── P16.0：把玩家的情绪画像（定性标签）拼进提示词 ────────────
+        # 只在**真的要开口**时才去查库 —— 没有画像时提示词与旧版一模一样。
+        await self._refresh_emotion_profile()
+        spoken = await self._push_proactive(
+            call_prompt(chosen, self._emotion_block()), reason="call"
+        )
         self._meow_call_last_at = now
         if not spoken:
             self._record_meow_fallback(chosen, "push_failed")
@@ -3745,6 +3876,11 @@ class MockStockMeowPlugin(NekoPluginBase):
             await self._reregister_llm_tools_if_due()
         except Exception as error:  # noqa: BLE001 - 自愈绝不能把心跳带崩
             self.logger.error(f"LLM 工具重注册异常（不影响后续心跳）：{error}")
+        # P16.0：玩家发呆太久 → 猫娘主动搭话（对齐宿主 Focus 语义）。
+        try:
+            await self._idle_meow_watchdog()
+        except Exception as error:  # noqa: BLE001 - 主动搭话绝不能把心跳带崩
+            self.logger.error(f"主动搭话看门狗异常（不影响后续心跳）：{error}")
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         if elapsed_ms > 100.0:
             # 只有真的慢了才去读配置，避免每秒都打一次宿主配置
@@ -3930,6 +4066,18 @@ class MockStockMeowPlugin(NekoPluginBase):
 
         # ── 步 3：衰减上头指数（交易事件在成交时加，这里只做衰减）──
         prices = market.prices()
+        # ── P16.0：连击结算（**纯表现层**）────────────────────────────
+        # 价格已经推进过了 ⇒ 这一拍就能判定上一批买入是不是买中了。
+        # **不改任何数值**：只动 ``self._combo`` 这几个展示字段。
+        if session.mode in COMBO_MODES:
+            self._combo.resolve(
+                prices,
+                {
+                    stock_id: float(pos.amount)
+                    for stock_id, pos in player.positions.items()
+                },
+                engine_config.fees,
+            )
         concentration = position_concentration(player.positions, prices)
         player.heat = update_heat(
             player.heat,
@@ -3945,7 +4093,9 @@ class MockStockMeowPlugin(NekoPluginBase):
             player=player,
             market=market,
             difficulty=difficulty,
-            engine_config=engine_config,
+            # ── P16.0：前两关的新手期放水**只作用在模式层**──────────
+            # 后两档（收割场）拿到的是**原样配置**，压迫感不受影响。
+            engine_config=_softened_config_for(session.mode, engine_config),
             catgirl=session.catgirl,
             mode=session.mode,
             now=time.time(),
@@ -4509,6 +4659,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         真正的并发风险已经由**上下文处理器的非阻塞拿锁**挡住了（见
         :meth:`market_context`）：宿主的上下文查询**永远不会再被冻住**。
         """
+        self._touch_player_action()
         with self._lock:
             engine_config = await self._engine_config()
             session, error = await self._session_or_error(engine_config)
@@ -4752,6 +4903,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         ``Failed to query plugin UI action context``（500 红色警告），
         也**绝不**抛红色 Error 制造崩溃恐慌。
         """
+        self._touch_player_action()
         if self._auto_tick_enabled():
             return _err("advance_tick_requires_manual")
         # ── P11.1：时间戳闸门（在任何耗时操作之前！）──────────────────
@@ -6094,6 +6246,9 @@ class MockStockMeowPlugin(NekoPluginBase):
             return cached
         raw = await self._business_config()
         config = build_engine_config(raw)
+        # P16.0：**这里不做任何覆写** —— 引擎原样，只是缓存。
+        # 新手期放水按档位在 ``_softened_config_for()`` 里做，
+        # 而且只喂给模式层 ⇒ 后两档（收割场）**一个字节都不受影响**。
         self._engine_config_cache = config
         self._engine_config_cached_at = now
         return config
@@ -6491,6 +6646,11 @@ class MockStockMeowPlugin(NekoPluginBase):
         low, high = classic_living_cost_range(difficulty, engine_config)
         days = classic_initial_days(difficulty, engine_config)
         base = derive_rng(seed, 999).uniform(low, high)
+        # ── P16.0：入门档加厚初始资金（×1.2）─────────────────────────
+        # 让新手期真真切切能赚到钱 —— 先甜后苦，「我真是股神」的错觉
+        # 是后面收割成立的前提。**只改插件层**，引擎的算法没动。
+        if mode == "classic_beginner":
+            return round(base * days * BEGINNER_CASH_MULTIPLIER, 2)
         return round(base * days, 2)
 
     @staticmethod
@@ -6722,6 +6882,12 @@ class MockStockMeowPlugin(NekoPluginBase):
             "missed_bills": int(player.strikes),
             "distance_to_kill": self._distance_to_death(session, engine_config),
             "concentration": round(position_concentration(player.positions, prices), 6),
+            # ── P16.0：连击（**纯展示**；不含任何游戏数值）──────────────
+            "combo": {
+                "streak": int(self._combo.streak),
+                "best": int(self._combo.best),
+                "enabled": session.mode in COMBO_MODES,
+            },
             "positions": positions,
             "stocks": stocks,
             "kline_stock_ids": kline_ids,
@@ -6758,6 +6924,143 @@ class MockStockMeowPlugin(NekoPluginBase):
             "story": self._story_block(),
             "notice": "",
         }
+
+    # ------------------------------------------------------------------
+    # P16.0：玩家情绪画像（只读客观量 ⇒ 定性标签 ⇒ 只喂给 LLM）
+    # ------------------------------------------------------------------
+
+    async def _build_emotion_profile(self, session: Session) -> EmotionProfile:
+        """把客观量折成情绪画像。
+
+        **纯读取**：引擎的 heat / 持仓集中度、插件层的成交记录，
+        一个都不写。折出来的标签**定性、无数值**（见 ``emotion.py``）。
+
+        成交记录读不出来（数据库不可用）时**降级**成「只看得见 heat 与集中度」
+        的画像 —— 绝不因为读库失败就让猫娘闭嘴。
+        """
+        player = session.player
+        market = session.market
+        prices = market.prices()
+
+        rows: list[tuple[str, str, float, float]] = []
+        trades_today = 0
+        try:
+            raw = await self._repo.fetch_all(
+                "SELECT side, stock_id, amount, price, day FROM trades "
+                "WHERE player_id = ? ORDER BY id ASC",
+                (player.id,),
+            )
+        except Exception:  # noqa: BLE001 - 读库失败只降级，不该让猫娘闭嘴
+            raw = []
+        today = int(player.day)
+        for row in raw or []:
+            try:
+                side = str(row["side"])
+                stock_id = str(row["stock_id"])
+                amount = float(row["amount"])
+                price = float(row["price"])
+                day = int(row["day"])
+            except (KeyError, IndexError, TypeError, ValueError):
+                continue
+            rows.append((side, stock_id, amount, price))
+            if day == today:
+                trades_today += 1
+
+        positions = {
+            stock_id: (float(pos.amount), float(pos.avg_cost))
+            for stock_id, pos in player.positions.items()
+        }
+        return build_profile(
+            heat=float(getattr(player, "heat", 0.0)),
+            consecutive_losses=consecutive_losses(rows),
+            concentration=float(position_concentration(player.positions, prices)),
+            trades_today=trades_today,
+            loss_ratio=holding_loss_ratio(positions, prices),
+            holding_count=len(positions),
+            alive=bool(player.alive),
+        )
+
+    def _emotion_block(self) -> str:
+        """给 LLM 的**情绪块**（定性标签 + 约束清单）。
+
+        没有画像时返回空串 ⇒ 提示词与 P16.0 之前**完全一样**
+        （安全降级，绝不因为画像缺失就让猫娘说错话）。
+        """
+        profile = self._emotion_profile
+        if profile is None:
+            return ""
+        return render_prompt_block(profile)
+
+    async def _refresh_emotion_profile(self) -> EmotionProfile | None:
+        """按需刷新情绪画像（**只进内存**）。
+
+        读不出来（还没开局 / 数据库不可用）时返回 ``None`` ——
+        调用方据此决定要不要带情绪块（不带 ⇒ 提示词与旧版一模一样）。
+        """
+        try:
+            engine_config = await self._engine_config()
+            session, error = await self._session_or_error(engine_config)
+        except Exception:  # noqa: BLE001 - 画像拿不到不该拖垮搭话
+            return None
+        if error is not None or session is None:
+            return None
+        try:
+            self._emotion_profile = await self._build_emotion_profile(session)
+        except Exception:  # noqa: BLE001 - 同上
+            return None
+        return self._emotion_profile
+
+    def _touch_player_action(self) -> None:
+        """记一笔「玩家有操作」（用于判断发呆）。
+
+        同时把 charge 打满 —— 玩家刚动过，就不该被搭话。
+        """
+        self._last_player_action_at = time.time()
+        self._proactive_charge = 1.0
+        self._proactive_charge_at = self._last_player_action_at
+
+    async def _idle_meow_watchdog(self) -> None:
+        """**主动搭话**：玩家发呆太久，猫娘主动开口。
+
+        阈值与节流**对齐宿主 N.E.K.O 的 Focus 语义**：
+
+        * 空闲判定 = ``IDLE_PROACTIVE_SECONDS``（300 秒，宿主
+          ``VISIT_IDLE_TIMEOUT_S``）；
+        * 节流 = charge 语义（宿主 ``FOCUS_CHARGE_RETENTION`` /
+          ``FOCUS_CHARGE_ENTER``）：玩家越活跃 charge 越高，越不需要被搭话；
+          charge 每分钟 ×0.8，低于 0.6 才允许搭话；
+        * **搭话完 charge 打满**（宿主刚开口 ⇒ 又「上心」了）——
+          所以下一轮搭话要等 charge 再自然衰减下去，
+          连续发呆时大约每 3 分钟搭一次，不会刷屏。
+
+        宿主那条铁律在这里同样成立：**空闲只让 charge 衰减，
+        不产生触发** —— 触发的是「玩家已经安静下来了」这个事实本身。
+
+        **只在真的要开口时查库** —— 心跳每秒一次，不能每秒查库。
+        """
+        now = time.time()
+        # charge 衰减：每分钟一档（对齐宿主的 retention 语义）。
+        steps = int((now - self._proactive_charge_at) // 60.0)
+        if steps > 0:
+            self._proactive_charge *= PROACTIVE_CHARGE_RETENTION**steps
+            self._proactive_charge_at += steps * 60.0
+        # 先判「该不该」，再去查库。
+        if (now - self._last_player_action_at) < IDLE_PROACTIVE_SECONDS:
+            return
+        if self._proactive_charge > PROACTIVE_CHARGE_ENTER:
+            return
+        profile = await self._refresh_emotion_profile()
+        if profile is None or profile.ended:
+            return
+        spoken = await self._push_proactive(
+            idle_prompt(self._emotion_block()), reason="idle"
+        )
+        self._idle_meow_at = now
+        # 搭话完宿主重新「上心」：charge 打满 ⇒ 下一轮要等它自然衰减下去。
+        self._proactive_charge = 1.0
+        self._proactive_charge_at = now
+        if not spoken:
+            self.logger.info("主动搭话未被宿主受理（idle）：本轮跳过")
 
     @staticmethod
     def _panel_kline_ids(session: Session, prices: dict[str, float]) -> list[str]:

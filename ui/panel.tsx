@@ -369,6 +369,8 @@ type State = {
   fees?: Fees
   /** P12：剧情状态。 */
   story?: Story
+  /** P16.0：连击（**纯展示**；不含任何游戏数值）。 */
+  combo?: { streak?: number; best?: number; enabled?: boolean }
 }
 
 /** P5.5 改动 4：天桥虚惊一场的三屏。 */
@@ -1045,6 +1047,16 @@ const BOOM_HARD_LIMIT_MS = 5000
  */
 const PANEL_POLL_INTERVAL_MS = 3000
 
+/**
+ * P16.0：**前两关**（街机 = 新手村 / 入门 = 断供前夕）走「简单面板」。
+ *
+ * 前两关的诉求是「闭着眼睛瞎买也能赚钱」—— 复杂的水位条与多标的台账
+ * 在这里是**干扰**，不是帮助。后面两档恢复完整信息（压迫感该在那里出现）。
+ */
+const SIMPLE_MODES = ["classic_arcade", "classic_beginner"]
+/** 前两关的持仓台账只铺前 N 只（其余折成一行字）。 */
+const SIMPLE_POSITION_LIMIT = 3
+
 function percent(value: number | undefined | null): string {
   if (value === undefined || value === null) return "—"
   return `${(Number(value) * 100).toFixed(1)}%`
@@ -1093,6 +1105,14 @@ function BigStat(props: {
   hint?: string
   color?: string
   size?: number
+  /**
+   * P16.0：跳动时的**强调**（缩一下）。
+   *
+   * 只切 `transform` —— **不用 CSS 动画**（0.8.0 的崩溃根因之一）。
+   * 不跳的时候给 `undefined`（不留 `scale(1)`）—— 免得凭空建一个
+   * containing block。
+   */
+  pop?: boolean
 }) {
   return h(
     "div",
@@ -1106,6 +1126,7 @@ function BigStat(props: {
           fontSize: `${props.size || 34}px`,
           color: props.color,
           lineHeight: "1.15",
+          transform: props.pop ? "scale(1.12)" : undefined,
         },
       },
       props.value
@@ -1113,6 +1134,70 @@ function BigStat(props: {
     props.hint
       ? h("span", { style: { fontSize: "12px", color: "var(--muted)" } }, props.hint)
       : null
+  )
+}
+
+/**
+ * P16.0：**连击徽章** —— 街机档的「爽感」配件。
+ *
+ * 连续买中上涨的股票时，这块徽章会亮起来并**弹一下**。
+ *
+ * **不用 CSS 动画**（0.8.0 的崩溃根因之一）：弹跳是 **JS 定时器**
+ * 切 `transform` 做的，跟 P7.2 的濒临破产闪烁同款思路。
+ *
+ * 徽章**只展示**连击数 —— 不含任何游戏数值，也不参与任何判定。
+ */
+function ComboBadge(props: { streak: number; best: number; t: Translate }) {
+  const streak = Math.max(0, Number(props.streak || 0))
+  const best = Math.max(0, Number(props.best || 0))
+  const t = props.t
+  // 连击断了 ⇒ 徽章收起来（只留一行「最长连击」）。
+  const on = streak >= 2
+  const [pop, setPop] = useState(false)
+  useEffect(() => {
+    if (!on) {
+      setPop(false)
+      return
+    }
+    setPop(true)
+    const timer = setTimeout(() => setPop(false), 260)
+    return () => clearTimeout(timer)
+  }, [streak, on])
+  if (!on) {
+    return best >= 2
+      ? h(
+          "div",
+          { style: { fontSize: "12px", color: "var(--muted)" } },
+          t("panel.combo_best", { count: best })
+        )
+      : null
+  }
+  return h(
+    "div",
+    {
+      className: "rrm-combo",
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        padding: "6px 12px",
+        borderRadius: "12px",
+        background: "rgba(91, 143, 249, 0.12)",
+        border: "1px solid rgba(91, 143, 249, 0.35)",
+        transform: pop ? "scale(1.06)" : undefined,
+      },
+    },
+    h("span", { style: { fontSize: "18px" } }, "🔥"),
+    h(
+      "strong",
+      { style: { fontSize: "20px", color: "var(--primary)" } },
+      t("panel.combo_badge", { count: streak })
+    ),
+    h(
+      "span",
+      { style: { fontSize: "12px", color: "var(--muted)" } },
+      t("panel.combo_hint")
+    )
   )
 }
 
@@ -1140,6 +1225,13 @@ function CashGauge(props: {
   crisis: boolean
   alarmOn: boolean
   t: Translate
+  /**
+   * P16.0：**紧凑模式**（前两关用）。
+   *
+   * 前两关的诉求是「闭着眼睛瞎买也能赚钱」—— 复杂的水位条在那里是
+   * **干扰**。紧凑模式把它压成**一行字**：红线多少、还差多少 / 还能花多少。
+   */
+  compact?: boolean
 }) {
   const cash = Math.max(0, Number(props.cash || 0))
   const bill = Math.max(0, Number(props.bill || 0))
@@ -1161,6 +1253,33 @@ function CashGauge(props: {
       ? "rgba(214, 72, 106, 0.45)"
       : "var(--danger)"
     : "var(--text)"
+
+  // ── P16.0：紧凑模式（前两关）—— 水位条**压成一行** ──────────────────
+  // 复杂图形在前两关是**干扰**：玩家不需要研究它，只需要知道自己要交多少。
+  if (props.compact) {
+    return h(
+      "div",
+      {
+        className: "rrm-gauge",
+        style: {
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: "8px",
+          fontSize: "12px",
+          color: "var(--muted)",
+        },
+      },
+      h("span", null, props.t("panel.gauge_bill", { amount: money(bill) })),
+      crisis
+        ? h(
+            "span",
+            { style: { color: "var(--danger)", fontWeight: "700" } },
+            props.t("panel.gauge_crisis", { gap: money(bill - cash) })
+          )
+        : h("span", null, props.t("panel.gauge_free", { amount: money(cash - bill) }))
+    )
+  }
 
   return h(
     "div",
@@ -2314,6 +2433,18 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   // P8.0：行情网格最多铺 12 张方块卡（再多是视觉噪音，不是信息）。
   const visibleStocks = stocks.slice(0, 12)
   const hiddenStockCount = Math.max(0, stocks.length - visibleStocks.length)
+  // ── P16.0：前两关（街机 / 入门）走**简单面板** ──────────────────────
+  // 诉求是「闭着眼睛瞎买也能赚钱」—— 复杂的水位条与多标的台账在前两关
+  // 是**干扰**。后面两档恢复完整信息（压迫感该在那里出现）。
+  const simpleUi = SIMPLE_MODES.indexOf(String(state.mode || "")) >= 0
+  // 台账按市值从大到小排；前两关只铺前 3 只，其余折成一行字。
+  const rankedPositions = positions
+    .slice()
+    .sort((a, b) => Number(b.market_value || 0) - Number(a.market_value || 0))
+  const shownPositions = simpleUi
+    ? rankedPositions.slice(0, SIMPLE_POSITION_LIMIT)
+    : rankedPositions
+  const hiddenPositionCount = Math.max(0, rankedPositions.length - shownPositions.length)
   const news = state.news_today || []
   const catgirl = state.catgirl || null
   const pending = state.pending_action || null
@@ -2428,6 +2559,50 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     pnl > 0.001 ? t("visual.pnl_up") : pnl < -0.001 ? t("visual.pnl_down") : t("visual.pnl_flat")
   // 濒临破产档：数字**偶尔闪红**（用 JS 定时器切颜色，不用 CSS 动画）。
   const flashColor = flashOn ? "var(--danger)" : undefined
+
+  // ── P16.0：盈利数字「跳动」────────────────────────────────────────
+  // 街机档专用：**不用 CSS 动画**（0.8.0 的崩溃根因），用 JS 定时器把数字
+  // 从旧值**滚**到新值，滚完再补一下弹跳 —— 让「赚到钱」这件事被看见。
+  const combo = state.combo || null
+  const comboEnabled = Boolean(combo && combo.enabled)
+  const comboStreak = comboEnabled ? Math.max(0, Number(combo.streak || 0)) : 0
+  const comboBest = comboEnabled ? Math.max(0, Number(combo.best || 0)) : 0
+  const pnlShownRef = useRef(pnl)
+  const prevPnlRef = useRef(pnl)
+  const [pnlShown, setPnlShown] = useState(pnl)
+  const [pnlPop, setPnlPop] = useState(false)
+  useEffect(() => {
+    const target = pnl
+    const from = pnlShownRef.current
+    if (!comboEnabled || Math.abs(target - from) < 0.005) {
+      pnlShownRef.current = target
+      setPnlShown(target)
+      return
+    }
+    const started = Date.now()
+    const duration = 520
+    const timer = setInterval(() => {
+      const ratio = Math.min(1, (Date.now() - started) / duration)
+      const eased = 1 - Math.pow(1 - ratio, 3)
+      const next = from + (target - from) * eased
+      pnlShownRef.current = next
+      setPnlShown(next)
+      if (ratio >= 1) {
+        clearInterval(timer)
+        pnlShownRef.current = target
+        setPnlShown(target)
+      }
+    }, 40)
+    return () => clearInterval(timer)
+  }, [pnl, comboEnabled])
+  useEffect(() => {
+    const previous = prevPnlRef.current
+    prevPnlRef.current = pnl
+    if (!comboEnabled || pnl <= previous + 0.005) return
+    setPnlPop(true)
+    const timer = setTimeout(() => setPnlPop(false), 300)
+    return () => clearTimeout(timer)
+  }, [pnl, comboEnabled])
 
   // ── P13：仓位控制（连续滑块 + 直输框）+ 实时预览 ──────────────────
   //
@@ -3740,10 +3915,11 @@ export default function Panel(props: PluginSurfaceProps<State>) {
         <Grid cols={3} gap={12}>
           <BigStat
             label={t("visual.pnl_title")}
-            value={`${pnl > 0 ? "+" : ""}${money(pnl)}`}
+            value={`${pnlShown > 0 ? "+" : ""}${money(pnlShown)}`}
             hint={`${t("visual.total_pnl")} · ${pnlHint}`}
             color={pnlColor}
             size={36}
+            pop={pnlPop}
           />
           <BigStat
             label={cashLabel}
@@ -3768,6 +3944,9 @@ export default function Panel(props: PluginSurfaceProps<State>) {
           />
         </Grid>
 
+        {/* ── P16.0：连击徽章（街机档的爽感配件）───────────────────── */}
+        {h(ComboBadge, { streak: comboStreak, best: comboBest, t: t })}
+
         {/* ── P14.0：资金水位条（明天的生活费 = 那条红线）────────────── */}
         {h(CashGauge, {
           cash: cash,
@@ -3775,6 +3954,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
           crisis: cashCrisis,
           alarmOn: gaugeAlarm,
           t: t,
+          compact: simpleUi,
         })}
 
         {/* ── P7.2 ③：明日账单（交不起就是红色警告）────────────────── */}
@@ -3821,12 +4001,15 @@ export default function Panel(props: PluginSurfaceProps<State>) {
               <Text>{t("panel.no_positions")}</Text>
             ) : (
               <Columns fluid minWidth={196} gap={16}>
-                {positions.map((position) =>
+                {shownPositions.map((position) =>
                   h(PositionTile, { key: position.stock_id, position, t })
                 )}
               </Columns>
+              {hiddenPositionCount > 0 ? (
+                <Text>{t("panel.positions_more", { count: hiddenPositionCount })}</Text>
+              ) : null}
             )}
-            {(state.concentration || 0) > 0.6 ? (
+            {!simpleUi && (state.concentration || 0) > 0.6 ? (
               <Alert
                 tone="warning"
                 message={t("visual.concentration_warn", {

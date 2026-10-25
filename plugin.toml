@@ -1,7 +1,7 @@
 [plugin]
 id = "mock_stock_meow"
 name = "拟股喵喵"
-version = "0.9.10"
+version = "0.10.0"
 entry = "plugin.plugins.mock_stock_meow:MockStockMeowPlugin"
 description = "纯虚构反诈沙盘：养套杀 + 每日账单斩杀"
 type = "plugin"
