@@ -3,7 +3,7 @@
 覆盖六件事：
 
 1. **身份**：内部 ID 改成 ``mock_stock_meow``，中文名《拟股喵喵》，
-   界面上不许再出现「反向暴富 / 久留美」这类旧字眼；
+   界面上不许再出现早期版本沿用下来的旧字眼；
 2. **主题**：宿主 CSS 变量在 ``.rrm-root`` 上被重新定义成浅色系，
    涨是薄荷绿、跌是珊瑚粉；
 3. **布局**：行情换成**方块卡片网格**、操作台换成**并排胶囊大按钮**、
@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from pathlib import Path
+
+from conftest import engine_mode_code_changes
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 _PANEL = _PLUGIN_ROOT / "ui" / "panel.tsx"
@@ -121,8 +122,8 @@ def test_plugin_name_is_meow() -> None:
 
 
 def test_no_legacy_branding_on_the_ui() -> None:
-    """界面文案里不许再出现旧字眼（引擎层与测试禁词元组除外）。"""
-    forbidden = ("反向暴富", "久留美", "FX战士")
+    """界面文案里不许出现真实金融词，也不许出现夸大收益的承诺式说法。"""
+    forbidden = ("稳赚", "保本", "包赚", "一夜暴富", "翻倍收益", "稳赢")
     offenders: list[str] = []
     for path in (
         _PANEL,
@@ -426,16 +427,14 @@ def test_tiles_have_no_wrapper_div() -> None:
 
 
 def test_engine_and_mode_layers_are_untouched_by_p8() -> None:
-    """P8 **不许**碰引擎层与模式层（数值与公式零改动）。"""
-    result = subprocess.run(
-        ["git", "diff", "--name-only", "HEAD", "--", "engine", "modes"],
-        cwd=str(_PLUGIN_ROOT),
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    changed = [line for line in result.stdout.splitlines() if line.strip()]
-    assert not changed, f"引擎层/模式层不许改动：{changed}"
+    """P8 **不许**碰引擎层与模式层（数值与公式零改动）。
+
+    P15.0 起判定从「文件名 diff」升级为「**代码指纹**」：
+    注释与 docstring 可以自由改（清理版权字眼需要），
+    但任何**可执行代码**的改动都会被抓出来。
+    """
+    changed = engine_mode_code_changes()
+    assert not changed, f"引擎层/模式层的代码不许改动：{changed}"
 
 
 def test_panel_still_polls_and_resyncs() -> None:

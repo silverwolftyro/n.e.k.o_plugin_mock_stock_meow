@@ -19,9 +19,10 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from pathlib import Path
 from typing import Any
+
+from conftest import engine_mode_code_changes
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 _PANEL = _PLUGIN_ROOT / "ui" / "panel.tsx"
@@ -115,15 +116,8 @@ def asyncio_run(coro: Any) -> Any:
 
 def test_engine_and_mode_layers_are_still_untouched() -> None:
     """P7.2 **不许**碰引擎层与模式层（数值与公式零改动）。"""
-    result = subprocess.run(
-        ["git", "diff", "--name-only", "HEAD", "--", "engine", "modes"],
-        cwd=str(_PLUGIN_ROOT),
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    changed = [line for line in result.stdout.splitlines() if line.strip()]
-    assert not changed, f"引擎层/模式层不许改动：{changed}"
+    changed = engine_mode_code_changes()
+    assert not changed, f"引擎层/模式层的代码不许改动：{changed}"
 
 
 # ---------------------------------------------------------------- UI 极简

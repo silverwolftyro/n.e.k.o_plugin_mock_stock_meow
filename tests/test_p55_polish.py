@@ -122,12 +122,12 @@ def test_plugin_overrides_death_title_by_reason() -> None:
 
 
 def test_version_is_a_patch_bump() -> None:
-    """版本号 = 0.9.9（P14.1：去死亡化合规整改；P14.0：资金水位可视化 + 多标的仓位联动 + 模式引导重构；P13.0：Yui 灵魂化 + 交易去量子化；P12.0 是 0.9.6；P11.1：并发根治；P11.0 是 0.9.4；P10 是 0.9.3；P9.0 是 0.9.2；P8.1 是 0.9.1；P8.0 是 0.9.0；P7.4 是 0.8.4；P7.3 是 0.8.3；P7.2 是 0.8.2；P7.1 是 0.8.1；P7 是 0.8.0）。"""
+    """版本号 = 0.9.10（P15.0：原创化去品牌化；P14.1：去死亡化合规整改；P14.0：资金水位可视化 + 多标的仓位联动 + 模式引导重构；P13.0：Yui 灵魂化 + 交易去量子化；P12.0 是 0.9.6；P11.1：并发根治；P11.0 是 0.9.4；P10 是 0.9.3；P9.0 是 0.9.2；P8.1 是 0.9.1；P8.0 是 0.9.0；P7.4 是 0.8.4；P7.3 是 0.8.3；P7.2 是 0.8.2；P7.1 是 0.8.1；P7 是 0.8.0）。"""
     from plugins.mock_stock_meow import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.9.9"
+    assert PLUGIN_VERSION == "0.9.10"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.9.9"' in toml
+    assert 'version = "0.9.10"' in toml
 
 
 # ---------------------------------------------------------------- ① 改动 1

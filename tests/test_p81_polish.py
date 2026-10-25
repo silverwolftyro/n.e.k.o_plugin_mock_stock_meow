@@ -319,18 +319,16 @@ def test_new_strings_all_live_in_the_i18n_dictionary() -> None:
 
 
 def test_engine_and_modes_are_untouched() -> None:
-    """引擎层与模式层**逐字节零改动**。"""
-    import subprocess
+    """引擎层与模式层的**代码**零改动。
 
-    root = _PLUGIN_ROOT
-    result = subprocess.run(
-        ["git", "diff", "--name-only", "--", "engine", "modes"],
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.stdout.strip() == "", f"引擎层/模式层有改动：{result.stdout}"
+    P15.0 起判定从「文件名 diff」升级为「**代码指纹**」：
+    注释与 docstring 可以自由改（清理版权字眼需要），
+    但任何**可执行代码**的改动都会被抓出来。
+    """
+    from conftest import engine_mode_code_changes
+
+    changed = engine_mode_code_changes()
+    assert not changed, f"引擎层/模式层的代码不许改动：{changed}"
 
 
 def test_assets_are_still_inline_data_uris() -> None:
@@ -346,6 +344,6 @@ def test_assets_are_still_inline_data_uris() -> None:
 
 
 def test_version_is_0_9_1() -> None:
-    """版本号 = 0.9.9。"""
+    """版本号 = 0.9.10。"""
     toml = _TOML.read_text(encoding="utf-8")
-    assert 'version = "0.9.9"' in toml
+    assert 'version = "0.9.10"' in toml

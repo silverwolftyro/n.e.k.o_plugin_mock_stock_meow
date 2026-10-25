@@ -17,7 +17,10 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import hashlib
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Coroutine
@@ -89,7 +92,70 @@ def _ensure_host_sdk() -> None:
 _ensure_host_sdk()
 
 
-__all__ = ["FakeCtx", "make_plugin", "run"]
+__all__ = ["FakeCtx", "code_fingerprint", "engine_mode_code_changes", "make_plugin", "run"]
+
+
+def code_fingerprint(source: str) -> str:
+    """Python 源码的「代码指纹」：剥掉 docstring 后取 AST dump 的 SHA256。
+
+    **注释不参与**（``ast`` 本来就不保留注释），**docstring 也被剥掉**
+    ⇒ 注释与文档字符串可以自由改（例如清理版权字眼），
+    而任何**可执行代码**的改动 —— 哪怕只差一个空格外的常量 ——
+    都会改变指纹 ⇒ 红线依然守得住。
+
+    这是 P15.0 把守卫从「文件名 diff」升级到「代码指纹」的核心。
+    """
+    tree = ast.parse(source)
+    for node in list(ast.walk(tree)):
+        if not isinstance(
+            node,
+            (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+        ):
+            continue
+        body = node.body
+        if not body:
+            continue
+        first = body[0]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            node.body = body[1:] or [ast.Pass()]
+    return hashlib.sha256(ast.dump(tree).encode("utf-8")).hexdigest()
+
+
+def engine_mode_code_changes() -> list[str]:
+    """引擎层 / 模式层里「**代码**变了」的文件列表（相对 ``HEAD``）。
+
+    只看代码指纹，不看文件名 ⇒ 纯注释 / docstring 的改动**不算**违规。
+    CI 里 checkout 后工作树 == HEAD ⇒ 恒为空。
+    """
+    changed: list[str] = []
+    for layer in ("engine", "modes"):
+        for path in sorted((_PLUGIN_ROOT / layer).rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            rel = path.relative_to(_PLUGIN_ROOT).as_posix()
+            result = subprocess.run(
+                ["git", "show", f"HEAD:{rel}"],
+                cwd=str(_PLUGIN_ROOT),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+            if result.returncode != 0:
+                changed.append(f"{rel}（HEAD 里没有这个文件）")
+                continue
+            try:
+                before = code_fingerprint(result.stdout)
+                after = code_fingerprint(path.read_text(encoding="utf-8"))
+            except SyntaxError as error:
+                changed.append(f"{rel}（语法错误：{error}）")
+                continue
+            if before != after:
+                changed.append(rel)
+    return changed
 
 
 def run(coro: Coroutine[Any, Any, Any]) -> Any:

@@ -30,8 +30,9 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from pathlib import Path
+
+from conftest import engine_mode_code_changes
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 _PANEL = _PLUGIN_ROOT / "ui" / "panel.tsx"
@@ -376,15 +377,8 @@ def test_the_dangerous_css_is_still_banned() -> None:
 
 def test_the_engine_and_modes_are_untouched() -> None:
     """引擎层、模式层**零改动**（数值与公式一个字节都不许动）。"""
-    result = subprocess.run(
-        ["git", "diff", "--name-only", "HEAD", "--", "engine", "modes"],
-        cwd=str(_PLUGIN_ROOT),
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    changed = [line for line in result.stdout.splitlines() if line.strip()]
-    assert not changed, f"引擎层/模式层不许改动：{changed}"
+    changed = engine_mode_code_changes()
+    assert not changed, f"引擎层/模式层的代码不许改动：{changed}"
 
 
 def test_the_new_i18n_keys_exist() -> None:
@@ -425,7 +419,7 @@ def test_the_new_i18n_keys_exist() -> None:
 
 
 def test_the_version_is_0_9_8() -> None:
-    """版本号 = 0.9.9。"""
-    assert 'version = "0.9.9"' in _TOML.read_text(encoding="utf-8")
+    """版本号 = 0.9.10。"""
+    assert 'version = "0.9.10"' in _TOML.read_text(encoding="utf-8")
     init = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.9.9"' in init
+    assert 'PLUGIN_VERSION = "0.9.10"' in init

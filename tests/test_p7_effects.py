@@ -15,12 +15,11 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import run
+from conftest import engine_mode_code_changes, run
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 _PANEL = _PLUGIN_ROOT / "ui" / "panel.tsx"
@@ -200,16 +199,14 @@ def _market_of(plugin: Any) -> Any:
 
 
 def test_engine_and_mode_layers_are_untouched_by_p7() -> None:
-    """P7 **不许**碰引擎层与模式层（数值与公式零改动）。"""
-    result = subprocess.run(
-        ["git", "diff", "--name-only", "HEAD", "--", "engine", "modes"],
-        cwd=str(_PLUGIN_ROOT),
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    changed = [line for line in result.stdout.splitlines() if line.strip()]
-    assert not changed, f"引擎层/模式层不许改动：{changed}"
+    """P7 **不许**碰引擎层与模式层（数值与公式零改动）。
+
+    P15.0 起判定从「文件名 diff」升级为「**代码指纹**」：
+    注释与 docstring 可以自由改（清理版权字眼需要），
+    但任何**可执行代码**的改动都会被抓出来。
+    """
+    changed = engine_mode_code_changes()
+    assert not changed, f"引擎层/模式层的代码不许改动：{changed}"
 
 
 # ---------------------------------------------------------------- 社区名册
@@ -228,7 +225,7 @@ def test_roster_file_is_valid_json_with_members() -> None:
         assert member["stock_id"].startswith("FAKE-")
         assert member["headlines"], member["alias"]
         for headline in member["headlines"]:
-            for banned in ("FX战士", "久留美", "股票", "期货", "外汇", "基金", "证券"):
+            for banned in ("股票", "期货", "外汇", "基金", "证券", "稳赚", "保本", "包赚", "一夜暴富"):
                 assert banned not in headline, (member["alias"], headline)
 
 

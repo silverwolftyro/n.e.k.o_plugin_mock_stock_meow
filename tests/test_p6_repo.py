@@ -314,7 +314,7 @@ def test_worktree_has_no_crlf_files() -> None:
 
 
 def test_version_is_0_7_4() -> None:
-    """版本号 = 0.9.9。
+    """版本号 = 0.9.10。
 
     版本史：
 
@@ -331,15 +331,16 @@ def test_version_is_0_7_4() -> None:
     * 0.9.4 —— P11：猫娘外置交互引导（主动搭话 + 呼叫猫娘 + 兜底弹窗）。
     * 0.9.5 —— P11.1：并发根治（上下文非阻塞 + 推进节流 + 面板请求锁）。
     * 0.9.6 —— P12.0：剧情引擎（四幕叙事 + 外置 Yui 驱动）+ 交易 GUI 化（滑块仓位）。
+    * 0.9.10 —— P15.0：原创化去品牌化（源码零明文清理旧作专有名词 + 引擎层守卫升级为代码指纹）。
     * 0.9.9 —— P14.1：去死亡化合规整改（玩家可见文案全面去死亡化 + 引擎死因插件层全覆盖映射）。
     * 0.9.8 —— P14.0：资金水位可视化（生活费红线）+ 多标的仓位总限制联动 + 模式引导重构（街机 / 命运挑战 / 无尽）。
     * 0.9.7 —— P13.0：Yui 灵魂化（交还叙事权）+ 交易去量子化（连续仓位 + 直输）。
     """
     from plugins.mock_stock_meow import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.9.9"
+    assert PLUGIN_VERSION == "0.9.10"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.9.9"' in toml
+    assert 'version = "0.9.10"' in toml
 
 
 # ------------------------------------------------- ⑥ 面板文案全走 i18n

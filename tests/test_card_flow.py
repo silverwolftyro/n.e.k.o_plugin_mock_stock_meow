@@ -70,8 +70,8 @@ def test_taunt_copy_has_no_forbidden_words() -> None:
 
 
 def test_taunt_copy_has_no_real_world_names() -> None:
-    """不得出现现实机构名或已有作品的角色名。"""
-    banned = ("FX战士", "久留美", "股票", "期货", "外汇", "基金", "证券")
+    """不得出现现实机构名，也不得出现夸大收益的承诺式说法。"""
+    banned = ("股票", "期货", "外汇", "基金", "证券", "稳赚", "保本", "包赚", "一夜暴富")
     for trigger in TAUNT_TRIGGERS:
         for variant in taunt_variants(trigger):
             for word in banned:
