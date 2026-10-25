@@ -35,12 +35,41 @@ for _path in (str(_PLUGIN_ROOT), str(_PLUGINS_PARENT)):
 
 # 宿主 SDK（``plugin.sdk.plugin``）由 venv 的可编辑安装提供；源码树不在
 # ``sys.path`` 上时给出明确报错，而不是让人猜。
-try:  # pragma: no cover - 仅在环境异常时触发
-    import plugin.sdk.plugin  # noqa: F401
-except ModuleNotFoundError as error:  # pragma: no cover
-    raise RuntimeError(
-        "宿主 SDK 不可用：请用 N.E.K.O-main/.venv 的 python 运行测试"
-    ) from error
+def _ensure_host_sdk() -> None:
+    """确保宿主 SDK 可导入；失败时把**真正缺的那个模块**带出来。
+
+    市场 CI 的 Release check 会在**插件目录**里跑 pytest（``cwd=插件目录``），
+    此时 ``plugin`` 包不在 ``sys.path`` 上（只有 ``plugins`` 在），而 CI 的
+    venv 里未必把它装成可编辑包 —— 于是 ``import plugin.sdk.plugin`` 会失败。
+
+    所以：先常规 import；失败就**向上找**带 ``plugin/sdk/plugin`` 的宿主树根，
+    把它**追加**到 ``sys.path`` 末尾再 import（追加在末尾，不遮蔽已安装的 SDK）。
+    """
+    try:
+        import plugin.sdk.plugin  # noqa: F401
+        return
+    except ModuleNotFoundError as error:
+        first_error = error
+    for parent in _PLUGIN_ROOT.parents:
+        if (parent / "plugin" / "sdk" / "plugin").exists():
+            if str(parent) not in sys.path:
+                sys.path.append(str(parent))
+            break
+    # 半路失败的 import 会把 ``plugin`` 留在 sys.modules 里且 ``__path__`` 不完整，
+    # 补完路径必须把残留清掉才能重新解析。
+    for name in [n for n in sys.modules if n == "plugin" or n.startswith("plugin.")]:
+        del sys.modules[name]
+    try:
+        import plugin.sdk.plugin  # noqa: F401
+    except ModuleNotFoundError as error:
+        raise RuntimeError(
+            f"宿主 SDK 不可用：缺少模块 {error.name!r}（首次报错：{first_error}）。"
+            "请用 N.E.K.O-main/.venv 的 python 运行测试，"
+            "或确认宿主树里存在 plugin/sdk/plugin。"
+        ) from first_error
+
+
+_ensure_host_sdk()
 
 
 __all__ = ["FakeCtx", "make_plugin", "run"]
