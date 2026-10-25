@@ -272,7 +272,12 @@ def test_plugin_has_its_own_git_repository() -> None:
 
 
 def test_origin_uses_the_market_naming_convention() -> None:
-    """origin 指向 ``n.e.k.o_plugin_<plugin_id>``（Market 命名约定）。"""
+    """origin 指向 ``n.e.k.o_plugin_<plugin_id>``（Market 命名约定）。
+
+    ``.git`` 后缀**可有可无**：本地开发习惯写 ``...n.e.k.o_plugin_mock_stock_meow.git``，
+    而 CI 的 ``actions/checkout`` 配的是 ``https://github.com/<owner>/<repo>``（无后缀）。
+    两种都是同一个仓库的合法 remote URL，所以断言只钉**仓库名**。
+    """
     result = subprocess.run(
         ["git", "remote", "get-url", "origin"],
         cwd=str(_PLUGIN_ROOT),
@@ -281,7 +286,9 @@ def test_origin_uses_the_market_naming_convention() -> None:
     )
     assert result.returncode == 0, "没有配置 origin"
     url = result.stdout.strip()
-    assert url.rstrip("/").endswith("n.e.k.o_plugin_mock_stock_meow.git"), url
+    assert url.rstrip("/").removesuffix(".git").endswith(
+        "n.e.k.o_plugin_mock_stock_meow"
+    ), url
 
 
 def test_gitattributes_pins_lf() -> None:
