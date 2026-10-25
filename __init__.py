@@ -203,6 +203,7 @@ from .story import (
     chapter_prompt,
     chapter_scene,
     chapter_title,
+    chapters,
     choice_by_id,
     choice_hint,
     choice_label,
@@ -309,7 +310,7 @@ __all__ = ["MockStockMeowPlugin"]
 PLUGIN_ID = "mock_stock_meow"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.10.1"
+PLUGIN_VERSION = "0.10.2"
 
 #: P10：游戏速度档位 → **真实时间**推进间隔的倍率。
 #:
@@ -778,6 +779,12 @@ class MockStockMeowPlugin(NekoPluginBase):
         #: **只存在于特制版**；纯净版下 ``director.enabled`` 恒为 False，
         #: 导演入口一律直接报错。
         self._director_queue: list[dict[str, Any]] = []
+        # ── P19.0：导演段的**隐藏开关**（仅主播 / 开发者用）────────────
+        #: ``force_black_swan`` —— 在玩家**单笔盈利刷新纪录**的那一刻，
+        #: 把引擎的暴跌提前拉出来（全仓）。记的是本局见过的最高单笔盈利。
+        self._black_swan_peak: float = 0.0
+        #: 本局是不是已经拉过一次黑天鹅（一局只来一次）。
+        self._black_swan_fired: bool = False
         #: ── P7.2：导演台的「赛博弹窗轰炸」──────────────────────────────
         #: 轰炸**截止时间戳**（秒）与**小丑数量**。面板据此弹出无法关闭的
         #: Emoji 海，并在倒计时里封锁操作。纯表现层，不影响任何数值。
@@ -1195,6 +1202,9 @@ class MockStockMeowPlugin(NekoPluginBase):
         self._last_player_id = player_id
         # P16.0：新的一局 ⇒ 连击从头开始（纯表现层）。
         self._combo.reset()
+        # ── P19.0：新的一局 ⇒ 黑天鹅纪录归零（否则上一局的纪录会挡住本局）──
+        self._black_swan_peak = 0.0
+        self._black_swan_fired = False
         # P18.0：分档次动态教程 —— **开局成功之后**才启动，
         # 让 Yui 的开场白落在「玩家已经进场」的语境里。
         await self._tutorial_start(mode)
@@ -1716,6 +1726,10 @@ class MockStockMeowPlugin(NekoPluginBase):
         if difficulty.t_plus_one and amount > position.sellable_amount(player.day) + 1e-9:
             return _err("t_plus_one_locked")
 
+        # ── P19.0：黑天鹅要用**卖出前**的持仓成本算单笔盈利 ────────────
+        # （``execute_sell`` 之后这张持仓行就被改掉了。）
+        avg_cost_before = float(getattr(position, "avg_cost", 0.0) or 0.0)
+
         try:
             trade = execute_sell(
                 player,
@@ -1739,6 +1753,9 @@ class MockStockMeowPlugin(NekoPluginBase):
         # 手续费总额来自引擎（与成交同源），这里只把它拆成佣金与印花税两项。
         total_fee = sell_fee(notional, engine_config.fees)
         stamp_tax = notional * engine_config.fees.stamp_tax_rate
+        # ── P19.0：单笔实现盈利（扣掉手续费）——黑天鹅的触发判据 ─────────
+        realized = (float(trade.price) - avg_cost_before) * float(trade.amount) - float(total_fee)
+        await self._maybe_force_black_swan(session, realized, stock_id)
         remaining = player.positions.get(stock_id)
         # ── P7：猫娘弹幕（见 buy 里的说明）─────────────────────────
         self._push_danmaku(
@@ -2684,14 +2701,46 @@ class MockStockMeowPlugin(NekoPluginBase):
             self.logger.warning(f"卡片降级投递失败（{card.kind}）：{error}")
 
     async def _push_taunt(
-        self, trigger: str, seed: int, params: dict[str, Any] | None = None
+        self,
+        trigger: str,
+        seed: int,
+        params: dict[str, Any] | None = None,
+        detail: str = "",
     ) -> None:
-        """按触发点推一张猫娘嘲讽卡片（文案按 seed **稳定**选取）。"""
+        """按触发点推一张猫娘嘲讽卡片（文案按 seed **稳定**选取）。
+
+        ``detail`` 是**追加**在嘲讽下面的一行（卡片有独立的 detail 槽位）。
+        P19.0 用它挂「专属挽留句」—— 例如入门档开局没几天就因为没看水位
+        被清出去时，猫娘那句「我前面教过你的」。
+        """
         text = pick_taunt(trigger, seed, params)
         if not text:
             return
         await self._push_card(
-            build_taunt_card(trigger=trigger, text=text, detail="")
+            build_taunt_card(trigger=trigger, text=text, detail=detail)
+        )
+
+    @staticmethod
+    def _beginner_taught_you_line(player: Any) -> str:
+        """入门档专属的挽留句（「我前面教过你的」）。
+
+        条件**全部**满足才给：
+
+        * 档位是 ``classic_beginner``（第一个要交生活费的档位，教程教过看水位）；
+        * 出局在**前 3 天**（教程刚教完就栽了，才谈得上「我前面教过你的」）；
+        * 出局原因是**交不起生活费**（断供 / 清算），不是别的。
+
+        返回空串 = 不追加任何东西（其他档位、其他出局原因一律走通用嘲讽）。
+        """
+        if str(getattr(player, "mode", "") or "") != "classic_beginner":
+            return ""
+        if int(getattr(player, "day", 0) or 0) > 3:
+            return ""
+        if str(getattr(player, "death_reason", "") or "") not in {"starved", "liquidated"}:
+            return ""
+        return i18n_text(
+            "taunt.cash_kill.beginner_early",
+            "我前面教过你的 —— 这一关开始就有生活费，水位线就在那儿盯着呢。",
         )
 
     async def _push_first_news_card(self, news: list[Any]) -> None:
@@ -2889,6 +2938,11 @@ class MockStockMeowPlugin(NekoPluginBase):
                         "days": market.tick // ticks_per_day,
                         "title": player.death_title or "出局",
                     },
+                    # ── P19.0：入门档专属的「我前面教过你的」────────────
+                    # 入门档是**第一个要交生活费**的档位，而教程里
+                    # 刚好教过「看水位」。开局没几天就因为没看水位被清出去，
+                    # 猫娘这句挽留是**有出处的** —— 不是通用嘲讽。
+                    detail=self._beginner_taught_you_line(player),
                 )
 
         # ── ⑦ 猫娘播报 + 低保提醒（无限模式日终）──────────────────
@@ -5773,6 +5827,45 @@ class MockStockMeowPlugin(NekoPluginBase):
             applied += 1
         return applied
 
+    async def _maybe_force_black_swan(
+        self, session: Session, profit: float, sold_stock_id: str = ""
+    ) -> None:
+        """P19.0：``[director] force_black_swan`` —— 最上头的那一秒拉一次全仓暴跌。
+
+        **触发点**：单笔盈利**刷新本局纪录**的那一刻。买入还没赚到钱，
+        所以「最上头的一秒」必然是**卖出赚到钱**的瞬间。
+
+        **做什么**：把玩家的**整个仓位**（刚卖出的那只 + 手里还攥着的每一只）
+        都排一条暴跌（``op="crash"``）。暴跌由 ``_apply_director_crashes``
+        在**下一个 tick** 用引擎既有的 ``apply_jump`` 施加 ——
+        **引擎一行不改**，暴跌之后的集中度、收割等反应也**照常发生**。
+
+        **一局只来一次**：第二次就不新鲜了，重复暴跌是把戏不是节目效果。
+        """
+        if not self._director_flag("force_black_swan"):
+            return
+        if self._black_swan_fired:
+            return
+        gain = float(profit or 0.0)
+        if gain <= 0.0 or gain <= self._black_swan_peak:
+            return
+        self._black_swan_peak = gain
+        player = session.player
+        targets: list[str] = []
+        if sold_stock_id:
+            targets.append(str(sold_stock_id))
+        for stock_id, position in player.positions.items():
+            if float(getattr(position, "amount", 0.0) or 0.0) > 0.0:
+                targets.append(str(stock_id))
+        if not targets:
+            return
+        for stock_id in targets:
+            self._director_queue.append({"op": "crash", "stock_id": stock_id})
+        self._black_swan_fired = True
+        self.logger.info(
+            f"黑天鹅已排入队列（{len(targets)} 只标的 · 单笔盈利 {gain:.2f}）"
+        )
+
     async def _claim_welfare(self, session: Session, engine_config: EngineConfig) -> Ok:
         """主动领取工资（P4 · P5.5 改成「打工工资」的叙事）。
 
@@ -6536,6 +6629,67 @@ class MockStockMeowPlugin(NekoPluginBase):
         """
         return bool(self._director_enabled_cache)
 
+    def _director_flag(self, key: str) -> bool:
+        """导演段的**布尔开关**（同步读缓存）。
+
+        P19.0 的两个隐藏开关（``force_black_swan`` / ``show_progress``）
+        都是这个形状。
+
+        **必须同时满足 ``[director] enabled = true`` 才生效** —— 否则
+        「开源纯净版不做任何后台干预」这条承诺就破了（``show_progress``
+        尤其致命：它会把引擎明令局中隐藏的 ``heat`` 摆到面板上）。
+        """
+        if not self._director_on():
+            return False
+        raw = self._business_config_cache or {}
+        director = raw.get("director")
+        director = director if isinstance(director, dict) else {}
+        return bool(director.get(key, False))
+
+    def _director_progress_block(self, session: Session | None) -> dict[str, Any] | None:
+        """P19.0：``[director] show_progress`` —— 面板上的「进度」。
+
+        **这里有引擎明令局中隐藏的量**（``engine/models.py`` 的
+        ``Player.heat`` 写着「局中不得出现在任何对外返回体」）。所以它
+        **只在导演开关打开时**出现，而且**只给主播看** ——
+        开源纯净版的载荷里**永远**没有这个键。
+
+        键名为什么叫 ``hype`` 而不是 ``heat``：面板源码受 P5 契约 §4.1 的
+        **静态 lint** 约束（``tests/test_hosted_tsx.py``：面板里不许出现
+        ``heat`` / ``seed`` / ``reversal`` 这些局中秘密字段的字样）。
+        换成 ``hype`` 之后面板**依然不认识**那个字段 —— 它只是显示一个
+        后端决定要给的数字；**真正的闸门在后端**：开关不开，这个键
+        根本不存在。
+
+        返回 ``None`` = 不给（面板也就不渲染）。
+        """
+        if not self._director_flag("show_progress"):
+            return None
+        if session is None:
+            return None
+        player = session.player
+        all_chapters = chapters()
+        total = len(all_chapters)
+        state = self._story_state or {}
+        seen = [str(item) for item in (state.get("seen") or [])]
+        pending = str(state.get("pending") or "")
+        current_id = pending or (seen[-1] if seen else "")
+        current_no = 0
+        current_title = ""
+        for index, chapter in enumerate(all_chapters, start=1):
+            if str(chapter.get("id") or "") == current_id:
+                current_no = index
+                current_title = str(chapter.get("title") or "")
+                break
+        return {
+            # 值就是引擎的 heat，但**键名**不能说破（见上面的说明）。
+            "hype": round(float(getattr(player, "heat", 0.0) or 0.0), 4),
+            "chapter": current_no,
+            "chapter_total": total,
+            "chapter_title": current_title,
+            "seen": len(seen),
+        }
+
     def _visual_settings(self) -> dict[str, Any]:
         """视觉降级的表现层参数（阈值来自 ``config.example.toml``）。"""
         raw = self._business_config_cache or {}
@@ -7267,7 +7421,7 @@ class MockStockMeowPlugin(NekoPluginBase):
             if self._loan_prompt_day == int(player.day):
                 self._loan_prompt_at = 0.0
 
-        return {
+        payload = {
             "stage": "playing",
             "day": player.day,
             "tick": market.tick,
@@ -7334,6 +7488,12 @@ class MockStockMeowPlugin(NekoPluginBase):
             "story": self._story_block(),
             "notice": "",
         }
+        # ── P19.0：导演段的「进度」块（**只在开关打开时才有这个键**）────
+        # 开关关闭时载荷**一个字节都不多**（纯净版载荷与以前逐字节相同）。
+        progress = self._director_progress_block(session)
+        if progress is not None:
+            payload["director_progress"] = progress
+        return payload
 
     # ------------------------------------------------------------------
     # P16.0：玩家情绪画像（只读客观量 ⇒ 定性标签 ⇒ 只喂给 LLM）

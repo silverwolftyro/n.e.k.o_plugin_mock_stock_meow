@@ -392,7 +392,7 @@ def test_panel_i18n_keys_all_exist() -> None:
 
 def test_version_is_bumped() -> None:
     raw = _PLUGIN_TOML.read_text(encoding="utf-8")
-    assert 'version = "0.10.1"' in raw
+    assert 'version = "0.10.2"' in raw
 
 
 def test_engine_and_mode_layers_are_still_untouched() -> None:

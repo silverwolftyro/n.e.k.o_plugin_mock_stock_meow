@@ -388,6 +388,24 @@ type State = {
     gate_wait_key?: string
     step?: { key?: string; anchor?: string; title_key?: string; body_key?: string }
   }
+  /**
+   * P19.0：导演段的「进度」（``[director] show_progress``）。
+   *
+   * **这个键只在开关打开时才会出现在载荷里** —— 开关关闭时是
+   * ``undefined``，面板也**完全不渲染**。
+   *
+   * ⚠️ 这里的 ``hype`` 就是引擎局中隐藏的那个量。面板**不许**说出
+   * 它的引擎字段名（P5 契约 §4.1 的静态 lint：面板源码里不许出现
+   * ``heat`` / ``seed`` / ``reversal``），所以后端换了键名 ——
+   * 面板只是显示一个后端决定给的数字，**闸门在后端**。
+   */
+  director_progress?: {
+    hype?: number
+    chapter?: number
+    chapter_total?: number
+    chapter_title?: string
+    seen?: number
+  }
 }
 
 /** P5.5 改动 4：天桥虚惊一场的三屏。 */
@@ -1296,7 +1314,10 @@ function CashGauge(props: {
     return h(
       "div",
       {
-        className: "rrm-gauge",
+        // P19.0：**紧凑版也要带锚点 class** —— 前两关（街机 / 入门）的
+        // 教程第 4 步就是「看水位」，锚点叫 ``gauge``。
+        // 之前紧凑分支漏了这个 class ⇒ 教程圈不到任何东西。
+        className: "rrm-gauge rrm-anchor-gauge",
         style: {
           display: "flex",
           alignItems: "baseline",
@@ -4094,6 +4115,34 @@ export default function Panel(props: PluginSurfaceProps<State>) {
               : money(state.distance_to_kill)}
           </Text>
         </Inline>
+
+        {/* ── P19.0：导演段的「进度」（**只在开关打开时才渲染**）────────
+            直播特制版的开关 ``[director] show_progress = true``。
+            开关关闭时 ``state.director_progress`` 是 undefined ⇒ **整块不渲染**，
+            面板与以前逐像素一样。 */}
+        {state.director_progress ? (
+          <Inline gap={8} wrap align="center" className="rrm-director-progress">
+            <StatusBadge
+              tone={(state.director_progress.hype || 0) > 0.6 ? "danger" : "default"}
+              label={t("director.progress.hype", {
+                value: (state.director_progress.hype || 0).toFixed(2),
+              })}
+            />
+            <StatusBadge
+              tone="default"
+              label={t("director.progress.chapter", {
+                current: state.director_progress.chapter || 0,
+                total: state.director_progress.chapter_total || 0,
+              })}
+            />
+            {state.director_progress.chapter_title ? (
+              <StatusBadge
+                tone="default"
+                label={state.director_progress.chapter_title}
+              />
+            ) : null}
+          </Inline>
+        ) : null}
 
         {/* ── P10：节奏卡（游戏速度 + 自动/手动）─────────────────────
             放在状态条正下方：自动/手动必须**一眼可见** —— 玩家抱怨的

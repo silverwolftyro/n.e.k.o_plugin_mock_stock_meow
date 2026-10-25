@@ -2,8 +2,9 @@
 
 把「干巴巴的玩法说明弹窗」换成一套**跟着玩家走**的动态教程：
 
-* **分档次** —— 街机（新手村）教操作；命运挑战（进阶 / 地狱）**不教玩法**，
-  只教「水位是命线」「别把身家压一只」和风险声明；无尽机制最多，
+* **分档次** —— 街机（新手村）与入门（断供前夕）教操作（入门**复用街机的 4 步流程**，
+  但第 4 步单独注入「这一关开始有生活费了」这条新事实）；命运挑战（进阶 / 地狱）
+  **不教玩法**，只教「水位是命线」「别把身家压一只」和风险声明；无尽机制最多，
   分两次教（首次进入教操作，**首次触发网贷弹窗**时才讲网贷规则）。
 * **动态** —— 步骤由**插件后端**判定推进（面板只渲染 + 上报），
   高亮目标用宿主原生组件 + ``outline`` / ``box-shadow`` 描边。
@@ -24,6 +25,7 @@ from dataclasses import dataclass
 from .emotion import banned_extreme_words
 
 __all__ = [
+    "TIER_EXTRA_FACTS",
     "TIER_META",
     "TIER_STEPS",
     "TutorialStep",
@@ -115,6 +117,8 @@ TIER_META: dict[str, dict[str, str]] = {
 #: 各档位的**步骤序列**。
 #:
 #: * 街机 4 步：看盘 → 下单 → 看持仓 → 看水位；
+#: * 入门 4 步：复用街机的流程（文案同源），但第 4 步换成**入门档自己的**
+#:   水位文案 —— 街机那步「这一关没有生活费要交」在入门档是**假话**；
 #: * 命运挑战（进阶 / 地狱）3 步：水位是命线 → 别把身家压一只 → 风险声明；
 #: * 无尽 6 步：前 4 步教操作，第 5 步（网贷）等**首次触发网贷弹窗**才开课。
 TIER_STEPS: dict[str, tuple[TutorialStep, ...]] = {
@@ -158,6 +162,56 @@ TIER_STEPS: dict[str, tuple[TutorialStep, ...]] = {
             fact=(
                 "玩家要知道钱包里还剩多少钱。"
                 "这一关没有生活费要交，所以那条红线基本不会咬人 —— 先习惯它在那儿。"
+            ),
+        ),
+    ),
+    # ── P19.0：入门档（断供前夕）**复用街机的 4 步流程** ──────────────
+    # 前 3 步（看盘 / 下单 / 持仓）的文案**直接复用街机档的 i18n key**
+    # —— 操作教学与档位无关，抄一份只会多一处要同步的地方。
+    #
+    # 第 4 步（看水位）**必须有自己的文案**：街机那步写的是
+    # 「这一关没有生活费要交」，在入门档是**假话**（入门档开始要交生活费）。
+    # 教错规则比不教更糟。
+    "classic_beginner": (
+        TutorialStep(
+            key="beginner_read_market",
+            anchor="market_grid",
+            title_key="tutorial.arcade.market.title",
+            body_key="tutorial.arcade.market.body",
+            fact=(
+                "玩家刚进这一局。这一关和街机一样：看盘、下单、卖出。"
+                "面板上这些方块是今天能买的标的，绿色是涨、红色是跌。"
+            ),
+        ),
+        TutorialStep(
+            key="beginner_place_order",
+            anchor="trade_console",
+            title_key="tutorial.arcade.order.title",
+            body_key="tutorial.arcade.order.body",
+            fact=(
+                "玩家要学怎么下单。这一关没有锁仓，随时能卖，"
+                "所以放心点一下就行 —— 完成第一笔之后这一步就过。"
+            ),
+            auto_advance="first_trade",
+        ),
+        TutorialStep(
+            key="beginner_watch_position",
+            anchor="position_grid",
+            title_key="tutorial.arcade.position.title",
+            body_key="tutorial.arcade.position.body",
+            fact=(
+                "玩家刚完成（或正要完成）第一笔成交。"
+                "这一栏是他手里攥着的东西，红绿表示赚还是亏。"
+            ),
+        ),
+        TutorialStep(
+            key="beginner_watch_gauge",
+            anchor="gauge",
+            title_key="tutorial.beginner.gauge.title",
+            body_key="tutorial.beginner.gauge.body",
+            fact=(
+                "玩家要知道钱包里还剩多少钱。这一关开始要交生活费了 —— "
+                "面板上那行『明天要交多少 / 还差多少』就是他的水位线。"
             ),
         ),
     ),
@@ -292,6 +346,28 @@ TIER_STEPS: dict[str, tuple[TutorialStep, ...]] = {
 }
 
 
+#: 各档位的**额外事实**（按步骤 key）。
+#:
+#: P19.0：入门档的第 4 步要**单独**给 Yui 注入一条新事实 ——
+#: 「玩家现在处于入门档，这一关开始有生活费了」。它**不塞进步骤自己的
+#: fact 里**，而是作为**独立的一段**追加到提示词里（走同一条 push_message）：
+#: 这样「这一步要讲什么」和「这一档额外要知道什么」两件事在提示词里
+#: 是**分开的两段**，模型不会把它们揉成一句话糊弄过去。
+#:
+#: 键是 ``档位 → {步骤 key: 事实}``；档位或步骤没有登记就是没有额外事实。
+TIER_EXTRA_FACTS: dict[str, dict[str, str]] = {
+    "classic_beginner": {
+        "beginner_watch_gauge": (
+            "另外补一条新事实：玩家现在处于入门档。"
+            "街机那一关不用交生活费，这一关开始每天都要交了 —— "
+            "面板上那行『明天要交多少 / 还差多少』就是他的水位线，"
+            "缺口变红就意味着再交不上会被清出去。"
+            "提醒他注意这一点。"
+        ),
+    },
+}
+
+
 def _hard_rules(*, extra: str = "") -> list[str]:
     """提示词里的**硬性要求**清单。
 
@@ -359,9 +435,12 @@ def build_step_prompt(tier: str, step: TutorialStep, situation: str = "") -> str
         "",
         "【这一轮要讲的事】",
         step.fact,
-        "",
-        "【硬性要求】",
     ]
+    # ── P19.0：档位 × 步骤的**额外事实**（单独成段）────────────────────
+    extra_fact = (TIER_EXTRA_FACTS.get(tier) or {}).get(step.key)
+    if extra_fact:
+        lines.extend(["", "【另外要补充的一件事】", extra_fact])
+    lines.extend(["", "【硬性要求】"])
     lines.extend(f"{index}. {rule}" for index, rule in enumerate(_hard_rules(), 1))
     return "\n".join(lines)
 
