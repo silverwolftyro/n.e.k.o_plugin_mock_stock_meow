@@ -29,9 +29,19 @@ _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 #: ``plugins/`` 命名空间包的父目录（``.../plugin``）。
 _PLUGINS_PARENT = _PLUGIN_ROOT.parents[1]
 
-for _path in (str(_PLUGIN_ROOT), str(_PLUGINS_PARENT)):
-    if _path not in sys.path:
-        sys.path.insert(0, _path)
+# 插件自身目录放最前：``engine`` / ``modes`` / ``storage`` 只此一家。
+if str(_PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PLUGIN_ROOT))
+
+# ``plugins/`` 的父目录必须**追加**到末尾，不能插到最前 ——
+# 市场 CI 里它就是宿主树的 ``plugin/``，而宿主树的 ``plugin/utils`` 是一个
+# **正规包**（带 ``__init__.py``）。插到最前会遮蔽宿主根的 ``utils``，
+# 而 ``utils/plugin_card_fields.py`` 正住在宿主根的 ``utils/`` 里 ⇒ 宿主 SDK
+# （``plugin.sdk.plugin`` → ``plugin.sdk.shared.core.cards``）会在 import 时炸：
+# ``No module named 'utils.plugin_card_fields'``。
+# 追加到末尾就不遮蔽任何东西（``plugins`` 是 PEP 420 命名空间包，在路径末尾照样能解析）。
+if str(_PLUGINS_PARENT) not in sys.path:
+    sys.path.append(str(_PLUGINS_PARENT))
 
 # 宿主 SDK（``plugin.sdk.plugin``）由 venv 的可编辑安装提供；源码树不在
 # ``sys.path`` 上时给出明确报错，而不是让人猜。
