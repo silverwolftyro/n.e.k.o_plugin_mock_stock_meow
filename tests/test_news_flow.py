@@ -11,8 +11,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from conftest import run
 from plugins.mock_stock_meow.storage.repo import Repo
 
@@ -62,8 +60,8 @@ def test_news_survives_a_plugin_restart(plugin) -> None:
     before = run(repo.fetch_all("SELECT * FROM news_log ORDER BY day, news_id"))
 
     # 模拟重启：清掉状态缓存，重新加载会话
-    from plugins.mock_stock_meow.storage.session import load_session
     from engine.config import default_engine_config
+    from plugins.mock_stock_meow.storage.session import load_session
 
     session = run(
         load_session(repo, plugin.state, engine_config=default_engine_config())
@@ -124,8 +122,8 @@ def test_settle_reveals_the_truth(plugin) -> None:
 
 def test_fake_bullish_news_triggers_after_fake_news_heat_event(plugin) -> None:
     """最近窗口内有看涨假新闻时买入 → 触发「信了假新闻追涨」。"""
-    from plugins.mock_stock_meow.storage.session import load_session
     from engine.config import default_engine_config
+    from plugins.mock_stock_meow.storage.session import load_session
 
     run(plugin.join(mode="classic_beginner", seed=207))
     repo = Repo(plugin.db)
@@ -162,9 +160,9 @@ def test_fake_bullish_news_triggers_after_fake_news_heat_event(plugin) -> None:
 
 def test_thunder_news_triggers_after_thunder_news_heat_event(plugin) -> None:
     """最近窗口内有雷新闻时买入 → 触发「雷新闻后补仓」。"""
-    from plugins.mock_stock_meow.storage.session import load_session
     from engine.config import default_engine_config
     from engine.models import NewsItem
+    from plugins.mock_stock_meow.storage.session import load_session
 
     run(plugin.join(mode="classic_beginner", seed=208))
     repo = Repo(plugin.db)
@@ -191,9 +189,9 @@ def test_thunder_news_triggers_after_thunder_news_heat_event(plugin) -> None:
 
 def test_news_effect_expires_after_the_window(plugin) -> None:
     """超出时间窗 → 新闻不再影响 heat。"""
-    from plugins.mock_stock_meow.storage.session import load_session
     from engine.config import default_engine_config
     from engine.models import NewsItem
+    from plugins.mock_stock_meow.storage.session import load_session
 
     run(plugin.join(mode="classic_beginner", seed=209))
     repo = Repo(plugin.db)
@@ -228,9 +226,9 @@ def test_buying_on_news_raises_heat(plugin) -> None:
     repo = Repo(plugin.db)
     run(plugin._run_one_tick())
 
-    from plugins.mock_stock_meow.storage.session import load_session
     from engine.config import default_engine_config
     from engine.models import NewsItem
+    from plugins.mock_stock_meow.storage.session import load_session
 
     session = run(
         load_session(repo, plugin.state, engine_config=default_engine_config())
@@ -248,9 +246,10 @@ def test_buying_on_news_raises_heat(plugin) -> None:
             direction="bullish",
         )
     ]
-    before = run(plugin.status()).unwrap()
+    # 前后各取一次状态（status() 只读，但保留调用以维持原测试的执行序列）。
+    run(plugin.status())
     run(plugin.buy(target, 1.0))
-    after = run(plugin.status()).unwrap()
+    run(plugin.status())
     # heat 局中不可见，但"距离斩杀线"与现金会变 —— 用 heat_history 验证
     rows = run(
         repo.fetch_all(

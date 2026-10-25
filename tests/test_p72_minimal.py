@@ -20,11 +20,8 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-import sys
 from pathlib import Path
 from typing import Any
-
-import pytest
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 _PANEL = _PLUGIN_ROOT / "ui" / "panel.tsx"
@@ -464,7 +461,7 @@ def test_danmaku_box_is_pinned_to_the_bottom() -> None:
 
 def test_director_boom_is_blocked_in_the_pure_version(plugin, ctx) -> None:
     """纯净版下 boom 指令一律被挡（开源版不许有后台干预）。"""
-    from tests.test_p7_effects import _enable_director, _error_code, run
+    from tests.test_p7_effects import _error_code, run
 
     ctx.config_payload = {"director": {"enabled": False}}
     plugin._business_config_cache = None
@@ -474,7 +471,7 @@ def test_director_boom_is_blocked_in_the_pure_version(plugin, ctx) -> None:
 
 def test_director_boom_sets_the_countdown(plugin, ctx) -> None:
     """特制版下 boom 会把「赛博弹窗轰炸」的倒计时挂上（纯表现层）。"""
-    from tests.test_p7_effects import _enable_director, run
+    from tests.test_p7_effects import _enable_director
 
     _enable_director(plugin, ctx)
     _value(_run(plugin.join(mode="classic_arcade", seed=9305)))

@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from conftest import run
 from storage.repo import Repo
 

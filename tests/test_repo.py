@@ -8,10 +8,8 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
-
-from storage.repo import SCHEMA_STATEMENTS, DbUnavailableError, Repo
-
 from conftest import run
+from storage.repo import SCHEMA_STATEMENTS, DbUnavailableError, Repo
 
 _EXPECTED_TABLES = {
     "players",

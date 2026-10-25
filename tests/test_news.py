@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from engine.config import NewsConfig
 from engine.news import generate_news, is_reversal_day, plan_reversal_days
 from engine.rng import derive_rng

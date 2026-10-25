@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from conftest import run
 from plugins.mock_stock_meow.cards import (
     CARD_KINDS,

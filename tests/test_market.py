@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from engine.config import DifficultyConfig, MarketConfig
 from engine.market import (
     apply_jump,

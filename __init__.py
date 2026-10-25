@@ -64,18 +64,19 @@ from plugin.sdk.plugin import (
     ui,
 )
 
+# 下面带 ``X as X`` 的名字是**显式重导出**（PEP 484 约定）：插件内部不用它们，
+# 但 ``plugins.mock_stock_meow.<名字>`` 是这个插件的公开门面的一部分。
+# 写成重导出而不是删掉，是为了不改动已发布版本的对外表面。
 from .cards import (
-    ACHIEVEMENTS,
     ACHIEVEMENT_UNLOCK_NOTE,
+    ACHIEVEMENTS,
     CARD_CSS,
     DEFAULT_IDENTITY,
-    DEATH_REASON_LABELS,
     EPITAPHS,
     IDENTITIES,
     Card,
     achievement_by_key,
     achievement_by_source,
-    achievement_by_title,
     build_achievement_card,
     build_bill_card,
     build_catgirl_daily_card,
@@ -91,12 +92,26 @@ from .cards import (
     identity_label,
     pick_catgirl_silence,
     pick_taunt,
+)
+from .cards import (
+    DEATH_REASON_LABELS as DEATH_REASON_LABELS,
+)
+from .cards import (
+    achievement_by_title as achievement_by_title,
+)
+from .cards import (
     t as i18n_text,
 )
 from .engine.config import (
-    STREAM_CATGIRL,
-    STREAM_HARVEST,
-    STREAM_MARKET,
+    STREAM_CATGIRL as STREAM_CATGIRL,
+)
+from .engine.config import (
+    STREAM_HARVEST as STREAM_HARVEST,
+)
+from .engine.config import (
+    STREAM_MARKET as STREAM_MARKET,
+)
+from .engine.config import (
     EngineConfig,
 )
 from .engine.errors import (
@@ -106,7 +121,15 @@ from .engine.errors import (
     StockNotFoundError,
     TPlusOneError,
 )
-from .engine.harvest import TRIGGER_PEAK, TRIGGER_PHASE, execute_harvest
+from .engine.harvest import (
+    TRIGGER_PEAK as TRIGGER_PEAK,
+)
+from .engine.harvest import (
+    TRIGGER_PHASE as TRIGGER_PHASE,
+)
+from .engine.harvest import (
+    execute_harvest as execute_harvest,
+)
 from .engine.heat import (
     apply_heat_events,
     heat_events_for_trade,
@@ -116,7 +139,8 @@ from .engine.heat import (
 from .engine.market import advance_market, apply_jump, create_market
 from .engine.models import HeatEventContext, MarketState, Player, Position
 from .engine.news import news_kind
-from .engine.rng import derive_rng, derive_stream_rng
+from .engine.rng import derive_rng
+from .engine.rng import derive_stream_rng as derive_stream_rng
 from .engine.settlement import (
     apply_death,
     build_settlement_report,
@@ -151,8 +175,10 @@ from .storage.session import (
     Session,
     build_engine_config,
     load_session,
-    load_snapshot,
     save_snapshot,
+)
+from .storage.session import (
+    load_snapshot as load_snapshot,
 )
 from .story import (
     STORY_PUSH_COOLDOWN_SECONDS,
@@ -2128,7 +2154,6 @@ class MockStockMeowPlugin(NekoPluginBase):
             return _err("no_active_game")
 
         player = session.player
-        market = session.market
         payload = await self._build_settlement_payload(session, engine_config)
 
         now = time.time()
@@ -2192,7 +2217,6 @@ class MockStockMeowPlugin(NekoPluginBase):
             catgirl_result=catgirl_result,
             news_log=news_log,
         )
-        infinite = engine_config.infinite
         # ── P5.5 改动 5：结算时的成就解锁（死因 / 结局 / 一贫如洗）────
         await self._maybe_unlock_settlement_achievements(session, report)
         # ── P5.5 改动 2/3：结算页的叙事三件套 ──────────────────────
@@ -2255,7 +2279,10 @@ class MockStockMeowPlugin(NekoPluginBase):
             "death_reason": report.death_reason,
             "death_title": display_title,
             "epitaph": epitaph_text,
-            "achievements": report.achievements,
+            # ⚠ 这里**不能**再写一次 "achievements"：dict 字面量里重复键会**后者覆盖前者**，
+            #   而引擎的 ``report.achievements`` 恒为 ``[]``（见上面的
+            #   ``build_settlement_report(..., achievements=[])``），
+            #   真正要交给面板的是下面那份「称号图鉴」（面板按对象读 unlocked/locked）。
             "ending": report.ending,
             # ── P3 新增：收割时间线与猫娘结局 ──
             # 这里是**唯一**能看到收割时刻 heat 数值的地方（局中看不到）。

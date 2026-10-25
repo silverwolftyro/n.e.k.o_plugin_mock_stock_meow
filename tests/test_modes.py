@@ -14,7 +14,6 @@ import ast
 from pathlib import Path
 
 import pytest
-
 from conftest import run
 from plugins.mock_stock_meow.modes import (
     MODES,
@@ -24,7 +23,6 @@ from plugins.mock_stock_meow.modes import (
     get_mode,
 )
 from plugins.mock_stock_meow.modes.shared import ModeContext, TickOutcome
-
 from plugins.mock_stock_meow.storage.repo import Repo
 
 _MODES_ROOT = Path(__file__).resolve().parents[1] / "modes"
@@ -184,8 +182,8 @@ def test_infinite_baseline_stock_is_the_most_volatile_one(plugin) -> None:
     rows = run(repo.fetch_all("SELECT * FROM positions"))
     stock_id = rows[0]["stock_id"]
 
-    from plugins.mock_stock_meow.storage.session import load_session
     from engine.config import default_engine_config
+    from plugins.mock_stock_meow.storage.session import load_session
 
     session = run(
         load_session(repo, plugin.state, engine_config=default_engine_config())

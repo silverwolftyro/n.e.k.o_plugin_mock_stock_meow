@@ -40,14 +40,14 @@ from ..engine.harvest import (
     HarvestResult,
     execute_harvest,
 )
+from ..engine.heat import is_at_peak, position_concentration
+from ..engine.market import apply_jump
 from ..engine.models import MarketState, NewsItem, Player, Position, Trade
 from ..engine.news import generate_news, is_reversal_day
 from ..engine.pawnbroker import forced_sell_price, urgency
 from ..engine.rng import derive_stream_rng
 from ..engine.settlement import DailySettlement, daily_settlement, execute_sell
 from ..engine.state_machine import evaluate_transition, jump_severity
-from ..engine.heat import is_at_peak, position_concentration, update_heat
-from ..engine.market import apply_jump
 
 __all__ = [
     "DailyOutcome",

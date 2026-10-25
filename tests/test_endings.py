@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import pytest
-
 from conftest import run
 from engine.settlement import check_inaction
 from plugins.mock_stock_meow.storage.repo import Repo

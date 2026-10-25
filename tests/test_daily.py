@@ -6,11 +6,9 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 import pytest
-
 from conftest import run
 from storage.repo import Repo
 
@@ -40,8 +38,8 @@ def _set_cash(repo: Repo, player_id: str, cash: float) -> None:
 
 def test_daily_settlement_deducts_living_cost() -> None:
     """日终结算扣生活费，并推进到"能不能交得起次日"的判定。"""
-    from engine.settlement import daily_settlement
     from engine.models import Player
+    from engine.settlement import daily_settlement
 
     player = Player(id="p1", name="玩家", cash=100.0, mode="classic_beginner")
     result = daily_settlement(
@@ -59,8 +57,8 @@ def test_daily_settlement_deducts_living_cost() -> None:
 
 def test_daily_settlement_three_strikes_kill() -> None:
     """三振：strikes + 1 >= strike_limit 时斩杀。"""
-    from engine.settlement import daily_settlement
     from engine.models import Player
+    from engine.settlement import daily_settlement
 
     player = Player(id="p1", name="玩家", cash=1.0, mode="classic_beginner", strikes=2)
     result = daily_settlement(
@@ -83,8 +81,8 @@ def test_daily_settlement_requests_distress_sell_before_the_last_strike() -> Non
     P4 语义：``strikes`` 数的是"连续交不起的次数"，所以**在结算时就 +1**，
     不再等到玩家撤销时才记。
     """
-    from engine.settlement import daily_settlement
     from engine.models import Player
+    from engine.settlement import daily_settlement
 
     player = Player(id="p1", name="玩家", cash=1.0, mode="classic_beginner", strikes=0)
     result = daily_settlement(
@@ -102,8 +100,8 @@ def test_daily_settlement_requests_distress_sell_before_the_last_strike() -> Non
 
 def test_daily_settlement_counts_strike_on_every_failure() -> None:
     """P4：连续交不起 → strikes 连续递增；撤销不参与计数。"""
-    from engine.settlement import daily_settlement
     from engine.models import Player
+    from engine.settlement import daily_settlement
 
     player = Player(id="p1", name="玩家", cash=1.0, mode="classic_beginner", strikes=0)
     levels = []
@@ -128,8 +126,8 @@ def test_welfare_is_never_granted_automatically() -> None:
     欠款天数会一天一天往上加；连着不去领，超过上限就被 ``welfare_neglect``
     斩杀。
     """
-    from engine.settlement import daily_settlement
     from engine.models import Player
+    from engine.settlement import daily_settlement
 
     player = Player(id="p1", name="玩家", cash=0.0, mode="infinite")
     for expected in (1, 2, 3):
@@ -173,7 +171,6 @@ def test_welfare_is_never_granted_automatically() -> None:
 def test_day_rollover_deducts_living_cost_and_advances_day(plugin) -> None:
     """走满一天 → 扣生活费 → ``player.day`` +1。"""
     _value(run(plugin.join(mode="classic_beginner", seed=41)))
-    repo = Repo(plugin.db)
     before = _value(run(plugin.status()))["cash"]
     for _ in range(12):
         run(plugin._run_one_tick())

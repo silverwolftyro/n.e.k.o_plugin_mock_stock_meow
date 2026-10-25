@@ -31,8 +31,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 _PANEL = _PLUGIN_ROOT / "ui" / "panel.tsx"
 _I18N = _PLUGIN_ROOT / "i18n" / "zh-CN.json"

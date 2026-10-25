@@ -16,7 +16,6 @@ import re
 from typing import Any
 
 import pytest
-
 from plugins.mock_stock_meow.cards import (
     CARD_KINDS,
     build_bill_card,

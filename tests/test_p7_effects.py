@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from conftest import run
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
@@ -177,7 +176,7 @@ def test_director_crash_is_queued_and_applied_on_the_next_tick(plugin, ctx) -> N
     payload = _value(run(plugin.director(op="crash", stock_id="FAKE-001")))
     assert payload["queued"] is True
 
-    session = plugin._session_or_error  # noqa: F841 - 只是确认入口存在
+    assert callable(plugin._session_or_error)  # 只是确认入口存在
     market = _market_of(plugin)
     stock = market.stocks["FAKE-001"]
     price_before = stock.price

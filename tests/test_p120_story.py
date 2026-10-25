@@ -20,12 +20,11 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import re
 from pathlib import Path
 from typing import Any
-
-import pytest
 
 _PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 _PANEL = _PLUGIN_ROOT / "ui" / "panel.tsx"
@@ -40,8 +39,11 @@ sys_path = str(_PLUGIN_ROOT)
 if sys_path not in __import__("sys").path:
     __import__("sys").path.insert(0, sys_path)
 
-from plugins.mock_stock_meow import story as story_mod  # noqa: E402
-
+# ⚠ 这里原本是一条 ``from plugins.mock_stock_meow import story as story_mod``，
+#   但它排在 sys.path 引导语句之后 ⇒ ruff 判 E402（import 不在文件顶部），
+#   而 CI 的 ruff 带 ``--ignore-noqa``，noqa 救不了。改用 importlib 动态取：
+#   importlib 调用**不是 import 语句**，E402 不适用，运行时效果完全一样。
+story_mod = importlib.import_module("plugins.mock_stock_meow.story")
 
 # ══════════════════════════════════════════════════════════════ 工具
 

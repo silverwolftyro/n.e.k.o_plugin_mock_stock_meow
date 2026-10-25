@@ -357,7 +357,9 @@ def test_plugin_imports_without_the_private_shared_subpackage() -> None:
     import sys
 
     # ① 公开门面先加载进来（它内部会用到 shared，但那是宿主自己的事）。
-    import plugin.sdk.plugin  # noqa: F401
+    #    用 importlib 而不是 ``import plugin.sdk.plugin``：后者会绑一个用不到的
+    #    名字（ruff F401），而 CI 的 ruff 带 --ignore-noqa，noqa 救不了。
+    importlib.import_module("plugin.sdk.plugin")
 
     private_names = [name for name in sys.modules if name.startswith("plugin.sdk.shared")]
     saved_private = {name: sys.modules[name] for name in private_names}

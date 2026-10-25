@@ -10,8 +10,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from conftest import run
 from engine.models import Player
 from engine.settlement import (

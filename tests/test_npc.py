@@ -11,7 +11,6 @@ from __future__ import annotations
 import pathlib
 
 import pytest
-
 from engine.config import CatgirlConfig
 from engine.models import MarketState, Player, Position, Stock
 from engine.npc import catgirl_daily_plan

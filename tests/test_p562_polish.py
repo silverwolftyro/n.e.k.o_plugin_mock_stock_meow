@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from conftest import run
 from plugins.mock_stock_meow.storage.repo import Repo
 
@@ -422,7 +421,6 @@ def test_inaction_does_not_unlock_for_a_trader(plugin) -> None:
 def test_inaction_unlock_uses_the_engine_exemption(plugin) -> None:
     """口径：豁免开局卖掉基准股票那一笔（与 ``check_inaction`` 一致）。"""
     from engine.settlement import check_inaction
-
     from plugins.mock_stock_meow import MockStockMeowPlugin
 
     # 卖出基准股票 → trade_count = 1，但那是**豁免**的。

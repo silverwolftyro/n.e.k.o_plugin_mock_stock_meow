@@ -30,16 +30,18 @@ from collections import Counter
 from pathlib import Path
 
 # 让脚本能 import 插件包（与宿主加载方式一致：plugins 是命名空间包）。
-_PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-_PLUGINS_PARENT = _PLUGIN_ROOT.parents[1]
-for _path in (str(_PLUGIN_ROOT), str(_PLUGINS_PARENT)):
-    if _path not in sys.path:
-        sys.path.insert(0, _path)
+# ⚠ 这一段必须写成**表达式语句**（不能是赋值、也不能是 for/if）：ruff 的 E402
+#   （import 不在文件顶部）是按「非 import 语句」划分 import 边界的，
+#   裸表达式调用不算边界 —— 这样下面这些 import 才仍然算「在文件顶部」。
+#   CI 的 ruff 带 ``--ignore-noqa``，任何 noqa 注释都救不了 E402，只能靠写法本身过关。
+#   插入顺序与老写法一致：``plugins/`` 的父目录在前，插件自身目录在后。
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # 插件自身目录
+sys.path.insert(0, str(Path(__file__).resolve().parents[1].parents[1]))  # plugins/ 的父目录
 
 from engine.config import default_engine_config
 from engine.heat import position_concentration, update_heat
 from engine.market import advance_market, create_market
-from engine.models import MarketState, Player, Position
+from engine.models import MarketState, Player
 from engine.rng import derive_rng
 from engine.settlement import claim_welfare, execute_buy, execute_sell
 from plugins.mock_stock_meow.modes import get_mode

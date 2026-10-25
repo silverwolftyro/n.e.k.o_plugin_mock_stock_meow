@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from engine.config import FeeConfig
 from engine.errors import InsufficientCashError, InvalidAmountError, TPlusOneError
 from engine.models import MarketState, Player, Stock

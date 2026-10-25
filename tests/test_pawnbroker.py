@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from engine.pawnbroker import (
     forced_buy_price,
     forced_sell_price,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from engine.config import HeatConfig
 from engine.heat import (
     classify_concentration,

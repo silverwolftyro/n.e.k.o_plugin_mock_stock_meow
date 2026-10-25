@@ -31,7 +31,6 @@ from ..engine.config import (
 )
 from ..engine.market import replay_market
 from ..engine.models import MarketState, NewsItem, Player, Position, Stock
-
 from .repo import Repo
 
 __all__ = [
