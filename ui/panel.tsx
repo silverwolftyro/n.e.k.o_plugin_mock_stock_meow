@@ -79,6 +79,7 @@ import {
   useLocalState,
   useMemo,
   useRef,
+  useScrollIntoView,
   useState,
 } from "@neko/plugin-ui"
 import type { HostedAction, PluginSurfaceProps, Tone } from "@neko/plugin-ui"
@@ -371,6 +372,22 @@ type State = {
   story?: Story
   /** P16.0：连击（**纯展示**；不含任何游戏数值）。 */
   combo?: { streak?: number; best?: number; enabled?: boolean }
+  /**
+   * P18.0：动态教程。
+   *
+   * **只有功能性 UI 文案的 i18n key** —— 猫娘的台词**不在这里**
+   * （它在面板外的外置气泡里，由 AI 生成）。
+   */
+  tutorial?: {
+    active?: boolean
+    phase?: string
+    tier?: string
+    index?: number
+    total?: number
+    waiting_gate?: boolean
+    gate_wait_key?: string
+    step?: { key?: string; anchor?: string; title_key?: string; body_key?: string }
+  }
 }
 
 /** P5.5 改动 4：天桥虚惊一场的三屏。 */
@@ -995,6 +1012,25 @@ const RRM_CSS = `
   box-shadow: 0 14px 32px rgba(123, 188, 255, 0.42);
 }
 .rrm-pace-note { font-size: 12px; line-height: 1.7; color: #8ba0bd; }
+
+/* ── P18.0：动态聚焦引导（**零危险 CSS**）────────────────────────────
+   圈 = outline + box-shadow（两个都不在禁词表里）；
+   遮罩用**宿主自带的** Modal（宿主自己的全屏遮罩，不是我们写的）。
+   这一段里**不出现**定位 / 层叠 / 滤镜 / 裁剪 / 淡入淡出 / 关键帧。── */
+.rrm-tutorial-target {
+  outline: 2px solid #7bbcff;
+  outline-offset: 3px;
+  border-radius: 14px;
+  box-shadow: 0 0 0 5px rgba(123, 188, 255, 0.24);
+}
+.rrm-tutorial-coach {
+  border-color: rgba(123, 188, 255, 0.55);
+  box-shadow: 0 10px 28px rgba(123, 188, 255, 0.16);
+}
+.rrm-tutorial-steps .neko-step-index {
+  background: linear-gradient(90deg, #a4e5ff 0%, #7bbcff 100%);
+  color: #16305c;
+}
 `
 
 function money(value: number | undefined | null): string {
@@ -1284,7 +1320,7 @@ function CashGauge(props: {
   return h(
     "div",
     {
-      className: "rrm-gauge",
+      className: "rrm-gauge rrm-anchor-gauge",
       style: { display: "flex", flexDirection: "column", gap: "6px" },
     },
     h(
@@ -1780,6 +1816,160 @@ function BankruptArt(props: { alt: string }) {
 }
 
 /**
+ * P18.0：**动态聚焦引导** —— 分档次教程的面板侧实现。
+ *
+ * 三条硬约束：
+ *
+ * 1. **零危险 CSS** —— 遮罩用**宿主自带的** ``Modal``（宿主自己的
+ *    全屏遮罩，不是我们写的）；高亮圈只用 ``outline`` + ``box-shadow``；
+ *    **不碰**定位 / 层叠 / 滤镜 / 裁剪 / 淡入淡出 / 关键帧。
+ * 2. **台词不在面板里** —— 面板只显示**功能性 UI 文案**（步骤标题、正文、
+ *    按钮名），全部走 i18n；猫娘说的话在**面板外**的外置气泡里。
+ * 3. **上课时绝不挡路** —— 上课中的那一步用**教练条**（不遮挡），
+ *    这样玩家**能点到被圈出来的真实元素**（真实操作才能推进教程）。
+ *    只有开场与结课用全屏 ``Modal``（那两个时刻玩家只需要读 + 确认）。
+ */
+function TutorialOverlay(props: {
+  tutorial: NonNullable<State["tutorial"]>
+  t: Translate
+  onBegin: () => void
+  onAdvance: () => void
+  onSkip: () => void
+}) {
+  const tutorial = props.tutorial || {}
+  const phase = String(tutorial.phase || "idle")
+  const t = props.t
+  const index = Number(tutorial.index || 0)
+  const total = Number(tutorial.total || 0)
+  const step = tutorial.step || null
+  const stepTitle = step && step.title_key ? t(step.title_key) : ""
+  const stepBody = step && step.body_key ? t(step.body_key) : ""
+
+  if (phase === "greet") {
+    return h(
+      Modal,
+      {
+        open: true,
+        title: t("tutorial.greet.title"),
+        onClose: props.onSkip,
+        closeOnBackdrop: false,
+        closeOnEscape: false,
+        size: "md",
+        children: h(
+          Stack,
+          { gap: 12 },
+          h(Text, null, t("tutorial.greet.body")),
+          h(
+            "div",
+            { className: "rrm-tutorial-steps" },
+            h(Steps, null, h(Step, { index: 1, title: t("tutorial.greet.step_title") }, null))
+          )
+        ),
+        footer: h(
+          "div",
+          { className: "neko-button-group" },
+          h(Button, { onClick: props.onBegin, children: t("tutorial.greet.begin") }),
+          h(Button, { tone: "default", onClick: props.onSkip, children: t("tutorial.step.skip") })
+        ),
+      }
+    )
+  }
+
+  if (phase === "step") {
+    // 教练条：**不遮挡** —— 玩家要能点到被圈出来的那个真实元素。
+    return h(
+      Card,
+      {
+        className: "rrm-tutorial-coach",
+        title: t("tutorial.step.progress", { index: index + 1, total }),
+      },
+      h(
+        Stack,
+        { gap: 8 },
+        h(
+          "div",
+          { className: "rrm-tutorial-steps" },
+          h(Steps, null, h(Step, { index: index + 1, title: stepTitle }, h(Text, null, stepBody)))
+        ),
+        tutorial.waiting_gate
+          ? h(Alert, {
+              tone: "info",
+              message: t(String(tutorial.gate_wait_key || "tutorial.gate.wait")),
+            })
+          : null,
+        h(
+          "div",
+          { className: "neko-button-group" },
+          h(Button, { onClick: props.onAdvance, children: t("tutorial.step.next") }),
+          h(Button, { tone: "default", onClick: props.onSkip, children: t("tutorial.step.skip") })
+        )
+      )
+    )
+  }
+
+  if (phase === "epilogue") {
+    return h(
+      Modal,
+      {
+        open: true,
+        title: t("tutorial.epilogue.title"),
+        onClose: props.onSkip,
+        closeOnBackdrop: false,
+        closeOnEscape: false,
+        size: "md",
+        children: h(
+          Stack,
+          { gap: 12 },
+          h(Text, null, t("tutorial.epilogue.body")),
+          // 静态合规实体（**兜底**）：台词由 AI 说，这一条是**写死的声明**。
+          h(Alert, { tone: "info", message: t("tutorial.epilogue.risk_note") })
+        ),
+        footer: h(
+          "div",
+          { className: "neko-button-group" },
+          h(Button, { onClick: props.onSkip, children: t("tutorial.epilogue.close") })
+        ),
+      }
+    )
+  }
+
+  return null
+}
+
+/**
+ * P18.0：把被指代的元素**圈出来**并滚进视野。
+ *
+ * 零危险 CSS：圈是 ``.rrm-tutorial-target``（``outline`` + ``box-shadow``）。
+ * 滚动用**宿主自带的** ``useScrollIntoView``。
+ *
+ * 锚点是 **className 约定**（宿主组件不透传 ``data-*``）：
+ * ``market_grid`` ⇒ ``.rrm-anchor-market-grid``。
+ */
+function useTutorialHighlight(anchor: string | null) {
+  const targetRef = useRef<any>(null)
+  const scrollToTarget = useScrollIntoView(targetRef)
+  useEffect(() => {
+    if (!anchor) {
+      targetRef.current = null
+      return
+    }
+    const selector = ".rrm-anchor-" + String(anchor).replace(/_/g, "-")
+    const node = document.querySelector(selector)
+    if (!node) {
+      targetRef.current = null
+      return
+    }
+    targetRef.current = node
+    node.classList.add("rrm-tutorial-target")
+    scrollToTarget({ block: "center", inline: "nearest", behavior: "smooth" })
+    return () => {
+      node.classList.remove("rrm-tutorial-target")
+      targetRef.current = null
+    }
+  }, [anchor])
+}
+
+/**
  * P10：玩法说明弹窗（三步图文）。
  *
  * 用**宿主自带的** ``Modal`` + ``Alert`` + ``Steps`` / ``Step``
@@ -2100,6 +2290,19 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   }
   const onboarding = state.onboarding || {}
   const [guideOpen, setGuideOpen] = useState(false)
+  // ── P18.0：分档次动态教程 ──────────────────────────────────────
+  // 载荷里只有**功能性 UI 文案的 i18n key**；台词由 Yui 在面板外说。
+  const tutorial = (state.tutorial || {}) as NonNullable<State["tutorial"]>
+  const tutorialPhase = String(tutorial.phase || "idle")
+  const tutorialAnchor = tutorial.step ? String(tutorial.step.anchor || "") : ""
+  const tutorialWaiting = Boolean(tutorial.waiting_gate)
+  // 上课时才圈目标（开场 / 结课那两个全屏时刻不需要圈）。
+  //
+  // **等门槛事件的那一步不圈** —— 课还没开课，先圈会误导玩家
+  // （而且门槛打开前后锚点相同，不这样处理的话高亮压根不会重新生效）。
+  useTutorialHighlight(
+    tutorialPhase === "step" && !tutorialWaiting ? tutorialAnchor : null
+  )
   // P14.0：【命运挑战】的二级档位选择（入门 / 进阶 / 地狱）。
   const [challengeOpen, setChallengeOpen] = useState(false)
   // 「只自动弹一次」：**本次挂载**只试一次（面板每 3 秒轮询，不能反复弹）。
@@ -2267,6 +2470,25 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     await callAction("sell", { stock_id: effectiveSellStockId, amount: sellAmount })
     clearTradeDrafts()
   }
+  // ── P18.0：教程的三个动作（开始 / 下一步 / 跳过）──────────────────
+  // **同步关界面**：后端成不成功都不该把玩家卡住。
+  const tutorialCall = (action: string) => {
+    try {
+      props.api
+        .call(action, {}, { userInitiated: true })
+        .then(() => {
+          try {
+            props.api.refresh()
+          } catch (_error) {
+            // 刷新失败没关系：面板每 3 秒自己会轮询一次。
+          }
+        })
+        .catch(() => undefined)
+    } catch (_error) {
+      // 连调用都抛出来了：教程只是引导，失败也不能挡住玩家。
+    }
+  }
+
   /** 关掉《玩法说明》＝"玩家看过了"：把已读标记记回 player_id。 */
   const closeGuide = () => {
     setGuideOpen(false)
@@ -3305,6 +3527,10 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                   扁平线性风格钱包。 */}
               {h(BankruptArt, { alt: t("panel.settlement_image_alt") })}
               <Alert tone="info" message={t("panel.settlement_notice")} />
+              {/* P18.0：**静态合规实体**（兜底）。
+                  台词由 Yui 在结算时自己说；这一条是写死的声明 ——
+                  万一模型漏了，合规实体也必须落地。 */}
+              <Alert tone="primary" message={t("panel.settlement_risk_note")} />
               <KeyValue
                 items={[
                   { key: "mode", label: t("panel.mode_label"), value: modeValue },
@@ -3821,6 +4047,14 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     <Page className="rrm-root" title={t("panel.title")} subtitle={t("panel.subtitle")}>
       <Stack className={stageClass} gap={16}>
         {h("style", null, RRM_CSS)}
+        {/* ── P18.0：动态聚焦引导（开场 / 上课 / 结课）───────────────── */}
+        {h(TutorialOverlay, {
+          tutorial: tutorial,
+          t: t,
+          onBegin: () => tutorialCall("tutorial_begin"),
+          onAdvance: () => tutorialCall("tutorial_advance"),
+          onSkip: () => tutorialCall("tutorial_skip"),
+        })}
         {/* ── 0.8.1 病危表现：**只有**一条红色 Alert 警告条（文档流内）。
             绝不用闪烁 / 半透明 / 遮罩 —— 那是 0.8.0 崩 UI 的根因。───── */}
         {critical ? (
@@ -3837,7 +4071,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
         {storyModal}
 
         {/* ── P7.2 ⓪：状态条（压缩成一行徽标，别占地方）────────────── */}
-        <Inline gap={8} wrap align="center">
+        <Inline className="rrm-anchor-status-bar" gap={8} wrap align="center">
           <StatusBadge
             tone={PHASE_TONE[state.phase || ""] || "default"}
             label={t(`phase.${state.phase || "honeymoon"}`)}
@@ -3979,7 +4213,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             用宿主 `Columns` 的 fluid 模式：面板宽就是 4 列，窄就是 2 列。
             每张方块卡 = 股票名（+ 群友头像）+ 微型折线 + 巨大涨跌百分比。
             卡片是 `Columns` 的**直接**子元素 —— 中间没有任何 div 包裹层。 */}
-        <Card title={t("visual.market_title")}>
+        <Card className="rrm-anchor-market-grid" title={t("visual.market_title")}>
           {stocks.length === 0 ? (
             <Text>{t("panel.no_stocks")}</Text>
           ) : (
@@ -3995,7 +4229,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
         </Card>
 
         {/* ── P7.2 ⑤：持仓列表（只留名称 / 市值 / 大号盈亏）───────── */}
-        <Card title={t("visual.holdings_title")}>
+        <Card className="rrm-anchor-position-grid" title={t("visual.holdings_title")}>
           <Stack gap={12}>
             {positions.length === 0 ? (
               <Text>{t("panel.no_positions")}</Text>
@@ -4033,7 +4267,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
               和真扣的钱**一致**；
             * 执行按钮走 ``callAction`` ⇒ **纳入 P11.1 的全局请求锁**
               （``ActionButton`` 不支持 ``disabled``，也进不了这把锁）。 */}
-        <Card title={t("panel.trade")}>
+        <Card className="rrm-anchor-trade-console" title={t("panel.trade")}>
           <Stack gap={12}>
             {/* ── P14.0：买 / 卖**两条**独立仓位 ───────────────────────
                 P13 只有一个"仓位"，买和卖共用它 —— 拖一下就同时改了
@@ -4433,7 +4667,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                 onError={onActionError}
               />
               <ActionButton
-                className="rrm-mini"
+                className="rrm-mini rrm-anchor-loan-button"
                 action={actionById("daily_loan")}
                 label={t("daily.loan")}
                 tone="danger"

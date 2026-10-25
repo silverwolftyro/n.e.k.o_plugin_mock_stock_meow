@@ -113,6 +113,7 @@ from .emotion import (
     consecutive_losses,
     holding_loss_ratio,
     render_prompt_block,
+    render_tags,
     summarize,
 )
 from .engine.config import (
@@ -211,6 +212,19 @@ from .story import (
     next_chapter,
     reply_prompt,
 )
+from .tutorial import (
+    GATE_WAIT_KEY,
+    PHASE_DONE,
+    PHASE_EPILOGUE,
+    PHASE_GREET,
+    PHASE_IDLE,
+    PHASE_STEP,
+    STEP_TIMEOUT_SECONDS,
+    TIER_STEPS,
+    build_epilogue_prompt,
+    build_greet_prompt,
+    build_step_prompt,
+)
 
 #: P16.0 · 入门档初始资金乘数（新手期「先甜后苦」的放水口径）。
 BEGINNER_CASH_MULTIPLIER = 1.2
@@ -295,7 +309,7 @@ __all__ = ["MockStockMeowPlugin"]
 PLUGIN_ID = "mock_stock_meow"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.10.0"
+PLUGIN_VERSION = "0.10.1"
 
 #: P10：游戏速度档位 → **真实时间**推进间隔的倍率。
 #:
@@ -316,6 +330,20 @@ _GAME_SPEED_MULTIPLIER: dict[str, float] = {
 _SETTING_GAME_SPEED = "game_speed"
 _SETTING_AUTO_TICK = "auto_tick"
 _SETTING_ONBOARDING = "onboarding_ack"
+
+#: P18.0：教程的**全局闸门**（``settings`` 表键名）。
+#:
+#: 值是一段 JSON：``{"classic_arcade": true, "infinite": true}`` ——
+#: 记录「哪些档位已经教过了」。
+#:
+#: 为什么还需要它：``players`` 表**每局一行**，只靠 ``players.tutorial_state``
+#: 的话，每开一局教程都会重来一遍。分工是：
+#:
+#: * ``players.tutorial_state`` ⇒ 这一档**教到哪一步了**（玩家拍板方案 A）；
+#: * ``settings.tutorial_tiers`` ⇒ 这一档**还要不要教**（全局闸门）。
+#:
+#: 这与 P10 的 ``onboarding_ack`` **完全同构**（全局标记 + 玩家维度标记）。
+_SETTING_TUTORIAL_TIERS = "tutorial_tiers"
 
 #: P11：猫娘主动搭话（外置交互引导）的 ``settings`` 表键名。
 #:
@@ -638,6 +666,20 @@ class MockStockMeowPlugin(NekoPluginBase):
         # ── P16.0：连击（**纯表现层** —— 一个游戏数值都不改）──────────
         #: 街机档的「爽感」配件：连续买中上涨的股票就叠一层连击。
         self._combo = ComboTracker()
+        # ── P18.0：分档次动态教程（**运行时状态**）────────────────────
+        #: 阶段 / 当前档位 / 当前步 / 超时截止 / 已触发的门槛事件。
+        #: 进度**落库**在 ``players.tutorial_state``（按档位分别记录）。
+        self._tutorial: dict[str, Any] = {
+            "phase": PHASE_IDLE,
+            "tier": "",
+            "index": 0,
+            "deadline": 0.0,
+            "gate": "",
+            "gates_seen": [],
+            "epilogue_done": False,
+        }
+        #: 面板渲染时发现「玩家交不起饭钱」⇒ 记一笔门槛事件（同步标记）。
+        self._tutorial_gate_pending: str = ""
         #: 业务配置缓存（``config.example.toml`` 的那些段；P7 的
         #: ``[director]`` / ``[visual]`` 从这里读）。
         self._business_config_cache: dict[str, Any] | None = None
@@ -1153,6 +1195,9 @@ class MockStockMeowPlugin(NekoPluginBase):
         self._last_player_id = player_id
         # P16.0：新的一局 ⇒ 连击从头开始（纯表现层）。
         self._combo.reset()
+        # P18.0：分档次动态教程 —— **开局成功之后**才启动，
+        # 让 Yui 的开场白落在「玩家已经进场」的语境里。
+        await self._tutorial_start(mode)
         # P5：第 1 天的新闻卡片（**只推第一条**，与新闻类型无关）。
         if setup_outcome is not None:
             await self._push_first_news_card(list(setup_outcome.news))
@@ -1542,6 +1587,8 @@ class MockStockMeowPlugin(NekoPluginBase):
         # 等下一次价格推进后判定这笔是不是买中了。**不改任何数值**。
         if session.mode in COMBO_MODES:
             self._combo.add_entry(stock_id, trade.price, trade.amount)
+        # ── P18.0：教程的「真实操作推进」——第一笔成交即自动前进一步 ──
+        await self._tutorial_on_trade()
 
         trade_id = await self._persist_trade(session, trade, stock_id)
         # P5：连续补仓 ≥3 次 → 猫娘嘲讽。
@@ -2335,6 +2382,14 @@ class MockStockMeowPlugin(NekoPluginBase):
             ending=ending,
             catgirl_result=catgirl_result,
             news_log=news_log,
+        )
+        # ── P18.0：结课小结（风险提示 + 祝福）──────────────────────────
+        # **独立的课后小结**，不走剧情层（P13 契约：剧情只给处境）。
+        # 台词由 Yui 自己写；整个对局只说一次。
+        await self._tutorial_epilogue(
+            "玩家这一局没能扛过去，被清出了场子"
+            if not player.alive
+            else "玩家走完了这一局，活到了最后"
         )
         # ── P5.5 改动 5：结算时的成就解锁（破产原因 / 结局 / 一贫如洗）────
         await self._maybe_unlock_settlement_achievements(session, report)
@@ -5001,6 +5056,77 @@ class MockStockMeowPlugin(NekoPluginBase):
         )
 
     @ui.action(
+        id="tutorial_begin",
+        label="开始教程",
+        icon="play",
+        tone="primary",
+        group="tutorial",
+        order=0,
+    )
+    @plugin_entry(
+        id="tutorial_begin",
+        name="开始教程",
+        description="玩家在教程开场白之后点【开始】时调用：进入第一步。",
+    )
+    async def tutorial_begin(self) -> Ok:
+        """GREET → STEP_0。
+
+        **只推进一次** —— 重复调用不会把玩家甩到后面的步骤。
+        """
+        if str(self._tutorial.get("phase") or "") != PHASE_GREET:
+            return _err("tutorial_not_active")
+        await self._tutorial_enter_step(0)
+        return Ok({"ok": True, "tutorial": self._tutorial_block()})
+
+    @ui.action(
+        id="tutorial_advance",
+        label="教程下一步",
+        icon="play",
+        tone="default",
+        group="tutorial",
+        order=1,
+    )
+    @plugin_entry(
+        id="tutorial_advance",
+        name="教程下一步",
+        description="玩家在教程里点【下一步】时调用：推进到下一步。",
+    )
+    async def tutorial_advance(self) -> Ok:
+        """STEP_i → STEP_{i+1}（走完最后一步 ⇒ 结课小结）。"""
+        if str(self._tutorial.get("phase") or "") != PHASE_STEP:
+            return _err("tutorial_not_active")
+        await self._tutorial_enter_step(int(self._tutorial.get("index") or 0) + 1)
+        return Ok({"ok": True, "tutorial": self._tutorial_block()})
+
+    @ui.action(
+        id="tutorial_skip",
+        label="跳过教程",
+        icon="close",
+        tone="default",
+        group="tutorial",
+        order=2,
+    )
+    @plugin_entry(
+        id="tutorial_skip",
+        name="跳过教程",
+        description="玩家点【跳过教程】时调用：记进度，不再打扰。",
+    )
+    async def tutorial_skip(self) -> Ok:
+        """跳过教程 ⇒ 记进度（这一档不再来）。
+
+        **不打断**：跳过之后这一局就安静了。
+        """
+        phase = str(self._tutorial.get("phase") or PHASE_IDLE)
+        if phase in (PHASE_IDLE, PHASE_DONE):
+            return _err("tutorial_not_active")
+        self._tutorial["phase"] = PHASE_DONE
+        self._tutorial["deadline"] = 0.0
+        self._tutorial["gate"] = ""
+        await self._tutorial_persist()
+        await self._tutorial_mark_taught(str(self._tutorial.get("tier") or ""))
+        return Ok({"ok": True, "tutorial": self._tutorial_block()})
+
+    @ui.action(
         id="onboarding_ack",
         label="我知道了",
         icon="check",
@@ -6200,7 +6326,12 @@ class MockStockMeowPlugin(NekoPluginBase):
                 # ── P11：空闲态也能呼叫猫娘（第一次打开就在这儿）──────
                 "meow": self._meow_block(),
             }
-        return self._panel_payload(session, engine_config, pace, onboarding)
+        payload = self._panel_payload(session, engine_config, pace, onboarding)
+        # ── P18.0：推进教程（超时 / 门槛事件），然后刷新教程块 ─────────
+        # 面板每秒问一次 ⇒ 教程的推进节奏跟得上玩家的眼睛。
+        await self._tutorial_pump()
+        payload["tutorial"] = self._tutorial_block()
+        return payload
 
     # ------------------------------------------------------------------
     # 内部工具（以下方法以 _ 开头，不会被宿主收集为入口）
@@ -6739,6 +6870,279 @@ class MockStockMeowPlugin(NekoPluginBase):
         }
 
     # ------------------------------------------------------------------
+    # P18.0：分档次动态教程（后端状态机 · 面板只渲染）
+    # ------------------------------------------------------------------
+    #
+    # 状态机：``IDLE → GREET → STEP_i → EPILOGUE → DONE``
+    #
+    # * **谁推进** —— 插件后端。面板只渲染 + 上报点击；
+    #   「真实操作推进」（第一笔成交）由后端从成交记录判定。
+    # * **台词** —— 一律由 Yui 生成：后端只给**事实**与**内容约束**，
+    #   一个字台词都不写（P13 契约 + 「不许硬编码台词」红线）。
+    # * **进度** —— 落库在 ``players.tutorial_state``，**按档位分别记录**。
+
+    def _tutorial_steps(self) -> tuple[Any, ...]:
+        """当前档位的步骤序列（空 ⇒ 这个档位没有教程）。"""
+        return TIER_STEPS.get(str(self._tutorial.get("tier") or ""), ())
+
+    async def _tutorial_load_tier(self, player_id: str, tier: str) -> dict[str, Any]:
+        """读某个档位的教程进度（**只读这一档**，别的档位不干扰）。"""
+        if not player_id or not tier:
+            return {}
+        try:
+            raw = await self._repo.fetch_one(
+                "SELECT tutorial_state FROM players WHERE id = ?", (player_id,)
+            )
+        except Exception:  # noqa: BLE001 - 读不到就当没学过
+            return {}
+        if raw is None:
+            return {}
+        try:
+            loaded = json.loads(str(raw["tutorial_state"] or "{}"))
+        except (TypeError, ValueError):
+            return {}
+        if not isinstance(loaded, dict):
+            return {}
+        entry = loaded.get(tier)
+        return entry if isinstance(entry, dict) else {}
+
+    async def _tutorial_persist(self) -> None:
+        """把当前档位的进度写回 ``players.tutorial_state``。
+
+        **按档位分别记录** ⇒ 换了难度就是另一条进度，互不干扰。
+        """
+        player_id = str(self._last_player_id or "")
+        tier = str(self._tutorial.get("tier") or "")
+        if not player_id or not tier:
+            return
+        try:
+            raw = await self._repo.fetch_one(
+                "SELECT tutorial_state FROM players WHERE id = ?", (player_id,)
+            )
+            data: dict[str, Any] = {}
+            if raw is not None:
+                try:
+                    loaded = json.loads(str(raw["tutorial_state"] or "{}"))
+                    if isinstance(loaded, dict):
+                        data = loaded
+                except (TypeError, ValueError):
+                    data = {}
+            data[tier] = {
+                "phase": str(self._tutorial.get("phase") or PHASE_IDLE),
+                "index": int(self._tutorial.get("index") or 0),
+            }
+            await self._repo.transaction(
+                [
+                    (
+                        "UPDATE players SET tutorial_state = ? WHERE id = ?",
+                        (json.dumps(data, ensure_ascii=False), player_id),
+                    )
+                ]
+            )
+        except Exception as error:  # noqa: BLE001 - 进度记不上不该拖垮教学
+            self.logger.error(f"教程进度落库失败（不影响教学）：{error}")
+
+    async def _tutorial_taught_tiers(self) -> dict[str, bool]:
+        """读全局闸门：哪些档位**已经教过了**。"""
+        try:
+            raw = await self._repo.get_setting(_SETTING_TUTORIAL_TIERS)
+        except Exception:  # noqa: BLE001 - 读不到就当没教过
+            return {}
+        if not raw:
+            return {}
+        try:
+            loaded = json.loads(raw)
+        except (TypeError, ValueError):
+            return {}
+        if not isinstance(loaded, dict):
+            return {}
+        return {str(key): bool(value) for key, value in loaded.items()}
+
+    async def _tutorial_mark_taught(self, tier: str) -> None:
+        """记下「这一档教过了」（全局）。
+
+        教完 / 跳过都算教过 —— 玩家已经知道规矩了，不必再来一遍。
+        """
+        if not tier:
+            return
+        taught = await self._tutorial_taught_tiers()
+        if taught.get(tier):
+            return
+        taught[tier] = True
+        try:
+            await self._repo.set_setting(
+                _SETTING_TUTORIAL_TIERS, json.dumps(taught, ensure_ascii=False)
+            )
+        except Exception as error:  # noqa: BLE001 - 闸门记不上只是多教一遍
+            self.logger.error(f"教程闸门落库失败（不影响教学）：{error}")
+
+    async def _tutorial_speak(self, prompt: str) -> None:
+        """把提示词交给 Yui（**绝不让它拖垮游戏**）。"""
+        try:
+            await self._push_proactive(prompt, reason="tutorial")
+        except Exception as error:  # noqa: BLE001 - 解说失败不该拖垮教学
+            self.logger.error(f"教程解说异常（不影响教学）：{error}")
+
+    async def _tutorial_speak_step(self, step: Any) -> None:
+        """讲这一步：把**事实**交给 Yui，台词她自己写。"""
+        tier = str(self._tutorial.get("tier") or "")
+        situation = ""
+        try:
+            profile = await self._refresh_emotion_profile()
+        except Exception:  # noqa: BLE001 - 画像拿不到就不带它
+            profile = None
+        if profile is not None:
+            tags = render_tags(profile)
+            if tags:
+                situation = f"玩家现在的状态：{tags}。"
+        await self._tutorial_speak(build_step_prompt(tier, step, situation))
+
+    async def _tutorial_start(self, mode: str) -> None:
+        """按档位启动动态教程。
+
+        **这一档已经学过了就不再来一遍** —— 教程不是骚扰。
+        """
+        if mode not in TIER_STEPS:
+            return
+        player_id = str(self._last_player_id or "")
+        if not player_id:
+            return
+        if (await self._tutorial_taught_tiers()).get(mode):
+            return  # 这一档**全局**教过了 —— 不再来一遍（教程不是骚扰）。
+        entry = await self._tutorial_load_tier(player_id, mode)
+        if str(entry.get("phase") or "") == PHASE_DONE:
+            return
+        self._tutorial = {
+            "phase": PHASE_GREET,
+            "tier": mode,
+            "index": 0,
+            "deadline": 0.0,
+            "gate": "",
+            "gates_seen": [],
+            "epilogue_done": False,
+        }
+        await self._tutorial_speak(build_greet_prompt(mode))
+
+    async def _tutorial_enter_step(self, index: int) -> None:
+        """进入第 ``index`` 步（越界 ⇒ 结课）。"""
+        steps = self._tutorial_steps()
+        if index < 0 or index >= len(steps):
+            await self._tutorial_finish("玩家刚走完了这一档的教学。")
+            return
+        step = steps[index]
+        gates = list(self._tutorial.get("gates_seen") or [])
+        self._tutorial["phase"] = PHASE_STEP
+        self._tutorial["index"] = index
+        if step.gate and step.gate not in gates:
+            # 这一步**等一个事件**才开课（无尽档的网贷课）：
+            # 玩家真的遇到那件事了，才有必要讲它。
+            self._tutorial["gate"] = step.gate
+            self._tutorial["deadline"] = 0.0
+            await self._tutorial_persist()
+            return
+        self._tutorial["gate"] = ""
+        self._tutorial["deadline"] = time.time() + STEP_TIMEOUT_SECONDS
+        await self._tutorial_persist()
+        await self._tutorial_speak_step(step)
+
+    async def _tutorial_finish(self, outcome: str) -> None:
+        """走完最后一步 ⇒ 进入结课小结。"""
+        self._tutorial["phase"] = PHASE_EPILOGUE
+        self._tutorial["deadline"] = 0.0
+        self._tutorial["gate"] = ""
+        await self._tutorial_persist()
+        await self._tutorial_mark_taught(str(self._tutorial.get("tier") or ""))
+        await self._tutorial_epilogue(outcome)
+
+    async def _tutorial_epilogue(self, outcome: str) -> None:
+        """结课小结：风险提示 + 祝福（**台词由 Yui 生成**）。
+
+        整个对局**只说一次** —— 说两遍就是骚扰。
+        """
+        if bool(self._tutorial.get("epilogue_done")):
+            return
+        self._tutorial["epilogue_done"] = True
+        await self._tutorial_speak(build_epilogue_prompt(outcome))
+
+    def _tutorial_gate_event(self, gate: str) -> None:
+        """记一笔门槛事件（**同步** —— 面板渲染时也能调）。"""
+        gates = list(self._tutorial.get("gates_seen") or [])
+        if gate in gates:
+            return
+        gates.append(gate)
+        self._tutorial["gates_seen"] = gates
+        self._tutorial_gate_pending = gate
+
+    async def _tutorial_on_trade(self) -> None:
+        """玩家完成了第一笔成交 ⇒ 该自动推进的那一步推进。"""
+        if str(self._tutorial.get("phase") or "") != PHASE_STEP:
+            return
+        steps = self._tutorial_steps()
+        index = int(self._tutorial.get("index") or 0)
+        if index < 0 or index >= len(steps):
+            return
+        if steps[index].auto_advance != "first_trade":
+            return
+        await self._tutorial_enter_step(index + 1)
+
+    async def _tutorial_pump(self) -> None:
+        """推进教程（门槛事件 / 超时）。
+
+        挂在**面板轮询**上 —— 教程本来就只在玩家看着面板时才有意义。
+        """
+        phase = str(self._tutorial.get("phase") or PHASE_IDLE)
+        if phase == PHASE_IDLE:
+            return
+        # ① 门槛事件到了 ⇒ 当前那一步可以开课了。
+        pending = self._tutorial_gate_pending
+        if pending:
+            self._tutorial_gate_pending = ""
+            steps = self._tutorial_steps()
+            index = int(self._tutorial.get("index") or 0)
+            if phase == PHASE_STEP and 0 <= index < len(steps):
+                if steps[index].gate == pending:
+                    await self._tutorial_enter_step(index)
+                    return
+        # ② 当前步超时 ⇒ 自动推进（教程不许把玩家卡住）。
+        if phase != PHASE_STEP:
+            return
+        deadline = float(self._tutorial.get("deadline") or 0.0)
+        if deadline <= 0.0:
+            return  # 在等门槛事件，不计时
+        if time.time() < deadline:
+            return
+        await self._tutorial_enter_step(int(self._tutorial.get("index") or 0) + 1)
+
+    def _tutorial_block(self) -> dict[str, Any]:
+        """面板载荷的 ``tutorial`` 块（**纯内存**，不查库）。
+
+        台词**不在这里** —— 台词由 Yui 在面板外说。
+        这里只有**功能性 UI 文案的 i18n key**（步骤标题、正文、按钮名）。
+        """
+        phase = str(self._tutorial.get("phase") or PHASE_IDLE)
+        steps = self._tutorial_steps()
+        index = int(self._tutorial.get("index") or 0)
+        block: dict[str, Any] = {
+            "active": phase in (PHASE_GREET, PHASE_STEP, PHASE_EPILOGUE),
+            "phase": phase,
+            "tier": str(self._tutorial.get("tier") or ""),
+            "index": index,
+            "total": len(steps),
+            "waiting_gate": bool(self._tutorial.get("gate")),
+        }
+        if block["waiting_gate"]:
+            block["gate_wait_key"] = GATE_WAIT_KEY
+        if phase == PHASE_STEP and 0 <= index < len(steps):
+            step = steps[index]
+            block["step"] = {
+                "key": step.key,
+                "anchor": step.anchor,
+                "title_key": step.title_key,
+                "body_key": step.body_key,
+            }
+        return block
+
+    # ------------------------------------------------------------------
     # Hosted TSX 面板载荷（P5）
     # ------------------------------------------------------------------
 
@@ -6855,6 +7259,9 @@ class MockStockMeowPlugin(NekoPluginBase):
             if self._loan_prompt_at <= 0.0 or self._loan_prompt_day != int(player.day):
                 self._loan_prompt_at = time.time()
                 self._loan_prompt_day = int(player.day)
+            # ── P18.0：玩家交不起饭钱 ⇒ 触发教程的「网贷课」门槛 ────
+            # 教程**跟着玩家的处境走**：先遇到事，再讲这件事。
+            self._tutorial_gate_event("loan_modal")
         else:
             # 交得起了（或人没了）：这笔待办作废。
             if self._loan_prompt_day == int(player.day):
@@ -6888,6 +7295,9 @@ class MockStockMeowPlugin(NekoPluginBase):
                 "best": int(self._combo.best),
                 "enabled": session.mode in COMBO_MODES,
             },
+            # ── P18.0：动态教程（**只有功能性 UI 文案的 i18n key**）─────
+            # 台词由 Yui 在面板外说，这里**一个字的台词都没有**。
+            "tutorial": self._tutorial_block(),
             "positions": positions,
             "stocks": stocks,
             "kline_stock_ids": kline_ids,

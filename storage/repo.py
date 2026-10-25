@@ -206,6 +206,10 @@ _PLAYER_COLUMNS: tuple[tuple[str, str], ...] = (
     # ── P10：新手引导已读标记（**记在这个 player_id 行上**）────────────
     # 玩家点掉【玩法说明】弹窗后置 1；同一局不再弹，开了新局再看一次说明。
     ("onboarding_seen", "INTEGER NOT NULL DEFAULT 0"),
+    # ── P18.0：分档次动态教程的进度（一列，JSON 文本）─────────────────
+    # 形如 ``{"classic_arcade": {"phase": "step", "index": 2}}`` ——
+    # **按档位分别记录**：换了难度就是另一条进度，互不干扰。
+    ("tutorial_state", "TEXT"),
 )
 
 #: ``market_state`` 表在 P4 新增的列（幂等补齐）。

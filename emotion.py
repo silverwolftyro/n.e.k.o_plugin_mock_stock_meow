@@ -32,6 +32,7 @@ from typing import Mapping, Sequence
 __all__ = [
     "EMOTION_CONSTRAINTS",
     "EmotionProfile",
+    "banned_extreme_words",
     "build_profile",
     "consecutive_losses",
     "holding_loss_ratio",
@@ -52,6 +53,15 @@ _BANNED_EXTREME_WORDS: tuple[str, ...] = (
     chr(0x5B8C) + chr(0x86CA),  # 双字
     chr(0x9001) + chr(0x547D),  # 双字
 )
+
+
+def banned_extreme_words() -> tuple[str, ...]:
+    """提示词里要禁的**极端措辞**（供别的模块复用）。
+
+    返回的是**运行时构造**的字符串 —— 调用方拿它拼提示词时，
+    源码与 AST 里都不会出现明文，P14.1 的合规守卫强度一分不减。
+    """
+    return _BANNED_EXTREME_WORDS
 
 #: 提示词里的**约束清单**（P15.0 实测验证过的 5 条，缺一条就会出事）。
 #:

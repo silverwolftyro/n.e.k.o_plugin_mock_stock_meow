@@ -521,5 +521,5 @@ def test_the_new_i18n_keys_exist() -> None:
 
 
 def test_the_version_is_bumped() -> None:
-    assert 'version = "0.10.0"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.10.0"' in _init_text()
+    assert 'version = "0.10.1"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.10.1"' in _init_text()
