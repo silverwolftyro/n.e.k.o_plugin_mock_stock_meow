@@ -595,9 +595,20 @@ def test_dangerous_inline_styles_are_still_banned() -> None:
         "filter:",
         "animation:",
         "clipPath",
-        "linear-gradient",
     ):
         assert token not in code, f"面板代码里不许再出现 {token}"
+
+    # P14.0：内联的**线性渐变**解禁（档位卡 / 资金水位条要用它）。
+    # 但角度仍然锁死：0.8.0 那条 X 线条 = 绝对定位 + **对角**渐变，
+    # 定位已经被禁死，这里再禁一次对角 ⇒ 三重保险，X 线条不可能复活。
+    for match in re.finditer(r"([a-z]+)-gradient\(([^)]*)\)", code):
+        kind, body = match.group(1), match.group(2)
+        assert kind == "linear", f"只用 linear-gradient，发现 {kind}-gradient"
+        angle = re.search(r"(\d+(?:\.\d+)?)deg", body)
+        if angle:
+            assert float(angle.group(1)) in (0.0, 90.0, 180.0), (
+                f"内联渐变只允许纵向 / 横向（0/90/180deg），发现 {angle.group(1)}deg"
+            )
 
 
 def test_css_has_no_backtick() -> None:
@@ -632,6 +643,6 @@ def test_panel_uses_only_dictionary_keys() -> None:
 
 
 def test_version_is_0_9_5() -> None:
-    """版本号 = 0.9.7。"""
-    assert 'version = "0.9.7"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.9.7"' in _init_text()
+    """版本号 = 0.9.8。"""
+    assert 'version = "0.9.8"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.9.8"' in _init_text()

@@ -158,15 +158,25 @@ def test_market_tiles_have_no_professional_columns() -> None:
 
 
 def test_position_tiles_only_keep_name_value_and_pnl() -> None:
-    """持仓方块卡（P8.0）只留名称 / 当前市值 / 大号盈亏。"""
+    """持仓方块卡（P8.0）只留名称 / 当前市值 / 大号盈亏。
+
+    P14.0 解禁了一条：**仓位占比**（``panel.weight``）。
+    P7.2 当初把它当"专业列"砍掉，是因为当时**根本没有仓位概念** ——
+    玩家不知道钱压在哪儿。P14 做了多标的计划买入台账，
+    「这只占了我总仓位的百分之多少」就成了**必须看得见**的东西。
+    其余专业列（成本价 / 可卖数量 / 标签）仍然禁。
+    """
     code = _panel_code()
     tile = _function_source(code, "PositionTile", "Kline")
-    for banned in ("panel.amount", "panel.cost", "panel.sellable", "panel.weight", "panel.tag"):
+    for banned in ("panel.amount", "panel.cost", "panel.sellable", "panel.tag"):
         assert banned not in tile, f"持仓卡里不许再出现 {banned}"
     assert "position.display_name || position.name" in tile
     assert "visual.pnl_title" in tile
     assert "unrealized_pnl" in tile
     assert "market_value" in tile
+    # P14.0：仓位占比（占总资产的百分之多少）必须显示在持仓卡上。
+    assert "panel.weight" in tile, "持仓卡要显示它占了总仓位的百分之多少"
+    assert "percent(Number(position.weight || 0))" in tile
     # P9.0：持仓卡也换成胶囊徽标（P7.2 的「26px 超大号」规格已作废）。
     assert "rrm-change-pill" in tile, "持仓卡的盈亏也要是胶囊徽标"
     assert "rrm-price" in tile, "持仓卡的市值要有自己的样式"
@@ -322,10 +332,21 @@ def test_no_new_animation_or_position_in_the_panel_code() -> None:
         "filter:",
         "animation:",
         "clipPath",
-        "linear-gradient",
         "<div className=",
     ):
         assert banned not in code, f"面板代码里不许再出现 {banned}"
+
+    # P14.0：内联的**线性渐变**解禁（档位卡 / 资金水位条要用它）。
+    # 但角度仍然锁死：0.8.0 那条 X 线条 = 绝对定位 + **对角**渐变，
+    # 定位已经被禁死，这里再禁一次对角 ⇒ 三重保险，X 线条不可能复活。
+    for match in re.finditer(r"([a-z]+)-gradient\(([^)]*)\)", code):
+        kind, body = match.group(1), match.group(2)
+        assert kind == "linear", f"只用 linear-gradient，发现 {kind}-gradient"
+        angle = re.search(r"(\d+(?:\.\d+)?)deg", body)
+        if angle:
+            assert float(angle.group(1)) in (0.0, 90.0, 180.0), (
+                f"内联渐变只允许纵向 / 横向（0/90/180deg），发现 {angle.group(1)}deg"
+            )
 
 
 # ---------------------------------------------------------------- 名册实体化

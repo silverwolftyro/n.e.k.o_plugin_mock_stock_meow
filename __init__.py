@@ -178,7 +178,7 @@ __all__ = ["MockStockMeowPlugin"]
 PLUGIN_ID = "mock_stock_meow"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.9.7"
+PLUGIN_VERSION = "0.9.8"
 
 #: P10：游戏速度档位 → **真实时间**推进间隔的倍率。
 #:

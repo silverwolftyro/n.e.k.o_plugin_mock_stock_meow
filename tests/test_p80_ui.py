@@ -397,10 +397,21 @@ def test_panel_code_has_no_absolute_positioning() -> None:
         "filter:",
         "animation:",
         "clipPath",
-        "linear-gradient",
         "<div className=",
     ):
         assert token not in source, token
+
+    # P14.0：内联的**线性渐变**解禁（档位卡 / 资金水位条要用它）。
+    # 但角度仍然锁死：0.8.0 那条 X 线条 = 绝对定位 + **对角**渐变，
+    # 定位已经被禁死，这里再禁一次对角 ⇒ 三重保险，X 线条不可能复活。
+    for match in re.finditer(r"([a-z]+)-gradient\(([^)]*)\)", source):
+        kind, body = match.group(1), match.group(2)
+        assert kind == "linear", f"只用 linear-gradient，发现 {kind}-gradient"
+        angle = re.search(r"(\d+(?:\.\d+)?)deg", body)
+        if angle:
+            assert float(angle.group(1)) in (0.0, 90.0, 180.0), (
+                f"内联渐变只允许纵向 / 横向（0/90/180deg），发现 {angle.group(1)}deg"
+            )
 
 
 def test_tiles_have_no_wrapper_div() -> None:
@@ -437,8 +448,18 @@ def test_panel_still_polls_and_resyncs() -> None:
 
 
 def test_idle_state_still_offers_join_buttons() -> None:
-    """空闲态的开局按钮不能被 P8 的重构弄丢。"""
+    """空闲态的开局按钮不能被 P8 的重构弄丢。
+
+    P14.0：按钮变成三档卡（街机 / 命运挑战 / 无尽），命运挑战点开是
+    入门 / 进阶 / 地狱 —— 五档一个都不能少。
+    """
     source = _panel_text()
     assert 'actionById("join")' in source
-    assert 'mode: "classic_arcade"' in source
-    assert 'mode: "infinite"' in source
+    for mode in (
+        "classic_arcade",
+        "classic_beginner",
+        "classic_advanced",
+        "classic_hell",
+        "infinite",
+    ):
+        assert f'"{mode}"' in source, f"必须有 {mode} 这一档"

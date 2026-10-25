@@ -1117,6 +1117,141 @@ function BigStat(props: {
 }
 
 /**
+ * P14.0：**资金水位条** —— 把「明天的生活费」画成一条看得见的红线。
+ *
+ * **为什么要有它**：现金以前只是一个数字，玩家看不见「还剩多少能撑」。
+ * 水位条把两件事摆到同一根尺子上：
+ *
+ * * **红区**（长度固定 = 明天要交的生活费）—— 掉进去就是断供；
+ * * **青蓝区**（生活费之上的那部分）—— 还能花的余量。
+ *
+ * **危机态**（现金 < 明天的生活费）：整条变红并**轻微闪烁**，
+ * 现金数字也一起变红闪烁 —— 极强的警示。
+ *
+ * 闪烁是 **JS 定时器切颜色**做的（跟 P7.2 的濒死数字同款），
+ * **不用 CSS 动画**（0.8.0 的崩溃根因之一）。
+ *
+ * 样式全部走**内联 style**：P14 的纪律是「极度克制地使用 CSS」，
+ * 所以这一版**一行新 CSS 都不加**。
+ */
+function CashGauge(props: {
+  cash: number
+  bill: number
+  crisis: boolean
+  alarmOn: boolean
+  t: Translate
+}) {
+  const cash = Math.max(0, Number(props.cash || 0))
+  const bill = Math.max(0, Number(props.bill || 0))
+  const crisis = Boolean(props.crisis)
+  // 尺子：至少要装得下「现金」和「生活费」两个数。
+  const scale = Math.max(cash, bill, 1)
+  // 红区长度固定 = 生活费（不随现金变）；青蓝区 = 超出生活费的那部分。
+  const redW = crisis ? (cash / scale) * 100 : (Math.min(bill, scale) / scale) * 100
+  // 危机态：红区里没填满的那一段 = 「还差多少」。
+  const holeW = crisis ? Math.max(0, ((bill - cash) / scale) * 100) : 0
+  const cyanW = crisis ? 0 : Math.max(0, ((cash - bill) / scale) * 100)
+
+  // 闪烁 = 两个红色之间来回切（同一支红，只是深浅不同）。
+  const redStrong = props.alarmOn ? "rgba(214, 72, 106, 0.42)" : "var(--danger)"
+  const redSolid = "var(--danger)"
+  const redZone = crisis ? redStrong : redSolid
+  const valueColor = crisis
+    ? props.alarmOn
+      ? "rgba(214, 72, 106, 0.45)"
+      : "var(--danger)"
+    : "var(--text)"
+
+  return h(
+    "div",
+    {
+      className: "rrm-gauge",
+      style: { display: "flex", flexDirection: "column", gap: "6px" },
+    },
+    h(
+      "div",
+      {
+        style: {
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: "8px",
+        },
+      },
+      h(
+        "span",
+        { style: { fontSize: "12px", color: "var(--muted)" } },
+        props.t("panel.gauge_title")
+      ),
+      h(
+        "span",
+        { style: { fontSize: "13px", fontWeight: "700", color: valueColor } },
+        props.t("panel.gauge_bill_amount", { amount: money(bill) })
+      )
+    ),
+    h(
+      "div",
+      {
+        className: "rrm-gauge-track",
+        style: {
+          display: "flex",
+          width: "100%",
+          height: "14px",
+          borderRadius: "7px",
+          overflow: "hidden",
+          background: "rgba(142, 171, 219, 0.16)",
+          border: crisis
+            ? `1px solid ${props.alarmOn ? "rgba(214, 72, 106, 0.42)" : "var(--danger)"}`
+            : "1px solid rgba(142, 171, 219, 0.18)",
+        },
+      },
+      redW > 0
+        ? h("div", {
+            className: "rrm-gauge-red",
+            style: { width: `${redW}%`, height: "100%", background: redZone },
+          })
+        : null,
+      holeW > 0
+        ? h("div", {
+            className: "rrm-gauge-hole",
+            style: {
+              width: `${holeW}%`,
+              height: "100%",
+              background: "rgba(214, 72, 106, 0.26)",
+            },
+          })
+        : null,
+      cyanW > 0
+        ? h("div", {
+            className: "rrm-gauge-cyan",
+            style: { width: `${cyanW}%`, height: "100%", background: "var(--primary)" },
+          })
+        : null
+    ),
+    h(
+      "div",
+      {
+        style: {
+          display: "flex",
+          justifyContent: "space-between",
+          gap: "8px",
+          fontSize: "11px",
+          color: "var(--muted)",
+        },
+      },
+      h("span", null, props.t("panel.gauge_bill", { amount: money(bill) })),
+      crisis
+        ? h(
+            "span",
+            { style: { color: "var(--danger)", fontWeight: "700" } },
+            props.t("panel.gauge_crisis", { gap: money(bill - cash) })
+          )
+        : h("span", null, props.t("panel.gauge_free", { amount: money(cash - bill) }))
+    )
+  )
+}
+
+/**
  * P7.2：走势小折线（Sparkline）。
  *
  * 宿主渲染器画不了真 SVG，但 **canvas 是可以用的**（`document.createElement`
@@ -1393,6 +1528,15 @@ function PositionTile(props: { position: Position; t: Translate }) {
     h(
       "div",
       { className: "rrm-tile-foot" },
+      // P14.0：这只占了**总仓位的百分之多少** —— 玩家得看得见钱压在哪儿。
+      h(
+        "span",
+        {
+          style: { fontSize: "12px", fontWeight: "600", color: "var(--muted)" },
+          title: t("panel.weight"),
+        },
+        `${t("panel.weight")} ${percent(Number(position.weight || 0))}`
+      ),
       h("span", { className: "rrm-price" }, money(position.market_value))
     )
   )
@@ -1837,6 +1981,8 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   }
   const onboarding = state.onboarding || {}
   const [guideOpen, setGuideOpen] = useState(false)
+  // P14.0：【命运挑战】的二级档位选择（入门 / 进阶 / 地狱）。
+  const [challengeOpen, setChallengeOpen] = useState(false)
   // 「只自动弹一次」：**本次挂载**只试一次（面板每 3 秒轮询，不能反复弹）。
   const guideAutoTried = useRef(false)
   useEffect(() => {
@@ -1984,6 +2130,13 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     }
     await callAction("buy", { stock_id: effectiveStockId, amount: buyAmount })
     clearTradeDrafts()
+    // P14：这只已经买过了 ⇒ 它那份"计划"作废（不然台账会重复计算）。
+    // 别的标的的计划留着 —— 现金变少之后它们会**自动回缩**。
+    setPlanBudgetMap((prev: Record<string, number>) => {
+      const next = { ...(prev || {}) }
+      delete next[effectiveStockId]
+      return next
+    })
   }
 
   /** 【执行卖出】：按滑块（或直输框反推出来的）仓位卖出。 */
@@ -2109,6 +2262,29 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       clearTimeout(hideTimer)
     }
   }, [stage])
+
+  // ── P14.0：资金水位条的**危机闪烁** ──────────────────────────────
+  // 现金比明天的生活费还少 ⇒ 整根水位条变红并轻微闪烁。
+  // 同样**不用 CSS 动画**：JS 定时器切颜色（跟上面濒死数字同款）。
+  const nextBill = Math.max(0, Number(state.next_bill || 0))
+  const cashNow = Math.max(0, Number(state.cash || 0))
+  const cashCrisis = nextBill > 0 && cashNow < nextBill
+  const [gaugeAlarm, setGaugeAlarm] = useState(false)
+  useEffect(() => {
+    if (!cashCrisis) {
+      setGaugeAlarm(false)
+      return
+    }
+    let hideTimer: any = 0
+    const timer = setInterval(() => {
+      setGaugeAlarm(true)
+      hideTimer = setTimeout(() => setGaugeAlarm(false), 320)
+    }, 900)
+    return () => {
+      clearInterval(timer)
+      clearTimeout(hideTimer)
+    }
+  }, [cashCrisis])
 
   // ── P7.3：弹窗轰炸的**客户端硬上限**（不依赖载荷刷新）───────────
   // 0.8.2 用服务端的 `until` 时间戳减**客户端时钟**算剩余时间：时钟一偏、
@@ -2265,14 +2441,59 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   //
   // **唯一的事实来源是仓位比例**：直输框只是**反推**出比例，真正成交的
   // 数量永远由比例算出来 ⇒ 拖滑块和手输不会打架、不会各算各的。
-  const [positionPct, setPositionPct] = useLocalState<number>("rrm.position_pct", 100)
+  // ── P14.0：计划买入台账（多标的）+ 买入/卖出**两条**独立仓位 ─────────
+  //
+  // **为什么要拆成两条**：P13 只有一个"仓位"，买入和卖出共用它 ——
+  // 拖一下就同时改了"买多少"和"卖多少"，本来就该分开。
+  // 更要紧的是**买入**那条要多一层约束：玩家可以给**好几只**标的排计划，
+  // 一旦计划总额超过可用现金，**后拉的那条滑条必须被截断** ——
+  // 那股"拉扯"的阻力感，就是在告诉玩家他的极限在哪。
+  //
+  // 台账的键是**标的 id**，值是**打算投入的绝对金额（元）**。
+  // 用绝对金额而不是百分比：现金变少时这些金额**相对变重**，
+  // 滑块会**自动回缩** —— 玩家看到的极限永远是真的。
+  const cash = Math.max(0, Number(state.cash || 0))
+  const [planBudgetMap, setPlanBudgetMap] = useLocalState<Record<string, number>>(
+    "rrm.plan_budget",
+    {}
+  )
+  const [sellPositionPct, setSellPositionPct] = useLocalState<number>(
+    "rrm.sell_position_pct",
+    100
+  )
+  const planBudget = planBudgetMap || {}
+  // 其它标的已经占用的额度（不含当前标的）。
+  const othersBudget = Object.keys(planBudget).reduce((sum, key) => {
+    if (key === effectiveStockId) return sum
+    return sum + Math.max(0, Number(planBudget[key] || 0))
+  }, 0)
+  // **本轮上限**：现金 − 别人占掉的 ⇒ 后拉动的滑条被它截断。
+  const capBudget = Math.max(0, cash - othersBudget)
+  const capPct = cash > 0 ? Math.min(100, (capBudget / cash) * 100) : 0
+  // 当前标的的**有效**计划（超出上限的部分直接砍掉）。
+  const currentPlanBudget = Math.max(
+    0,
+    Math.min(capBudget, Number(planBudget[effectiveStockId] || 0))
+  )
   // 比例**允许是小数**：直输"买 10 股"折出来的比例可能是 33.33%，
   // 取整会让玩家要的 10 股变成 9 股 —— 悄悄改玩家的单子，最糟。
-  const pct = Math.max(0, Math.min(100, Number(positionPct || 0)))
+  const buyPositionPct = cash > 0 ? Math.min(100, (currentPlanBudget / cash) * 100) : 0
+  const sellPct = Math.max(0, Math.min(100, Number(sellPositionPct || 0)))
+  // 轨道填充比例：满格 = 本轮**上限**（上限被别的标的占掉时，轨道会变短）。
+  const buyFillPct =
+    capPct > 0 ? Math.max(0, Math.min(100, (buyPositionPct / capPct) * 100)) : 0
+  // 买入仓位 ⇒ 写进当前标的的**计划买入**，并受全局上限**截断**。
+  const setPositionPct = (value: number) => {
+    const wanted = Math.max(0, Number(value) || 0)
+    const budget = Math.min((cash * wanted) / 100, capBudget)
+    setPlanBudgetMap((prev: Record<string, number>) => ({
+      ...(prev || {}),
+      [effectiveStockId]: budget,
+    }))
+  }
   const buyRate = Number(state.fees?.buy_rate || 0)
   const sellRate = Number(state.fees?.sell_rate || 0)
   const stampRate = Number(state.fees?.stamp_tax_rate || 0)
-  const cash = Math.max(0, Number(state.cash || 0))
 
   // 浮点保险：比例 → 数量 的来回换算会带上 1e-14 量级的误差，直接
   // Math.floor 会把"明明是 1 股"算成 0 股。落在整数附近的就按整数算。
@@ -2285,20 +2506,51 @@ export default function Panel(props: PluginSurfaceProps<State>) {
 
   const selectedStockRow = stocks.find((stock) => stock.id === effectiveStockId)
   const buyPrice = selectedStockRow ? Number(selectedStockRow.price || 0) : 0
-  // 买入：预算 = 现金 × 仓位；按 ``notional × (1 + buy_rate) <= 预算`` 倒推数量。
-  const buyBudget = (cash * pct) / 100
+  // 买入：预算 = 台账里给这只标的排的额度（**已被全局上限截断**）；
+  // 按 ``notional × (1 + buy_rate) <= 预算`` 倒推数量。
+  const buyBudget = currentPlanBudget
   const buyNotional = buyRate > -1 ? buyBudget / (1 + buyRate) : 0
   const buyAmount = buyPrice > 0 ? robustFloor(buyNotional / buyPrice) : 0
   const buyCost = buyAmount * buyPrice * (1 + buyRate)
   const buyCashAfter = Math.max(0, cash - buyCost)
+  // 买完这一笔，可用现金会不会**掉到生活费红线以下**？
+  const buyWarningAlarm = nextBill > 0 && buyCashAfter < nextBill
 
   const selectedPosition = positions.find((item) => item.stock_id === effectiveSellStockId)
   const sellAllAmount = selectedPosition ? Number(selectedPosition.sellable || 0) : 0
   const sellPrice = selectedPosition ? Number(selectedPosition.price || 0) : 0
   // 卖出：回款 = 数量 × 价 × (1 - 卖出手续费 - 印花税)（印花税单边收）。
-  const sellAmount = robustFloor((sellAllAmount * pct) / 100)
+  const sellAmount = robustFloor((sellAllAmount * sellPct) / 100)
   const sellIncome = sellAmount * sellPrice * (1 - sellRate - stampRate)
   const sellCashAfter = cash + sellIncome
+
+  // ── P14.0：计划买入台账（多标的）──────────────────────────────────
+  // 台账里排了计划的标的 —— **当前标的也在内**（它是第一个被排的）。
+  // 「计划总额」是玩家**打算**花掉的钱；「还能花」是现金减去这个总额 ——
+  // 两者的差就是玩家还能再往别的标的上塞多少。
+  const planRows = Object.keys(planBudget)
+    .filter((key) => Number(planBudget[key] || 0) > 0.005)
+    .map((key) => {
+      const row = stocks.find((stock) => stock.id === key)
+      return {
+        id: key,
+        name: row ? String(row.display_name || row.name || key) : key,
+        budget: Math.max(0, Number(planBudget[key] || 0)),
+        current: key === effectiveStockId,
+      }
+    })
+  const planTotal = planRows.reduce((sum, row) => sum + row.budget, 0)
+  const dropPlan = (key: string) => {
+    setPlanBudgetMap((prev: Record<string, number>) => {
+      const next = { ...(prev || {}) }
+      delete next[key]
+      return next
+    })
+  }
+  // 一局结束 / 换局 ⇒ 计划台账作废（上一局的"打算投多少"跟这一局没关系）。
+  useEffect(() => {
+    if (state.stage !== "playing") setPlanBudgetMap({})
+  }, [state.stage])
 
   // ── P7.2：一键梭哈 / 一键割肉的数量 ─────────────────────────────
   const buyAllAmount = buyAmount
@@ -2391,7 +2643,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     if (text === "") return
     const parsed = Number(text)
     if (!Number.isFinite(parsed)) return
-    setPositionPct(pctForSellShares(parsed))
+    setSellPositionPct(pctForSellShares(parsed))
   }
   const onSellMoneyInput = (raw: string) => {
     const text = raw === "" ? "" : String(raw)
@@ -2400,7 +2652,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     if (text === "") return
     const parsed = Number(text)
     if (!Number.isFinite(parsed)) return
-    setPositionPct(pctForSellMoney(parsed))
+    setSellPositionPct(pctForSellMoney(parsed))
   }
 
   const buySharesShown = buySharesDraft === null ? String(buyAmount) : buySharesDraft
@@ -3018,6 +3270,181 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   // ── 没开局 ───────────────────────────────────────────────────────
   if (state.stage !== "playing") {
     const joinAction = actionById("join")
+    const joinActionId = joinAction
+      ? String(joinAction.entry_id || joinAction.id || "join")
+      : ""
+    /** 按档位开局：走 P11.1 的全局请求锁（狂点只会被静默丢弃，不会打爆宿主）。 */
+    const joinMode = (mode: string) => {
+      if (!joinActionId) return
+      void callAction(joinActionId, { mode })
+    }
+    /**
+     * P14.0：一块**档位卡**。
+     *
+     * 身份色写在顶部的渐变色带上，文字压在浅底（无尽那张是深底）上 ——
+     * 颜色分得开，字也还读得清。
+     */
+    const modeCard = (opts: {
+      title: string
+      tagline: string
+      hint: string
+      band: string
+      bg: string
+      titleColor: string
+      tagColor: string
+      hintColor: string
+      onClick: () => void
+    }) =>
+      h(
+        "button",
+        {
+          type: "button",
+          className: "rrm-mode-card",
+          style: {
+            display: "block",
+            width: "100%",
+            textAlign: "left",
+            padding: "0",
+            border: "1px solid rgba(142, 171, 219, 0.26)",
+            borderRadius: "12px",
+            overflow: "hidden",
+            background: opts.bg,
+            cursor: "pointer",
+            fontFamily: "inherit",
+          },
+          onClick: opts.onClick,
+        },
+        h("div", { style: { height: "10px", background: opts.band } }),
+        h(
+          "div",
+          {
+            style: {
+              padding: "12px 14px",
+              display: "flex",
+              flexDirection: "column",
+              gap: "3px",
+            },
+          },
+          h(
+            "span",
+            {
+              style: {
+                fontSize: "17px",
+                fontWeight: "800",
+                letterSpacing: "0.5px",
+                color: opts.titleColor,
+              },
+            },
+            opts.title
+          ),
+          h(
+            "span",
+            { style: { fontSize: "12px", fontWeight: "700", color: opts.tagColor } },
+            opts.tagline
+          ),
+          h("span", { style: { fontSize: "12px", color: opts.hintColor } }, opts.hint)
+        )
+      )
+    // ── P14.0：【命运挑战】的二级档位（入门 / 进阶 / 地狱）────────────
+    const challengeLevels = [
+      {
+        mode: "classic_beginner",
+        title: t("panel.mode_level_beginner"),
+        tag: t("panel.mode_level_beginner_tag"),
+        hint: t("panel.mode_level_beginner_hint"),
+        accent: "#0f6b4c",
+        band: "linear-gradient(90deg, #8fe0bf 0%, #17916f 100%)",
+        bg: "linear-gradient(180deg, #effaf4 0%, #ddf3e7 100%)",
+      },
+      {
+        mode: "classic_advanced",
+        title: t("panel.mode_level_advanced"),
+        tag: t("panel.mode_level_advanced_tag"),
+        hint: t("panel.mode_level_advanced_hint"),
+        accent: "#9c2b45",
+        band: "linear-gradient(90deg, #f5c451 0%, #d6486a 100%)",
+        bg: "linear-gradient(180deg, #fff6e2 0%, #ffe3e6 100%)",
+      },
+      {
+        mode: "classic_hell",
+        title: t("panel.mode_level_hell"),
+        tag: t("panel.mode_level_hell_tag"),
+        hint: t("panel.mode_level_hell_hint"),
+        accent: "#e7e0ff",
+        band: "linear-gradient(90deg, #7a3a63 0%, #d6486a 100%)",
+        bg: "linear-gradient(180deg, #2b2650 0%, #16122f 100%)",
+      },
+    ]
+    const challengeModal = h(Modal, {
+      open: challengeOpen,
+      title: t("panel.mode_challenge_modal_title"),
+      closeOnBackdrop: true,
+      closeOnEscape: true,
+      size: "md",
+      children: h(
+        Stack,
+        { gap: 10 },
+        h(Text, null, t("panel.mode_challenge_modal_hint")),
+        challengeLevels.map((level) =>
+          h(
+            "button",
+            {
+              type: "button",
+              className: "rrm-mode-card",
+              style: {
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                padding: "0",
+                border: "1px solid rgba(142, 171, 219, 0.26)",
+                borderRadius: "12px",
+                overflow: "hidden",
+                background: level.bg,
+                cursor: "pointer",
+                fontFamily: "inherit",
+              },
+              onClick: () => {
+                setChallengeOpen(false)
+                joinMode(level.mode)
+              },
+            },
+            h("div", { style: { height: "8px", background: level.band } }),
+            h(
+              "div",
+              {
+                style: {
+                  padding: "10px 12px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "2px",
+                },
+              },
+              h(
+                "span",
+                {
+                  style: {
+                    fontSize: "15px",
+                    fontWeight: "800",
+                    color: level.accent,
+                  },
+                },
+                level.title
+              ),
+              h(
+                "span",
+                { style: { fontSize: "12px", fontWeight: "700", color: level.accent } },
+                level.tag
+              ),
+              h(
+                "span",
+                { style: { fontSize: "12px", color: level.accent } },
+                level.hint
+              )
+            )
+          )
+        )
+      ),
+    })
     return (
       <Page className="rrm-root" title={t("panel.title")} subtitle={t("panel.subtitle")}>
         <Stack gap={12}>
@@ -3036,29 +3463,59 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                   注意 ``joinAction`` 可能不存在（老版本插件没有把 join 挂成
                   UI action）—— 那就不渲染按钮，绝不能拿一个空 action 去调，
                   否则宿主会把它当成面板运行时错误上报。 */}
+              {/* ── P14.0：档位卡（街机 / 命运挑战 / 无尽）──────────────
+                  三档必须**一眼分得开**：
+                  街机 = 纯爽局（浅绿，「老爸给的零花钱」）；
+                  命运挑战 = 要动真格的（黄→深红，断供 / 杠杆 / 生存压力），
+                  点开是**二级选择**（入门 / 进阶 / 地狱）；
+                  无尽 = 深渊（深蓝紫 + 血红，「最后的筹码」）。
+
+                  颜色全部走**内联渐变**（P14 的纪律：极度克制地使用 CSS），
+                  一行新 CSS 都不加。 */}
               {joinAction ? (
-                <Inline gap={8} wrap={true} align="center">
-                  <ActionButton
-                    action={joinAction}
-                    label={t("panel.join_classic")}
-                    tone="primary"
-                    values={{ mode: "classic_arcade" }}
-                    onError={(error: any) => {
-                      showToast(String((error && error.message) || error), "danger")
-                      resync()
-                    }}
-                  />
-                  <ActionButton
-                    action={joinAction}
-                    label={t("panel.join_infinite")}
-                    tone="danger"
-                    values={{ mode: "infinite" }}
-                    onError={(error: any) => {
-                      showToast(String((error && error.message) || error), "danger")
-                      resync()
-                    }}
-                  />
-                </Inline>
+                h(
+                  "div",
+                  {
+                    style: {
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "10px",
+                    },
+                  },
+                  modeCard({
+                    title: t("panel.mode_arcade_title"),
+                    tagline: t("panel.mode_arcade_tag"),
+                    hint: t("panel.mode_arcade_hint"),
+                    band: "linear-gradient(90deg, #8fe0bf 0%, #17916f 100%)",
+                    bg: "linear-gradient(180deg, #effaf4 0%, #ddf3e7 100%)",
+                    titleColor: "#0f6b4c",
+                    tagColor: "#17916f",
+                    hintColor: "#5d7d70",
+                    onClick: () => joinMode("classic_arcade"),
+                  }),
+                  modeCard({
+                    title: t("panel.mode_challenge_title"),
+                    tagline: t("panel.mode_challenge_tag"),
+                    hint: t("panel.mode_challenge_hint"),
+                    band: "linear-gradient(90deg, #f5c451 0%, #d6486a 100%)",
+                    bg: "linear-gradient(180deg, #fff6e2 0%, #ffe3e6 100%)",
+                    titleColor: "#9c2b45",
+                    tagColor: "#c0455f",
+                    hintColor: "#8a6a70",
+                    onClick: () => setChallengeOpen(true),
+                  }),
+                  modeCard({
+                    title: t("panel.mode_infinite_title"),
+                    tagline: t("panel.mode_infinite_tag"),
+                    hint: t("panel.mode_infinite_hint"),
+                    band: "linear-gradient(90deg, #7a3a63 0%, #d6486a 100%)",
+                    bg: "linear-gradient(180deg, #2b2650 0%, #16122f 100%)",
+                    titleColor: "#e7e0ff",
+                    tagColor: "#b9a8f0",
+                    hintColor: "#8d86b8",
+                    onClick: () => joinMode("infinite"),
+                  })
+                )
               ) : null}
               <Text>{t("panel.idle_modes_hint")}</Text>
               {/* ── P10：大号《玩法说明》按钮 ──────────────────────────
@@ -3088,6 +3545,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             </Stack>
           </Card>
           {paceCard}
+          {challengeModal}
           {guideModal}
           {meowModal}
           {storyModal}
@@ -3291,6 +3749,14 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             label={cashLabel}
             value={money(state.cash)}
             hint={stageHint}
+            // P14.0：现金跌破生活费红线 ⇒ 数字**变红并轻微闪烁**。
+            color={
+              cashCrisis
+                ? gaugeAlarm
+                  ? "rgba(214, 72, 106, 0.45)"
+                  : "var(--danger)"
+                : undefined
+            }
             size={30}
           />
           <BigStat
@@ -3301,6 +3767,15 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             size={36}
           />
         </Grid>
+
+        {/* ── P14.0：资金水位条（明天的生活费 = 那条红线）────────────── */}
+        {h(CashGauge, {
+          cash: cash,
+          bill: nextBill,
+          crisis: cashCrisis,
+          alarmOn: gaugeAlarm,
+          t: t,
+        })}
 
         {/* ── P7.2 ③：明日账单（交不起就是红色警告）────────────────── */}
         {(state.bill_gap || 0) > 0 ? (
@@ -3377,33 +3852,137 @@ export default function Panel(props: PluginSurfaceProps<State>) {
               （``ActionButton`` 不支持 ``disabled``，也进不了这把锁）。 */}
         <Card title={t("panel.trade")}>
           <Stack gap={12}>
-            {/* ── 仓位：**连续**滑块（1% 步进），没有四档 ───────────── */}
-            <Stack gap={6}>
-              <Inline gap={8} align="center" justify="space-between">
-                <Text>{t("panel.trade_position")}</Text>
-                <Text>{t("panel.trade_pct", { pct: Math.round(pct) })}</Text>
-              </Inline>
-              {h(
-                "div",
-                {
-                  className: "rrm-trade-slider",
-                  // 当前比例写进 CSS 变量 ⇒ 轨道渐变能画出"已填充到哪"。
-                  style: { "--rrm-trade-fill": `${Math.round(pct * 10) / 10}%` },
-                },
-                h(Slider, {
-                  min: 0,
-                  max: 100,
-                  step: 1,
-                  value: pct,
-                  showValue: false,
-                  onChange: (value: any) => {
-                    setPositionPct(Number(value))
-                    clearTradeDrafts()
+            {/* ── P14.0：买 / 卖**两条**独立仓位 ───────────────────────
+                P13 只有一个"仓位"，买和卖共用它 —— 拖一下就同时改了
+                "买多少"和"卖多少"，本来就该分开。P14 拆成两条，
+                左右各看各的，标的也各自带在顶上。
+
+                买入那条还多一层**全局上限**：台账里别的标的占掉的额度
+                会把它**截断**（后拉动的滑条只能拉到上限为止）——
+                那股"拉扯"的阻力感，就是在告诉玩家他的极限在哪。 */}
+            <Grid cols={2} gap={12} className="rrm-trade-sides">
+              {/* ── 买入这一侧 ─────────────────────────────────── */}
+              <Stack gap={6} className="rrm-trade-side">
+                <Inline gap={10} wrap={false} align="center" className="rrm-select-row">
+                  <Select
+                    value={effectiveStockId}
+                    options={stockOptions}
+                    onChange={(value: any) => setSelectedStock(String(value))}
+                  />
+                </Inline>
+                <Text>{t("visual.buy_all_hint")}</Text>
+                <Inline gap={8} align="center" justify="space-between">
+                  <Text>{t("panel.trade_buy_side")}</Text>
+                  <Text>{t("panel.trade_pct", { pct: Math.round(buyPositionPct) })}</Text>
+                </Inline>
+                {h(
+                  "div",
+                  {
+                    className: "rrm-trade-slider",
+                    // 当前比例写进 CSS 变量 ⇒ 轨道渐变能画出"已填充到哪"。
+                    // 轨道满格 = 本轮**上限**（不是 100%）—— 上限被占满时
+                    // 整条填满，玩家一眼看见自己已经顶到天花板。
+                    style: { "--rrm-trade-fill": `${Math.round(buyFillPct * 10) / 10}%` },
                   },
-                })
-              )}
-              <Text>{t("panel.trade_position_hint")}</Text>
-            </Stack>
+                  h(Slider, {
+                    min: 0,
+                    // **上限不是 100**：别的标的占掉的额度会把这条滑条截断。
+                    max: Math.max(1, Math.floor(capPct)),
+                    step: 1,
+                    value: buyPositionPct,
+                    showValue: false,
+                    // 上限被吃光了 ⇒ 这条滑条**锁死**（连 1% 都分不到）。
+                    disabled: busy || capPct <= 0,
+                    onChange: (value: any) => {
+                      setPositionPct(Number(value))
+                      clearTradeDrafts()
+                    },
+                  })
+                )}
+                <Text>{t("panel.trade_position_hint")}</Text>
+                <Text>
+                  {t("panel.trade_cap_hint", {
+                    cap: Math.max(0, Math.floor(capPct)),
+                    used: othersBudget.toFixed(2),
+                  })}
+                </Text>
+              </Stack>
+
+              {/* ── 卖出这一侧 ─────────────────────────────────── */}
+              <Stack gap={6} className="rrm-trade-side">
+                <Inline gap={10} wrap={false} align="center" className="rrm-select-row">
+                  <Select
+                    value={effectiveSellStockId}
+                    options={positionOptions}
+                    onChange={(value: any) => setSellStock(String(value))}
+                  />
+                </Inline>
+                <Text>{t("visual.sell_all_hint")}</Text>
+                <Inline gap={8} align="center" justify="space-between">
+                  <Text>{t("panel.trade_sell_side")}</Text>
+                  <Text>{t("panel.trade_pct", { pct: Math.round(sellPct) })}</Text>
+                </Inline>
+                {h(
+                  "div",
+                  {
+                    className: "rrm-trade-slider",
+                    style: { "--rrm-trade-fill": `${Math.round(sellPct * 10) / 10}%` },
+                  },
+                  h(Slider, {
+                    min: 0,
+                    max: 100,
+                    step: 1,
+                    value: sellPct,
+                    showValue: false,
+                    onChange: (value: any) => {
+                      setSellPositionPct(Number(value))
+                      clearTradeDrafts()
+                    },
+                  })
+                )}
+                <Text>{t("panel.trade_sell_hint", { amount: sellAllAmount })}</Text>
+              </Stack>
+            </Grid>
+
+            {/* ── P14.0：买入后的**水位预警** ─────────────────────────
+                玩家拉满滑块的时候，得让他看见"买完还剩多少"，
+                以及"这一笔会不会把生活费吃掉"—— 低于红线就变红。 */}
+            {h(
+              "div",
+              {
+                className: "rrm-trade-warning",
+                style: {
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "8px",
+                  flexWrap: "wrap",
+                  padding: "8px 10px",
+                  borderRadius: "8px",
+                  fontSize: "12px",
+                  lineHeight: "1.5",
+                  background: buyWarningAlarm
+                    ? "rgba(214, 72, 106, 0.12)"
+                    : "rgba(91, 143, 249, 0.08)",
+                  border: buyWarningAlarm
+                    ? "1px solid rgba(214, 72, 106, 0.5)"
+                    : "1px solid rgba(91, 143, 249, 0.22)",
+                  color: buyWarningAlarm ? "var(--danger)" : "var(--muted)",
+                },
+              },
+              h(
+                "span",
+                null,
+                t("panel.trade_after_buy", { cash: buyCashAfter.toFixed(2) })
+              ),
+              buyWarningAlarm
+                ? h(
+                    "span",
+                    { style: { fontWeight: "700" } },
+                    t("panel.trade_below_bill", { bill: nextBill.toFixed(2) })
+                  )
+                : null
+            )}
 
             {/* ── P8.0 ④：两个胶囊大按钮**并排**独占一行 ──────────────
                 真机教训（0.9.0 首轮）：它们原本和 `Select` 挤在同一行，
@@ -3578,24 +4157,74 @@ export default function Panel(props: PluginSurfaceProps<State>) {
               </Stack>
             </Grid>
 
-            {/* ── 标的：买入 / 卖出各一行选择器（不跟大按钮抢宽度）──── */}
-            <Inline gap={10} wrap={false} align="center" className="rrm-select-row">
-              <Select
-                value={effectiveStockId}
-                options={stockOptions}
-                onChange={(value: any) => setSelectedStock(String(value))}
-              />
-            </Inline>
-            <Text>{t("visual.buy_all_hint")}</Text>
-
-            <Inline gap={10} wrap={false} align="center" className="rrm-select-row">
-              <Select
-                value={effectiveSellStockId}
-                options={positionOptions}
-                onChange={(value: any) => setSellStock(String(value))}
-              />
-            </Inline>
-            <Text>{t("visual.sell_all_hint")}</Text>
+            {/* ── P14.0：计划买入台账（多标的）────────────────────────
+                玩家可以给**好几只**标的排计划。这一栏把"打算花多少"
+                摊开给玩家看：每只排了多少、总额多少。
+                别的标的占掉的额度会**截断**买入滑条 ——
+                拉扯的阻力感，就是极限的提示。 */}
+            <Stack gap={6} className="rrm-plan">
+              <Inline gap={8} align="center" justify="space-between">
+                <Text>{t("panel.plan_title")}</Text>
+                <Text>
+                  {t("panel.plan_total", {
+                    total: planTotal.toFixed(2),
+                    cash: cash.toFixed(2),
+                  })}
+                </Text>
+              </Inline>
+              {planRows.length > 0
+                ? h(
+                    "div",
+                    {
+                      style: {
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "4px",
+                      },
+                    },
+                    planRows.map((row) =>
+                      h(
+                        "div",
+                        {
+                          className: "rrm-plan-row",
+                          style: {
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: "8px",
+                            fontSize: "12px",
+                          },
+                        },
+                        h("span", { style: { color: "var(--text)" } }, row.name),
+                        h(
+                          "span",
+                          { style: { color: "var(--muted)" } },
+                          `${row.budget.toFixed(2)} ${t("panel.trade_unit_money")}`
+                        ),
+                        h(
+                          "button",
+                          {
+                            type: "button",
+                            className: "rrm-plan-drop",
+                            style: {
+                              border: "1px solid rgba(142, 171, 219, 0.35)",
+                              background: "transparent",
+                              color: "var(--muted)",
+                              borderRadius: "6px",
+                              padding: "0 7px",
+                              cursor: "pointer",
+                              fontSize: "12px",
+                              lineHeight: "1.5",
+                            },
+                            onClick: () => dropPlan(row.id),
+                          },
+                          "×"
+                        )
+                      )
+                    )
+                  )
+                : h(Text, null, t("panel.plan_empty"))}
+            </Stack>
 
             <Divider />
 

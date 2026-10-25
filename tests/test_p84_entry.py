@@ -103,15 +103,27 @@ def _plugin_source() -> str:
 
 
 def test_idle_state_has_clickable_join_buttons() -> None:
-    """空闲态必须有**真的能点**的开局按钮（0.8.3 的核心投诉）。"""
+    """空闲态必须有**真的能点**的开局按钮（0.8.3 的核心投诉）。
+
+    P14.0：按钮从两个变成**三档卡**（街机 / 命运挑战 / 无尽），
+    命运挑战再点开是二级选择（入门 / 进阶 / 地狱）。
+    按钮不再用 ``ActionButton``，而是走 P11.1 那把全局请求锁的 ``callAction`` ——
+    不变式不变：**每一档都能真的开局**。
+    """
     branch = _idle_branch()
     assert 'actionById("join")' in branch, "空闲态必须有 join 按钮"
-    # 两个模式各一个按钮 —— 同一个 action，两个不同的 values。
-    assert branch.count("action={joinAction}") >= 2, "经典 / 无尽要有两个按钮"
-    assert 'mode: "classic_arcade"' in branch, "必须有经典模式按钮"
-    assert 'mode: "infinite"' in branch, "必须有无尽模式按钮"
-    # 按钮必须真的包在 ActionButton 里（不能只是取了个 action 就完事）。
-    assert "ActionButton" in branch
+    # 五档一个都不许少（街机 + 命运挑战三档 + 无尽）。
+    for mode in (
+        "classic_arcade",
+        "classic_beginner",
+        "classic_advanced",
+        "classic_hell",
+        "infinite",
+    ):
+        assert f'"{mode}"' in branch, f"必须有 {mode} 这一档"
+    # 按钮必须真的去调 action（不能只是取了个 action 就完事）。
+    assert "joinMode(" in branch, "档位卡必须走 joinMode"
+    assert "callAction(joinActionId" in branch, "开局必须真的调 join action"
 
 
 def test_idle_state_hides_the_trade_action_area() -> None:
@@ -139,10 +151,15 @@ def test_join_buttons_are_guarded_by_the_action_existing() -> None:
 
     ``joinAction`` 为空还去渲染按钮 ⇒ ``api.call(undefined, ...)`` ⇒ 宿主当成
     面板运行时错误上报。老版本插件没把 join 挂成 UI action 时不能渲染。
+
+    P14.0：档位卡不再用 ``ActionButton``，所以守卫从"判空后渲染"改成
+    **"判空后连调用都不许发生"** —— 更严。
     """
     branch = _idle_branch()
-    assert "joinAction ?" in branch, "join 按钮必须判空"
-    assert "const joinAction = actionById(\"join\")" in branch
+    assert 'actionById("join")' in branch, "必须取 join action"
+    assert "joinActionId" in branch, "join 必须判空"
+    assert "if (!joinActionId) return" in branch, "join 必须在调用前判空"
+    assert "joinAction ?" in branch, "档位卡必须判空后才渲染"
 
 
 def test_panel_polls_its_own_context() -> None:
@@ -291,7 +308,7 @@ def test_panel_i18n_keys_all_exist() -> None:
 
 def test_version_is_bumped() -> None:
     raw = _PLUGIN_TOML.read_text(encoding="utf-8")
-    assert 'version = "0.9.7"' in raw
+    assert 'version = "0.9.8"' in raw
 
 
 def test_engine_and_mode_layers_are_still_untouched() -> None:

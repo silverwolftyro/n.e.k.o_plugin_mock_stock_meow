@@ -335,7 +335,13 @@ def test_the_trade_area_has_direct_amount_inputs() -> None:
 
 
 def test_the_direct_input_back_computes_the_position() -> None:
-    """直输 ⇒ **反推**仓位比例 ⇒ 写回滑块（比例是唯一的事实来源）。"""
+    """直输 ⇒ **反推**仓位比例 ⇒ 写回滑块（比例是唯一的事实来源）。
+
+    P14.0：仓位拆成了**买入 / 卖出两条**（P13 的时候买和卖共用一个滑块，
+    拖一下就同时改了"买多少"和"卖多少"，本来就该分开），
+    所以写回的 setter 也分成两个 —— 不变式还是同一个：
+    **直输 ⇒ 反推 ⇒ 写回对应那条滑块**。
+    """
     code = _panel_code()
     for name in (
         "pctForBuyShares",
@@ -346,8 +352,8 @@ def test_the_direct_input_back_computes_the_position() -> None:
         assert name in code, f"缺少反推函数 {name}"
     assert "setPositionPct(pctForBuyShares(" in code
     assert "setPositionPct(pctForBuyMoney(" in code
-    assert "setPositionPct(pctForSellShares(" in code
-    assert "setPositionPct(pctForSellMoney(" in code
+    assert "setSellPositionPct(pctForSellShares(" in code
+    assert "setSellPositionPct(pctForSellMoney(" in code
 
 
 def test_the_back_computation_uses_the_right_base() -> None:
@@ -368,9 +374,10 @@ def test_the_share_rounding_is_float_safe() -> None:
     assert "const robustFloor = (value: number) =>" in code, "缺少浮点安全取整"
     assert "Math.abs(value - nearest) < 1e-6" in code
     assert "robustFloor(buyNotional / buyPrice)" in code, "买入取整必须走 robustFloor"
-    assert "robustFloor((sellAllAmount * pct) / 100)" in code, "卖出取整必须走 robustFloor"
+    # P14.0：卖出那条滑块独立了（``sellPct``），取整**仍然**必须走 robustFloor。
+    assert "robustFloor((sellAllAmount * sellPct) / 100)" in code, "卖出取整必须走 robustFloor"
     assert "Math.floor(buyNotional / buyPrice)" not in code, "买入不许再裸 Math.floor"
-    assert "Math.floor((sellAllAmount * pct) / 100)" not in code, "卖出不许再裸 Math.floor"
+    assert "Math.floor((sellAllAmount * sellPct) / 100)" not in code, "卖出不许再裸 Math.floor"
 
 
 def test_the_money_input_keeps_its_decimal_placeholder() -> None:
@@ -510,5 +517,5 @@ def test_the_new_i18n_keys_exist() -> None:
 
 
 def test_the_version_is_bumped() -> None:
-    assert 'version = "0.9.7"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.9.7"' in _init_text()
+    assert 'version = "0.9.8"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.9.8"' in _init_text()
