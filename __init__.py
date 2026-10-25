@@ -109,6 +109,7 @@ from .combo import (
 )
 from .emotion import (
     EmotionProfile,
+    banned_visible_death_words,
     build_profile,
     consecutive_losses,
     holding_loss_ratio,
@@ -185,6 +186,26 @@ from .modes.shared import (
     execute_scheduled_harvest,
     next_living_cost,
 )
+from .name_easter_eggs import (
+    CATEGORY_COMMUNITY,
+    CATEGORY_HUBRIS,
+    CATEGORY_STEADY,
+    DEFAULT_PLAYER_NAME,
+    FACT_CASH_DOWN,
+    FACT_CASH_UP,
+    FACT_DAILY_RETURN,
+    FACT_LOAN_SIGNED,
+    FACT_LOAN_UNAVAILABLE,
+    FACT_MODE_HELL,
+    FACT_NEWS_FAKE,
+    EasterEgg,
+    apply_cash_multiplier,
+    build_fact,
+    daily_return_gain,
+    match_egg,
+    public_info,
+    sanitize_name,
+)
 from .storage.repo import DbUnavailableError, Repo
 from .storage.session import (
     Session,
@@ -224,6 +245,7 @@ from .tutorial import (
     TIER_STEPS,
     build_epilogue_prompt,
     build_greet_prompt,
+    build_name_intro_prompt,
     build_step_prompt,
 )
 
@@ -303,6 +325,83 @@ def _softened_config_for(mode: str, config: EngineConfig) -> EngineConfig:
     return _apply_beginner_softening(config)
 
 
+def _config_for_player(player_name: str, mode: str, config: EngineConfig) -> EngineConfig:
+    """按**档位**与**名字彩蛋**决定运行时配置（P20.0）。
+
+    * 先过 P16.0 的新手期放水（``_softened_config_for``）；
+    * 再叠上彩蛋的覆写：
+      - **股神狂妄** ⇒ 新闻准确率下降（假消息更多）；
+      - **社区特供** ⇒ 借款额度 / 还款额翻倍（只对无尽档有地方用）。
+
+    引擎默认值**一个字节都没动**（``engine/config.py`` 保持原样），
+    覆写只发生在运行时 ⇒ ``tests/simulate.py``（用默认配置）跑出来的
+    500 局基线**逐字节全等**。
+
+    彩蛋是**名字的纯函数**（``match_egg(player_name)``）—— 名字存在
+    ``players.name`` 里，所以宿主重启后效果照样在，不需要额外的状态。
+    """
+    config = _softened_config_for(mode, config)
+    egg = match_egg(player_name)
+    if egg is None:
+        return config
+    if egg.news_fake_boost > 0.0:
+        # 三个旋钮一起动，事实才站得住：
+        # * ``truth_ratio_honeymoon`` / ``true_ratio_honeymoon`` —— 开局那段
+        #   的真新闻占比与准确率（都往下压）；
+        # * ``fake_ratio_trap`` —— TRAP 阶段的**假新闻占比**（往上抬）。
+        #
+        # 只压前两个的话，事实「这一局新闻的准确率比平时低得多」在
+        # TRAP 阶段就是**假话**（那时候假新闻占比一点没动）。
+        news = replace(
+            config.news,
+            true_ratio_honeymoon=max(
+                0.0, config.news.true_ratio_honeymoon - egg.news_fake_boost
+            ),
+            truth_ratio_honeymoon=max(
+                0.0, config.news.truth_ratio_honeymoon - egg.news_fake_boost
+            ),
+            fake_ratio_trap=min(
+                1.0, config.news.fake_ratio_trap + egg.news_fake_boost
+            ),
+        )
+        config = replace(config, news=news)
+    if egg.loan_multiplier != 1.0:
+        infinite = replace(
+            config.infinite,
+            loan_amount=round(config.infinite.loan_amount * egg.loan_multiplier, 6),
+            loan_repay=round(config.infinite.loan_repay * egg.loan_multiplier, 6),
+        )
+        config = replace(config, infinite=infinite)
+    return config
+
+
+def _egg_applied_facts(egg: EasterEgg | None, mode: str) -> tuple[str, ...]:
+    """这一局**真的生效了**的彩蛋效果（喂给 Yui 的事实清单）。
+
+    **只报实际生效的**：无尽档不会被换成地狱档（那是降级），经典档也没有
+    放贷渠道（借了钱没人还）—— 没发生的事不许说给模型听。
+
+    措辞一律**不带数字**（P19.0 的同一条纪律）。
+    """
+    if egg is None:
+        return ()
+    facts: list[str] = []
+    if egg.cash_multiplier > 1.0:
+        facts.append(FACT_CASH_UP)
+    elif egg.cash_multiplier < 1.0:
+        facts.append(FACT_CASH_DOWN)
+    if egg.mode_override and mode == egg.mode_override:
+        facts.append(FACT_MODE_HELL)
+    if egg.news_fake_boost > 0.0:
+        facts.append(FACT_NEWS_FAKE)
+    if egg.loan_multiplier != 1.0:
+        # 无尽档才真的有放贷渠道；经典档签的那张纸眼下只是个签名。
+        facts.append(FACT_LOAN_SIGNED if mode == "infinite" else FACT_LOAN_UNAVAILABLE)
+    if egg.daily_return > 0.0:
+        facts.append(FACT_DAILY_RETURN)
+    return tuple(facts)
+
+
 __all__ = ["MockStockMeowPlugin"]
 
 
@@ -310,7 +409,7 @@ __all__ = ["MockStockMeowPlugin"]
 PLUGIN_ID = "mock_stock_meow"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.10.2"
+PLUGIN_VERSION = "0.10.3"
 
 #: P10：游戏速度档位 → **真实时间**推进间隔的倍率。
 #:
@@ -724,6 +823,12 @@ class MockStockMeowPlugin(NekoPluginBase):
         #: 最近一次玩家 id（P5：局终后 ``market_state.player_id`` 被清空，
         #: 面板要靠它去找归档的结算报告）。
         self._last_player_id: str = ""
+        #: P20.0：玩家最近用过的**自报名号**（纯内存缓存）。
+        #:
+        #: 空闲态的面板要把它回填进名字输入框（"下次进入直接读取并显示"）。
+        #: 真正的持久化在 ``players.name`` 里（那一列本来就在，写的就是
+        #: ``player.name``）—— 这里只是**省掉一次查库**的热路径缓存。
+        self._remembered_name: str = ""
         #: 猫娘最近的日终摘要（P5 面板用）。
         self._catgirl_daily: dict[str, Any] | None = None
         #: 猫娘上一次日终时的累计成交笔数（用来算"今天她动没动手"）。
@@ -1031,6 +1136,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         mode: str = "classic_arcade",
         seed: int | None = None,
         identity: str = DEFAULT_IDENTITY,
+        player_name: str = "",
     ) -> Ok:
         """开一局新对局。
 
@@ -1039,12 +1145,30 @@ class MockStockMeowPlugin(NekoPluginBase):
         P5.5 改动 2：新增 ``identity``（入场三选一）。
         它是**纯叙事字段** —— 开盘金、市场、初始天数全都不变，
         只在 ``join`` / ``status`` 与**破产结算页**上出现。
+
+        P20.0：新增 ``player_name`` —— 玩家自报的名字。
+        它会**落进 ``players.name``**（那一列本来就在，写的就是 ``player.name``），
+        并决定**名字彩蛋**（见 ``name_easter_eggs.py``）。
         """
+        # ── P20.0：名字清洗 + 彩蛋匹配（**在取配置之前**）─────────────
+        # 后端**永远不信任面板**：面板传什么，这里都重新洗一遍。
+        clean_name = sanitize_name(player_name, banned=banned_visible_death_words())
+        egg = match_egg(clean_name)
+        # 档位替换（只对**经典档**）：无尽已经是深渊，换成地狱反而是降级。
+        if egg is not None and egg.mode_override and mode != "infinite":
+            mode = egg.mode_override
         engine_config = await self._engine_config()
         if mode not in engine_config.difficulties:
             return _err("invalid_mode")
         if identity not in IDENTITIES:
             return _err("invalid_identity")
+
+        # ── P20.0：这个玩家的**运行时配置**（放水 + 彩蛋覆写）──────────
+        # 算一次，后面（模式层开局 / 魔爪契约）都用它 —— 免得两处公式跑偏。
+        player_config = _config_for_player(clean_name, mode, engine_config)
+        # ── P20.0：彩蛋事实（**只报真的生效了**的那些）────────────────
+        applied_facts = _egg_applied_facts(egg, mode)
+        egg_fact = build_fact(egg, clean_name, applied_facts)
 
         session, error = await self._session_or_error(engine_config)
         if error is not None:
@@ -1058,17 +1182,34 @@ class MockStockMeowPlugin(NekoPluginBase):
         )
         difficulty = engine_config.difficulties[mode]
         initial_cash = self._initial_cash(mode, actual_seed, engine_config)
+        # ── P20.0：彩蛋的初始资金乘数（**只作用在基础公式之后**）────────
+        # 基础公式 ``base * days`` 一个字都没改 ⇒ ``tests/simulate.py`` 的
+        # 副本公式永远有效 ⇒ 500 局基线逐字节全等。
+        initial_cash = apply_cash_multiplier(initial_cash, egg)
 
         player_id = "p_" + uuid4().hex[:8]
         player = Player(
             id=player_id,
-            name="玩家",
+            name=clean_name,
             cash=initial_cash,
             mode=mode,
             day=1,
             alive=True,
             initial_cash=initial_cash,
         )
+        # ── P20.0：社区特供 ⇒ 开局**必签魔爪契约**（只对无尽档）────────
+        #
+        # 无尽档才有放贷渠道（``_take_loan`` 对经典档直接拒），经典档的引擎里
+        # 也**没有还款路径** —— 硬塞一笔就是白送钱。所以经典档降级成
+        # 「那张纸眼下只是个签名」（事实里写的是 ``FACT_LOAN_UNAVAILABLE``）。
+        #
+        # 必须在 INSERT **之前**改：那一行要落的是签完契约之后的现金与欠款。
+        loan_granted = 0.0
+        if egg is not None and egg.loan_multiplier != 1.0 and mode == "infinite":
+            loan_granted = round(player_config.infinite.loan_amount, 6)
+            player.cash = round(player.cash + loan_granted, 6)
+            player.loan_debt = round(player.loan_debt + player_config.infinite.loan_repay, 6)
+            player.loan_taken_day = player.day
         market = MarketState(seed=actual_seed, tick=0, day=1, phase="honeymoon")
         market.stocks = create_market(
             actual_seed,
@@ -1092,7 +1233,8 @@ class MockStockMeowPlugin(NekoPluginBase):
                 # ── P16.0：前两关的新手期放水**只作用在模式层**──────
                 # （模式层只用 ``ctx.engine_config.news`` 生成新闻，
                 #  费率 / heat / 市场那几段没动过）
-                engine_config=_softened_config_for(mode, engine_config),
+                # ── P20.0：再叠上**名字彩蛋**的运行时覆写（新闻更假）────
+                engine_config=player_config,
                 mode=mode,
                 now=now,
             )
@@ -1117,14 +1259,18 @@ class MockStockMeowPlugin(NekoPluginBase):
                 "total_fee_paid, tokens, strikes, loan_debt, pending_action, death_reason, "
                 "death_title, is_catgirl, welfare_missed_days, loan_taken_day, "
                 "welfare_claimed_day, identity, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, 1, 1, ?, 0, 0, 0, 0, 0, 0, NULL, NULL, NULL, 0, "
-                "0, 0, 0, ?, ?, ?)",
+                # P20.0：``loan_debt`` / ``loan_taken_day`` 从写死的 0 变成占位
+                # —— 社区特供在无尽档开局就签了魔爪契约，那两格必须有值。
+                "VALUES (?, ?, ?, ?, 1, 1, ?, 0, 0, 0, 0, 0, ?, NULL, NULL, NULL, 0, "
+                "0, ?, 0, ?, ?, ?)",
                 (
                     player_id,
                     player.name,
                     player.cash,
                     mode,
                     initial_cash,
+                    round(player.loan_debt, 6),
+                    int(player.loan_taken_day),
                     identity,
                     now,
                     now,
@@ -1205,9 +1351,19 @@ class MockStockMeowPlugin(NekoPluginBase):
         # ── P19.0：新的一局 ⇒ 黑天鹅纪录归零（否则上一局的纪录会挡住本局）──
         self._black_swan_peak = 0.0
         self._black_swan_fired = False
+        # ── P20.0：记住玩家的自报名号（空闲态要回填进输入框）─────────
+        self._remembered_name = clean_name
         # P18.0：分档次动态教程 —— **开局成功之后**才启动，
         # 让 Yui 的开场白落在「玩家已经进场」的语境里。
-        await self._tutorial_start(mode)
+        #
+        # P20.0：开场白里带上**名字**与**彩蛋事实**（单独成段）。
+        # 教程**没开**（这一档教过了 / 这一档压根没教程）⇒ 单独推一趟，
+        # 别让玩家的名字没人念。
+        tutorial_started = await self._tutorial_start(
+            mode, player_name=clean_name, egg_fact=egg_fact
+        )
+        if not tutorial_started:
+            await self._push_name_intro(clean_name, egg_fact)
         # P5：第 1 天的新闻卡片（**只推第一条**，与新闻类型无关）。
         if setup_outcome is not None:
             await self._push_first_news_card(list(setup_outcome.news))
@@ -1224,6 +1380,11 @@ class MockStockMeowPlugin(NekoPluginBase):
             "identity": identity,
             "identity_label": identity_label(identity),
             "identity_intro": identity_intro(identity),
+            # ── P20.0：玩家自报名号 + 命中的彩蛋（**只给面板要用的**）──
+            # ``name_egg`` 里只有 key / category / label_key，**没有倍率**。
+            "player_name": clean_name,
+            "name_egg": public_info(egg),
+            "loan_granted": round(loan_granted, 2),
             "notice": "纯虚构反诈沙盘。所有标的、价格、代币均为虚构，无现金价值。",
         }
         # 无限模式：开局发放的基准股票（不卖就活不过第 1 天）。
@@ -1426,6 +1587,8 @@ class MockStockMeowPlugin(NekoPluginBase):
                 "joined": True,
                 "mode": player.mode,
                 "mode_name": _MODE_NAMES.get(player.mode, player.mode),
+                # ── P20.0：玩家自报名号（聊天框里也要认得人）──────────
+                "player_name": str(getattr(player, "name", "") or ""),
                 "phase": market.phase,
                 "day": player.day,
                 "alive": player.alive,
@@ -2458,6 +2621,13 @@ class MockStockMeowPlugin(NekoPluginBase):
             "player_id": report.player_id,
             "mode": report.mode,
             "mode_name": _MODE_NAMES.get(report.mode, report.mode),
+            # ── P20.0：结算页也要显示玩家的名字与命中的彩蛋 ────────────
+            # 引擎的 ``SettlementReport`` 是 frozen dataclass 且**没有名字字段**
+            # ⇒ 名字只能在这一层（插件自己的载荷 dict）补上。
+            "player_name": str(getattr(player, "name", "") or ""),
+            "name_egg": public_info(
+                match_egg(str(getattr(player, "name", "") or ""))
+            ),
             "seed": report.seed,
             "survivor": report.survivor,
             "days_survived": report.days_survived,
@@ -2546,12 +2716,24 @@ class MockStockMeowPlugin(NekoPluginBase):
             ),
         }
 
+    def _player_config(
+        self, session: Session, engine_config: EngineConfig
+    ) -> EngineConfig:
+        """这个玩家的**运行时配置**（新手期放水 + 名字彩蛋覆写）。
+
+        放贷相关的三个口子（小结 / 借款 / 导演强制放贷）都必须走这里 ——
+        否则「社区特供」的开局魔爪契约按翻倍额度签，
+        而玩家自己点的每一笔却按基础额度借，两套数字对不上。
+        """
+        name = str(getattr(session.player, "name", "") or "")
+        return _config_for_player(name, session.mode, engine_config)
+
     def _loan_summary(
         self, session: Session, engine_config: EngineConfig
     ) -> dict[str, Any]:
         """高利贷小结。"""
         player = session.player
-        infinite = engine_config.infinite
+        infinite = self._player_config(session, engine_config).infinite
         if session.mode != "infinite":
             return {"available": False, "note": "经典模式没有高利贷。"}
         return {
@@ -2742,6 +2924,58 @@ class MockStockMeowPlugin(NekoPluginBase):
             "taunt.cash_kill.beginner_early",
             "我前面教过你的 —— 这一关开始就有生活费，水位线就在那儿盯着呢。",
         )
+
+    @staticmethod
+    def _egg_taunt_line(player: Any) -> str:
+        """彩蛋专属的挽留句（P20.0）。
+
+        带**名号**出局时，那句挽留必须**认得那个名字** ——
+        否则「股神也会破产啊？」这种效果根本落不了地。
+
+        走 i18n（**不是 AI 生成的**）：这是**插件层的固定文案**，
+        零新机制，也不用等模型开口。文案里的 ``{name}`` 在这里替换掉。
+        """
+        name = str(getattr(player, "name", "") or "")
+        egg = match_egg(name)
+        if egg is None:
+            return ""
+        if egg.category == CATEGORY_HUBRIS:
+            text = i18n_text(
+                "taunt.cash_kill.egg_hubris",
+                "{name}也会破产啊？—— 看来这市场不认名号，只认余额。",
+            )
+        elif egg.category == CATEGORY_COMMUNITY:
+            text = i18n_text(
+                "taunt.cash_kill.egg_community",
+                "{name}是自己人，但自己人也没豁免 —— 魔爪契约不认关系，只认日子。",
+            )
+        elif egg.category == CATEGORY_STEADY:
+            text = i18n_text(
+                "taunt.cash_kill.egg_steady",
+                "{name}躺着就能赢，也会出局？那这市场比你想的还不讲理。",
+            )
+        else:
+            text = i18n_text(
+                "taunt.cash_kill.egg_self",
+                "{name}这名字起得倒是诚实 —— 只是诚实救不了账户。",
+            )
+        return text.replace("{name}", name)
+
+    def _death_detail_line(self, player: Any) -> str:
+        """破产时的**追加一行**（P19.0 的挽留句 + P20.0 的彩蛋句）。
+
+        两句都有 ⇒ 换行拼在一起；只有一句 ⇒ 就是那一句；都没有 ⇒ 空串
+        （调用方据此不填 detail 槽位）。
+        """
+        parts = [
+            line
+            for line in (
+                self._beginner_taught_you_line(player),
+                self._egg_taunt_line(player),
+            )
+            if line
+        ]
+        return "\n".join(parts)
 
     async def _push_first_news_card(self, news: list[Any]) -> None:
         """推当天的「突发新闻」卡片 —— **只推当天的第一条**。
@@ -2937,12 +3171,16 @@ class MockStockMeowPlugin(NekoPluginBase):
                         "gap": f"{max(0.0, next_cost - player.cash):.2f}",
                         "days": market.tick // ticks_per_day,
                         "title": player.death_title or "出局",
+                        # ── P20.0：嘲讽**带上玩家的名字** ──────────────
+                        # （``taunt.cash_kill.*`` 里带 ``{name}`` 占位）
+                        "name": str(getattr(player, "name", "") or ""),
                     },
                     # ── P19.0：入门档专属的「我前面教过你的」────────────
                     # 入门档是**第一个要交生活费**的档位，而教程里
                     # 刚好教过「看水位」。开局没几天就因为没看水位被清出去，
                     # 猫娘这句挽留是**有出处的** —— 不是通用嘲讽。
-                    detail=self._beginner_taught_you_line(player),
+                    # ── P20.0：彩蛋专属挽留句走**同一个 detail 槽位** ──
+                    detail=self._death_detail_line(player),
                 )
 
         # ── ⑦ 猫娘播报 + 低保提醒（无限模式日终）──────────────────
@@ -4204,7 +4442,10 @@ class MockStockMeowPlugin(NekoPluginBase):
             difficulty=difficulty,
             # ── P16.0：前两关的新手期放水**只作用在模式层**──────────
             # 后两档（收割场）拿到的是**原样配置**，压迫感不受影响。
-            engine_config=_softened_config_for(session.mode, engine_config),
+            # ── P20.0：再叠上**名字彩蛋**的运行时覆写（新闻更假 / 借款翻倍）──
+            engine_config=_config_for_player(
+                str(getattr(player, "name", "") or ""), session.mode, engine_config
+            ),
             catgirl=session.catgirl,
             mode=session.mode,
             now=time.time(),
@@ -4228,6 +4469,27 @@ class MockStockMeowPlugin(NekoPluginBase):
                 # 面板要显示"猫娘今天动没动手"：靠**累计成交笔数**的增量。
                 self._catgirl_daily = dict(daily.catgirl_daily)
                 self._catgirl_trades_seen = int(daily.catgirl_daily.get("trades", 0))
+            # ── P20.0：日终的**持仓回报**（稳如老狗类）────────────────
+            #
+            # 拍板口径：日终把**持仓市值**按这个比例**变成现金**
+            # （不是股数乘一点）—— 他什么都不用做，钱自己长一点。
+            #
+            # 这是一条**插件层**的钩子：引擎层与模式层一行没改，
+            # 没有彩蛋的玩家拿到的收益恒为 0（``daily_return_gain`` 返回 0）。
+            egg = match_egg(str(getattr(player, "name", "") or ""))
+            if egg is not None and egg.daily_return > 0.0:
+                positions_value = sum(
+                    position.market_value(prices.get(stock_id, 0.0))
+                    for stock_id, position in player.positions.items()
+                )
+                gain = daily_return_gain(positions_value, egg)
+                if gain > 0.0:
+                    player.cash = round(player.cash + gain, 6)
+                    journal.touch_player(player)
+                    self.logger.info(
+                        f"名字彩蛋「{egg.key}」日终回报 +{gain:.2f}"
+                        f"（持仓市值 {positions_value:.2f}）"
+                    )
             # ── P12：剧情借贷到期扣款（**在 tick 里**）────────────────
             # 只改内存里的 ``player.cash``；``_commit_tick`` 随后会把玩家整行
             # 写回 ⇒ 不用额外一次数据库写入，也不会与 tick 抢写（没有丢更新）。
@@ -5360,9 +5622,11 @@ class MockStockMeowPlugin(NekoPluginBase):
 
         金额与"每天限借一次"之外的规则**照常**：到手 500，次日还 600。
         限借一次会被**绕过**（导演要的就是"再逼一次"），但经济账一分不变。
+
+        P20.0：额度同样走**玩家配置**（名字彩蛋的翻倍额度）。
         """
-        infinite = engine_config.infinite
         player = session.player
+        infinite = self._player_config(session, engine_config).infinite
         player.cash += infinite.loan_amount
         player.loan_debt += infinite.loan_repay
         player.loan_taken_day = player.day
@@ -5937,7 +6201,11 @@ class MockStockMeowPlugin(NekoPluginBase):
         )
 
     async def _take_loan(self, session: Session, engine_config: EngineConfig) -> Ok:
-        """借高利贷（P4）：到手 500，次日还 600，还不上直接强制平仓。"""
+        """借高利贷（P4）：到手 500，次日还 600，还不上直接强制平仓。
+
+        P20.0：额度走**玩家配置**（名字彩蛋的「社区特供」把额度翻倍）——
+        开局必签的魔爪契约与玩家自己点的每一笔必须是**同一套数字**。
+        """
         player = session.player
         if session.mode != "infinite":
             return Ok(
@@ -5949,7 +6217,7 @@ class MockStockMeowPlugin(NekoPluginBase):
                 }
             )
 
-        infinite = engine_config.infinite
+        infinite = self._player_config(session, engine_config).infinite
         if player.loan_taken_day == player.day:
             return _err("loan_already_taken")
         if player.loan_debt > 0:
@@ -6398,6 +6666,15 @@ class MockStockMeowPlugin(NekoPluginBase):
                     # ── P7：终局页也要有视觉块（Emoji 海 / 降级档位）──
                     "visual": self._visual_block(None, engine_config),
                     "settlement": settlement,
+                    # ── P20.0：结算页也要认得人（名字与名号）──────────
+                    # 引擎的结算报告是 frozen dataclass 且**没有名字字段**
+                    # ⇒ 名字是插件层补进去的（见 ``_build_settlement_payload``）。
+                    "player_name": settlement.get("player_name")
+                    if isinstance(settlement, dict)
+                    else "",
+                    "name_egg": settlement.get("name_egg")
+                    if isinstance(settlement, dict)
+                    else None,
                     # ── P5.5 改动 5/7：称号图鉴（**只在结算页**）────
                     # 局中载荷**不带** achievements —— 图鉴是"打完才看"的东西。
                     "achievements": settlement.get("achievements")
@@ -6413,6 +6690,8 @@ class MockStockMeowPlugin(NekoPluginBase):
             return {
                 "stage": "idle",
                 "notice": "当前没有进行中的对局，请先加入一局。",
+                # ── P20.0：回填玩家上次用的名字（"下次进入直接读取"）────
+                "player_name": await self._remembered_player_name(),
                 # ── P10：空闲态也要有节奏块（玩家可以在开局前先调速度）──
                 "pace": pace,
                 "onboarding": onboarding,
@@ -7149,23 +7428,51 @@ class MockStockMeowPlugin(NekoPluginBase):
             tags = render_tags(profile)
             if tags:
                 situation = f"玩家现在的状态：{tags}。"
-        await self._tutorial_speak(build_step_prompt(tier, step, situation))
+        await self._tutorial_speak(
+            build_step_prompt(
+                tier,
+                step,
+                situation,
+                player_name=str(self._tutorial.get("player_name") or ""),
+                egg_fact=str(self._tutorial.get("egg_fact") or ""),
+            )
+        )
 
-    async def _tutorial_start(self, mode: str) -> None:
+    async def _push_name_intro(self, player_name: str, egg_fact: str = "") -> None:
+        """**教程没开**时单独推一趟：把名字（与彩蛋事实）交给 Yui。
+
+        只报事实（P13 契约），也只叫这一次的名字 —— 说完就散，不追着喊。
+        """
+        if not player_name and not egg_fact:
+            return
+        try:
+            await self._push_proactive(
+                build_name_intro_prompt(player_name, egg_fact), reason="name_egg"
+            )
+        except Exception as error:  # noqa: BLE001 - 招呼失败不该拖垮开局
+            self.logger.error(f"名字开场白异常（不影响开局）：{error}")
+
+    async def _tutorial_start(
+        self, mode: str, *, player_name: str = "", egg_fact: str = ""
+    ) -> bool:
         """按档位启动动态教程。
 
         **这一档已经学过了就不再来一遍** —— 教程不是骚扰。
+
+        返回 ``True`` = 教程真的开起来了（开场白里已经带上名字与彩蛋事实）；
+        ``False`` = 没开（这一档教过了 / 这一档没教程 / 玩家 id 缺失）——
+        调用方据此决定要不要**单独**推一趟名字开场白。
         """
         if mode not in TIER_STEPS:
-            return
+            return False
         player_id = str(self._last_player_id or "")
         if not player_id:
-            return
+            return False
         if (await self._tutorial_taught_tiers()).get(mode):
-            return  # 这一档**全局**教过了 —— 不再来一遍（教程不是骚扰）。
+            return False  # 这一档**全局**教过了 —— 不再来一遍（教程不是骚扰）。
         entry = await self._tutorial_load_tier(player_id, mode)
         if str(entry.get("phase") or "") == PHASE_DONE:
-            return
+            return False
         self._tutorial = {
             "phase": PHASE_GREET,
             "tier": mode,
@@ -7174,8 +7481,14 @@ class MockStockMeowPlugin(NekoPluginBase):
             "gate": "",
             "gates_seen": [],
             "epilogue_done": False,
+            # ── P20.0：名字与彩蛋事实跟着教程走（**只给事实**）──────
+            "player_name": player_name,
+            "egg_fact": egg_fact,
         }
-        await self._tutorial_speak(build_greet_prompt(mode))
+        await self._tutorial_speak(
+            build_greet_prompt(mode, player_name=player_name, egg_fact=egg_fact)
+        )
+        return True
 
     async def _tutorial_enter_step(self, index: int) -> None:
         """进入第 ``index`` 步（越界 ⇒ 结课）。"""
@@ -7431,6 +7744,12 @@ class MockStockMeowPlugin(NekoPluginBase):
             "mode": player.mode,
             "mode_name": _MODE_NAMES.get(player.mode, player.mode),
             "alive": player.alive,
+            # ── P20.0：玩家自报名号 + 命中的彩蛋（**只给面板要用的**）──
+            # ``name_egg`` 里只有 key / category / label_key，**没有倍率**。
+            "player_name": str(getattr(player, "name", "") or ""),
+            "name_egg": public_info(
+                match_egg(str(getattr(player, "name", "") or ""))
+            ),
             # ── 财务 ──────────────────────────────────────────────────
             "cash": round(player.cash, 6),
             "total_assets": round(total_assets, 6),
@@ -7743,6 +8062,34 @@ class MockStockMeowPlugin(NekoPluginBase):
         # 结算报告含 heat 曲线与种子 —— 那是结算页才允许出现的东西。
         # 面板只在**局终之后**展示它，所以这里整体透传是安全的。
         return payload
+
+    async def _remembered_player_name(self) -> str:
+        """玩家最近用过的**自报名号**（回填进空闲态的名字输入框）。
+
+        * 内存缓存优先（面板每秒轮询，**热路径上不能查库**）；
+        * 插件刚重启时缓存是空的 ⇒ 查一次库（``players`` 表里最近建的那一行
+          **人类玩家**；猫娘那行不算）。
+
+        真正的持久化就是 ``players.name`` —— 那一列本来就在
+        （P20.0 拍板：**复用**，不加新列）。
+        """
+        if self._remembered_name:
+            return self._remembered_name
+        try:
+            row = await self._repo.fetch_one(
+                "SELECT name FROM players WHERE is_catgirl = 0 "
+                "ORDER BY created_at DESC, id DESC LIMIT 1"
+            )
+        except Exception:  # noqa: BLE001 - 读不到就用默认名
+            return DEFAULT_PLAYER_NAME
+        if row is None:
+            return DEFAULT_PLAYER_NAME
+        try:
+            name = str(row["name"] or "").strip()
+        except (KeyError, IndexError, TypeError):
+            return DEFAULT_PLAYER_NAME
+        self._remembered_name = name or DEFAULT_PLAYER_NAME
+        return self._remembered_name
 
     async def _heat_context(
         self,

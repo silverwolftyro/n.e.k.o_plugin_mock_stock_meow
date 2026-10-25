@@ -59,6 +59,7 @@ import {
   Card,
   Columns,
   Divider,
+  Field,
   Grid,
   Inline,
   Input,
@@ -337,6 +338,19 @@ type State = {
   ticks_to_settle?: number
   mode?: string
   mode_name?: string
+  /**
+   * P20.0：玩家自报的名字（**戏名**，不是宿主 session 里的真名）。
+   *
+   * 空闲态用它回填输入框；局中与结算页用它显示"这是谁"。
+   */
+  player_name?: string
+  /**
+   * P20.0：命中的名字彩蛋。
+   *
+   * **只有** `key` / `category` / `label_key` —— 没有倍率、没有数值。
+   * `label_key` 指向 i18n 里的名号文案（面板自己查表显示徽标）。
+   */
+  name_egg?: { key?: string; category?: string; label_key?: string } | null
   alive?: boolean
   cash?: number
   total_assets?: number
@@ -2335,6 +2349,27 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     setGuideOpen(true)
   }, [onboarding.auto_open])
 
+  // ── P20.0：玩家自报名号（**戏名**）───────────────────────────────
+  //
+  // 后端把玩家上次的自报名号放进 `state.player_name`（空闲态回填）。
+  // 用户改过之后就不再被后端覆盖（`nameTouched`）。
+  //
+  // **防呆在前端先做一遍**（去换行、限长 12），后端**还会再洗一遍** ——
+  // 面板永远不可信。
+  const [nameDraft, setNameDraft] = useState<string>("")
+  const [nameTouched, setNameTouched] = useState(false)
+  useEffect(() => {
+    if (nameTouched) return
+    const incoming = String(state.player_name || "")
+    if (incoming) setNameDraft(incoming)
+  }, [state.player_name, nameTouched])
+  const onNameInput = (raw: string) => {
+    setNameTouched(true)
+    const cleaned = String(raw === undefined || raw === null ? "" : raw)
+      .replace(/[\r\n\t]/g, " ")
+      .slice(0, 12)
+    setNameDraft(cleaned)
+  }
   // ── P11：猫娘外置交互引导（主动搭话）───────────────────────────
   //
   // **主路径**：插件调 `push_message(ai_behavior="respond")`，宿主让**外置猫娘**
@@ -2789,6 +2824,15 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       : stage === "broke"
         ? t("visual.stage_broke")
         : t("visual.stage_rich")
+  // ── P20.0：玩家自报名号 + 命中的名号（**局中与结算页显示**）────────
+  //
+  // 空闲态**不显示**（那儿有输入框，名字已经看得见了）。
+  // `label_key` 由后端给（`panel.name_egg_*`），面板自己查表显示徽标 ——
+  // 面板**不解释**这个名号意味着什么（那是彩蛋引擎的事）。
+  const playerName = String(state.player_name || "")
+  const nameEgg = state.name_egg || null
+  const nameEggLabel = nameEgg && nameEgg.label_key ? t(String(nameEgg.label_key)) : ""
+  const showNameBadge = Boolean(playerName) && state.stage !== "idle"
   // P7.2：字体档位（只改字体，不改布局）。
   const stageClass =
     stage === "dying" ? "rrm-font-dying" : stage === "broke" ? "rrm-font-broke" : "rrm-font-rich"
@@ -3184,7 +3228,45 @@ export default function Panel(props: PluginSurfaceProps<State>) {
         if (event && typeof event.preventDefault === "function") event.preventDefault()
       },
     },
-    h("span", { className: "rrm-tag" }, `${t("panel.title")} · ${stageLabel}`),
+    h(
+      "span",
+      { className: "rrm-tag" },
+      `${t("panel.title")} · ${stageLabel}`,
+      // ── P20.0：名字 + 名号徽标（塞在标题里，**不占新的布局行**）──
+      showNameBadge
+        ? h(
+            "span",
+            {
+              style: {
+                marginLeft: "8px",
+                padding: "1px 8px",
+                borderRadius: "999px",
+                border: "1px solid rgba(142, 171, 219, 0.35)",
+                background: "rgba(142, 171, 219, 0.12)",
+                fontSize: "12px",
+                fontWeight: "700",
+                color: "var(--fg)",
+              },
+            },
+            playerName,
+            nameEggLabel
+              ? h(
+                  "span",
+                  {
+                    style: {
+                      marginLeft: "6px",
+                      padding: "0 6px",
+                      borderRadius: "999px",
+                      background: "rgba(214, 72, 106, 0.16)",
+                      color: "var(--danger)",
+                    },
+                  },
+                  nameEggLabel
+                )
+              : null
+          )
+        : null
+    ),
     // ── P10：自动/手动徽标 —— 一眼看出市场是自己走，还是等玩家推一拍 ────
     h(
       "span",
@@ -3698,7 +3780,8 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     /** 按档位开局：走 P11.1 的全局请求锁（狂点只会被静默丢弃，不会打爆宿主）。 */
     const joinMode = (mode: string) => {
       if (!joinActionId) return
-      void callAction(joinActionId, { mode })
+      // P20.0：把玩家自报名号一起带过去（后端会再洗一遍）。
+      void callAction(joinActionId, { mode, player_name: nameDraft.trim() })
     }
     /**
      * P14.0：一块**档位卡**。
@@ -3877,6 +3960,26 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             <Stack gap={12}>
               <Alert tone="info" message={state.notice || t("panel.idle")} />
               <Text>{t("panel.idle_hint")}</Text>
+              {/* ── P20.0：名字输入框（在档位卡**上方**）──────────────
+                  玩家先报个名，再挑档位。
+
+                  提示语写得欠一点是故意的（"别用真名，丢人"）——
+                  这是直播向的沙盘，认真取名反而出戏。
+
+                  防呆在前端先做一遍（去换行、限长 12）；**后端还会再洗一遍**
+                  —— 面板永远不可信。 */}
+              {h(
+                Field,
+                {
+                  label: t("panel.name_input_label"),
+                  help: t("panel.name_input_hint"),
+                },
+                h(Input, {
+                  value: nameDraft,
+                  placeholder: t("panel.name_input_placeholder"),
+                  onChange: onNameInput,
+                })
+              )}
               {/* ── P7.4：真正的开局入口 ──────────────────────────────
                   0.8.3 事故：空闲态只有一行冰冷的文字，玩家**没法开局** ——
                   要么去聊天框打「加入一局」，要么就卡在这儿。这里给两个大按钮，

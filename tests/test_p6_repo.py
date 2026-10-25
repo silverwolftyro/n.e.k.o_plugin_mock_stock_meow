@@ -314,7 +314,7 @@ def test_worktree_has_no_crlf_files() -> None:
 
 
 def test_version_is_0_7_4() -> None:
-    """版本号 = 0.10.2。
+    """版本号 = 0.10.3。
 
     版本史：
 
@@ -331,6 +331,7 @@ def test_version_is_0_7_4() -> None:
     * 0.9.4 —— P11：猫娘外置交互引导（主动搭话 + 呼叫猫娘 + 兜底弹窗）。
     * 0.9.5 —— P11.1：并发根治（上下文非阻塞 + 推进节流 + 面板请求锁）。
     * 0.9.6 —— P12.0：剧情引擎（四幕叙事 + 外置 Yui 驱动）+ 交易 GUI 化（滑块仓位）。
+    * 0.10.3 —— P20.0：命名系统与名字彩蛋引擎（名字输入 + 落库 + 四类彩蛋 + AI 名字注入）。
     * 0.10.2 —— P19.0：入门档教程补全（复用街机 4 步 + 第 4 步注入新事实） + 直播特供版两个隐藏开关（force_black_swan / show_progress）。
     * 0.10.1 —— P18.0：分档次动态教程（街机 4 步 / 命运挑战 3 步 / 无尽 6 步含延迟网贷节点 + 动态聚焦 UI + Yui 动态解说 + 结课小结）。
     * 0.10.0 —— P16.0：前两关爽感重塑（连击徽章 + 盈利数字跳动 + 弱化水位条与台账）+ Yui 深度情绪感知（情绪画像喂提示词 + 主动搭话）。
@@ -341,9 +342,9 @@ def test_version_is_0_7_4() -> None:
     """
     from plugins.mock_stock_meow import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.10.2"
+    assert PLUGIN_VERSION == "0.10.3"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.10.2"' in toml
+    assert 'version = "0.10.3"' in toml
 
 
 # ------------------------------------------------- ⑥ 面板文案全走 i18n

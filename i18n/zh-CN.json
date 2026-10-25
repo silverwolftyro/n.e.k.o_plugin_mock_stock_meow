@@ -297,7 +297,7 @@
   "taunt.heavy_delisted.3": "{stock} 退市了。你那 {weight} 的仓位，现在只是一段历史记录。",
   "taunt.cash_kill.1": "账单 {bill}，你口袋 {cash}。差额 {gap}。我可以按八折帮你平掉——或者你继续坐着，看它长成零。",
   "taunt.cash_kill.2": "你撑了 {days} 天。账单是 {bill}，你手上是 {cash}。数字对不上，人就对不上了。",
-  "taunt.cash_kill.3": "{title}。听着挺体面，可这局里你只是没交上钱。",
+  "taunt.cash_kill.3": "{name}，{title}。听着挺体面，可这局里你只是没交上钱。",
   "taunt.cash_kill.4": "我见过很多人像你一样。他们后来怎样了？我不说。",
   "taunt.cash_kill.beginner_early": "我前面教过你的 —— 这一关开始就有生活费，水位线就在那儿盯着呢。",
   "taunt.add_down.1": "{n} 次了。你每次跌两成就加一成仓，教科书上这叫摊薄成本，散户圈这叫给坑添土。",
@@ -517,5 +517,18 @@
   "panel.mode_infinite_title": "无尽模式（深渊）",
   "panel.mode_infinite_tag": "无底洞 · 高利贷 · 天桥排队",
   "panel.mode_infinite_hint": "「最后的筹码」—— 没有终局，只有更深的坑。",
-  "error.tutorial_not_active": "现在没有正在进行的教学。"
+  "error.tutorial_not_active": "现在没有正在进行的教学。",
+  "panel.name_input_title": "先报个名",
+  "panel.name_input_label": "你给自己起个名",
+  "panel.name_input_placeholder": "无名韭菜",
+  "panel.name_input_hint": "别用真名，丢人",
+  "panel.name_badge_title": "名号",
+  "panel.name_egg_community": "自家人",
+  "panel.name_egg_hubris": "股神",
+  "panel.name_egg_steady": "躺平王",
+  "panel.name_egg_self": "自嘲怪",
+  "taunt.cash_kill.egg_hubris": "{name}也会破产啊？—— 看来这市场不认名号，只认余额。",
+  "taunt.cash_kill.egg_community": "{name}是自己人，但自己人也没豁免 —— 魔爪契约不认关系，只认日子。",
+  "taunt.cash_kill.egg_steady": "{name}躺着就能赢，也会出局？那这市场比你想的还不讲理。",
+  "taunt.cash_kill.egg_self": "{name}这名字起得倒是诚实 —— 只是诚实救不了账户。"
 }

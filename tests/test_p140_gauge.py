@@ -341,7 +341,9 @@ def test_the_join_buttons_go_through_the_global_lock() -> None:
     """开局按钮必须走 P11.1 的**全局请求锁**（狂点不会打爆宿主）。"""
     code = _panel_code()
     assert "const joinMode = (mode: string) =>" in code
-    assert "void callAction(joinActionId, { mode })" in code
+    # P20.0：开局时**多带一个** ``player_name``（玩家自报名号）——
+    # 走锁这件事本身一个字没变，所以这里只查前缀。
+    assert "void callAction(joinActionId, { mode" in code
     assert "if (!joinActionId) return" in code
 
 
@@ -419,7 +421,7 @@ def test_the_new_i18n_keys_exist() -> None:
 
 
 def test_the_version_is_0_9_8() -> None:
-    """版本号 = 0.10.2。"""
-    assert 'version = "0.10.2"' in _TOML.read_text(encoding="utf-8")
+    """版本号 = 0.10.3。"""
+    assert 'version = "0.10.3"' in _TOML.read_text(encoding="utf-8")
     init = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.10.2"' in init
+    assert 'PLUGIN_VERSION = "0.10.3"' in init

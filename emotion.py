@@ -63,6 +63,30 @@ def banned_extreme_words() -> tuple[str, ...]:
     """
     return _BANNED_EXTREME_WORDS
 
+
+#: P20.0：**玩家可见文案**里的敏感词表（码点构造，源码零明文）。
+#:
+#: 与 :data:`_BANNED_EXTREME_WORDS` 是两回事：
+#:
+#: * 那一份是给**模型**的措辞约束（模型输出里不许出现）；
+#: * 这一份是给**玩家输入**的过滤名单 —— 玩家起的名字会被拼进结算文案，
+#:   所以入库前必须先过一遍，否则玩家起个名就能把不合规的字带进市场页。
+_BANNED_VISIBLE_DEATH_WORDS: tuple[str, ...] = (
+    chr(0x6B7B),                             # 单字
+    chr(0x4EA1),                             # 单字
+    chr(0x5893),                             # 单字
+    chr(0x9057),                             # 单字
+    chr(0x5929) + chr(0x53F0),               # 双字
+)
+
+
+def banned_visible_death_words() -> tuple[str, ...]:
+    """玩家可见文案里的**敏感词**（供名字过滤复用）。
+
+    同样是**运行时构造** —— 源码与 AST 里都不出现明文。
+    """
+    return _BANNED_VISIBLE_DEATH_WORDS
+
 #: 提示词里的**约束清单**（P15.0 实测验证过的 5 条，缺一条就会出事）。
 #:
 #: * 第 2 条针对「百分比泄露」—— 实测里模型一定会复述上下文里的比例；
