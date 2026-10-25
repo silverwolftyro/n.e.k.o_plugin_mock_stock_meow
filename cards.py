@@ -140,26 +140,26 @@ DEFAULT_IDENTITY = "quick"
 SILENCE_PROBABILITY = 0.3
 
 # ---------------------------------------------------------------------------
-# 死亡叙事与称号图鉴（P5.5 · 改动 4 / 改动 5）
+# 破产叙事与称号图鉴（P5.5 · 改动 4 / 改动 5）
 # ---------------------------------------------------------------------------
 
-#: 死因 → 结算页的一句叙事。
+#: 破产原因 → 结算页的一句叙事。
 #:
 #: **这是插件层的映射表** —— 引擎的 ``DEATH_TITLES`` 一行不动（P5.5 总约束），
 #: 引擎那一份是"机制说明"，这一份是"故事"。
 EPITAPHS: dict[str, str] = {
-    "starved": "你死于饿死。",
-    "liquidated": "你死于爆仓。",
-    "loan_default": "你死于贷款违约。",
+    "starved": "你破产了。穷困潦倒。",
+    "liquidated": "你破产了。资产归零。",
+    "loan_default": "你彻底破产了，抵押了所有能抵押的东西。为了还债，你被迫签下了终身给猫娘打工的契约，每天负责端茶倒水、买小鱼干。",
     "welfare_neglect": "你连续七天没去领工资。",
-    "harvested": "你死在被精准收割的那一刻。",
+    "harvested": "你破产了。被精准收割的那一刻。",
     "inaction": "你活到了最后，因为你什么都没做。",
 }
 
-#: 死因 → 中文短标签（改动 4 的第三屏要用）。
+#: 破产原因 → 中文短标签（改动 4 的第三屏要用）。
 DEATH_REASON_LABELS: dict[str, str] = {
-    "starved": "饿死",
-    "liquidated": "爆仓",
+    "starved": "穷困潦倒",
+    "liquidated": "资产归零",
     "loan_default": "贷款违约",
     "welfare_neglect": "连续七天没领工资",
     "harvested": "被精准收割",
@@ -172,24 +172,24 @@ DEATH_REASON_LABELS: dict[str, str] = {
 #: * ``title`` —— 称号名；
 #: * ``hint`` —— 未解锁时显示的提示（**「无为而治」的 hint 是唯一带「活」字的**，
 #:   这是玩家发现隐藏结局的线索）；
-#: * ``source`` —— 解锁来源（死因枚举 / 特殊条件 / 空 = 不可解锁的留白）。
+#: * ``source`` —— 解锁来源（破产原因枚举 / 特殊条件 / 空 = 不可解锁的留白）。
 ACHIEVEMENTS: tuple[dict[str, Any], ...] = (
     {
         "key": "grain",
         "title": "颗粒无收",
-        "hint": "你死于饿死。",
+        "hint": "你破产了。穷困潦倒。",
         "source": "starved",
     },
     {
         "key": "zero",
         "title": "满仓归零",
-        "hint": "你死于爆仓。",
+        "hint": "你破产了。资产归零。",
         "source": "liquidated",
     },
     {
         "key": "debt",
         "title": "债台高筑",
-        "hint": "你死于贷款违约。",
+        "hint": "你彻底破产了，抵押了所有能抵押的东西。为了还债，你被迫签下了终身给猫娘打工的契约，每天负责端茶倒水、买小鱼干。",
         "source": "loan_default",
     },
     {
@@ -201,7 +201,7 @@ ACHIEVEMENTS: tuple[dict[str, Any], ...] = (
     {
         "key": "sheared",
         "title": "精准收割",
-        "hint": "你死在被精准收割的那一刻。",
+        "hint": "你破产了。被精准收割的那一刻。",
         "source": "harvested",
     },
     {
@@ -229,7 +229,7 @@ ACHIEVEMENT_UNLOCK_NOTE = "你活到了第 {days} 天。你什么都没做。称
 
 
 def death_reason_label(reason: str | None) -> str:
-    """死因的中文短标签（改动 4 的第三屏用）。"""
+    """破产原因的中文短标签（改动 4 的第三屏用）。"""
     if not reason:
         return t("death_reason.unknown", "出局")
     return t(f"death_reason.{reason}", DEATH_REASON_LABELS.get(reason, "出局"))
@@ -274,7 +274,7 @@ def identity_intro(identity: str) -> str:
 
 
 def identity_echo(identity: str) -> str:
-    """身份呼应句（**只在死亡结算页**出现）。"""
+    """身份呼应句（**只在破产结算页**出现）。"""
     if identity not in IDENTITIES:
         identity = DEFAULT_IDENTITY
     return t(
@@ -615,9 +615,9 @@ def build_kill_card(
     identity_echo: str = "",
     catgirl_silence: str = "",
 ) -> Card:
-    """玩家被斩杀 —— 结算时刻的最后一击。
+    """玩家被强制平仓 —— 结算时刻的最后一击。
 
-    含死因、死亡称号、存活天数、最终资产、收割次数。
+    含破产原因、破产称号、存活天数、最终资产、收割次数。
 
     P5.5 改动 2/3：结算时刻追加**身份呼应句**与**猫娘沉默旁白**
     （两者都只在结算时出现，局中永远不会看到）。
@@ -633,7 +633,7 @@ def build_kill_card(
         body += catgirl_silence
     html_body = (
         f'<div class="jmm-card"><b>{_esc(title)}</b>'
-        + _kv("死因", f"{death_title}（{death_reason}）", cls="jmm-bad")
+        + _kv("破产原因", f"{death_title}（{death_reason}）", cls="jmm-bad")
         + _kv("存活天数", f"{days_survived} 天")
         + _kv("最终资产", _money(total_asset))
         + _kv("被收割", f"{harvest_count} 次")
@@ -720,7 +720,7 @@ def build_catgirl_daily_card(
 
 
 def build_taunt_card(*, trigger: str, text: str, detail: str = "") -> Card:
-    """猫娘嘲讽 —— 玩家失败时（或猫娘自己饿死时）的一记冷嘲。
+    """猫娘嘲讽 —— 玩家失败时（或猫娘自己破产时）的一记冷嘲。
 
     ``text`` 是**待审核文案**（来自 ``i18n`` 的 ``taunt.*`` 命名空间），
     本模块只负责把它装进卡片。

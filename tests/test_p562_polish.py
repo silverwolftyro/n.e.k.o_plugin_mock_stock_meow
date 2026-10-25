@@ -2,8 +2,8 @@
 
 守四条线：
 
-1. **改动 4 · 天台虚惊一场**：无限模式死亡返回三屏；经典模式为 ``None``；
-   三屏里的 ``identity_quote`` 与改动 2 的三个身份对应；死因标签正确；
+1. **改动 4 · 天桥虚惊一场**：无限模式破产返回三屏；经典模式为 ``None``；
+   三屏里的 ``identity_quote`` 与改动 2 的三个身份对应；破产原因标签正确；
    **不写任何具体的自杀细节**，第三屏落在"你还有机会"；不含任何内部字段。
 2. **改动 5 · 称号与图鉴**：``{epitaph} {身份呼应句}``；``achievements`` 独立表
    能插入/解锁；载荷里已解锁与未解锁分开；**「无为而治」的 hint 是唯一带
@@ -75,7 +75,7 @@ def _i18n() -> dict[str, str]:
 
 
 def _kill_player(repo: Repo, reason: str = "starved") -> None:
-    """把玩家标成死亡（模拟被斩杀）。"""
+    """把玩家标成破产（模拟被强制平仓）。"""
     run(
         repo.transaction(
             [
@@ -101,7 +101,7 @@ def _sell_baseline_stock(plugin, repo: Repo) -> None:
 
 
 def test_infinite_death_returns_three_screens(plugin) -> None:
-    """无限模式死亡 → ``death_scene`` 非空且有三屏。"""
+    """无限模式破产 → ``death_scene`` 非空且有三屏。"""
     run(plugin.join(mode="infinite", seed=7001))
     repo = Repo(plugin.db)
     _kill_player(repo, "starved")
@@ -113,7 +113,7 @@ def test_infinite_death_returns_three_screens(plugin) -> None:
 
 
 def test_classic_death_scene_is_null(plugin) -> None:
-    """经典模式死亡 → ``death_scene`` 为 ``None``（经典是教学关，不搞这么重）。"""
+    """经典模式破产 → ``death_scene`` 为 ``None``（经典是教学关，不搞这么重）。"""
     run(plugin.join(mode="classic_arcade", seed=7002))
     repo = Repo(plugin.db)
     _kill_player(repo, "starved")
@@ -133,13 +133,13 @@ def test_death_scene_quotes_the_identity(plugin, identity: str) -> None:
 
 
 def test_death_scene_screen3_names_the_death_reason(plugin) -> None:
-    """第三屏用中文死因标签（饿死 / 爆仓 / …），不是内部代码。"""
+    """第三屏用中文破产原因标签（穷困潦倒 / 资产归零 / …），不是内部代码。"""
     run(plugin.join(mode="infinite", seed=7004))
     repo = Repo(plugin.db)
     _kill_player(repo, "liquidated")
     payload = _value(run(plugin.settle()))
     scene = payload["death_scene"]
-    assert "爆仓" in scene["screen3"]
+    assert "资产归零" in scene["screen3"]
     assert "liquidated" not in scene["screen3"]
 
 
@@ -187,7 +187,7 @@ def test_death_scene_has_no_internal_fields(plugin) -> None:
 
 
 def test_epitaphs_cover_every_death_reason() -> None:
-    """每种死因都有叙事句（插件层映射表，引擎不动）。"""
+    """每种破产原因都有叙事句（插件层映射表，引擎不动）。"""
     from plugins.mock_stock_meow.cards import EPITAPHS
 
     for reason in (
@@ -210,9 +210,9 @@ def test_settlement_title_is_epitaph_plus_identity_echo(plugin) -> None:
     repo = Repo(plugin.db)
     _kill_player(repo, "starved")
     payload = _value(run(plugin.settle()))
-    assert payload["epitaph"] == "你死于饿死。"
+    assert payload["epitaph"] == "你破产了。穷困潦倒。"
     assert payload["death_title"] == (
-        "你死于饿死。 你入场时说想快点赚到钱。你确实很快——快到连饭都忘了吃。"
+        "你破产了。穷困潦倒。 你入场时说想快点赚到钱。你确实很快——快到连饭都忘了吃。"
     )
     assert payload["identity_echo"] in payload["death_title"]
 
@@ -224,11 +224,11 @@ def test_settlement_title_is_not_the_engine_title(plugin) -> None:
     _kill_player(repo, "starved")
     payload = _value(run(plugin.settle()))
     assert "引擎给的原始称号" not in payload["death_title"]
-    assert payload["death_title"].startswith("你死于饿死。")
+    assert payload["death_title"].startswith("你破产了。穷困潦倒。")
 
 
 def test_death_unlocks_an_achievement_row(plugin) -> None:
-    """死因成就写进 ``achievements`` 独立表。"""
+    """破产原因成就写进 ``achievements`` 独立表。"""
     run(plugin.join(mode="infinite", seed=7012))
     repo = Repo(plugin.db)
     _kill_player(repo, "liquidated")
@@ -263,7 +263,7 @@ def test_achievements_payload_splits_unlocked_and_locked(plugin) -> None:
     assert achievements["total"] == 8
     assert achievements["unlocked_count"] == len(achievements["unlocked"])
     assert len(achievements["unlocked"]) + len(achievements["locked"]) == 8
-    assert achievements["unlocked"], "死因成就应该已解锁"
+    assert achievements["unlocked"], "破产原因成就应该已解锁"
     for item in achievements["unlocked"]:
         assert item["title"]
         assert item["epitaph"]

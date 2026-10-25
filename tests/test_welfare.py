@@ -153,7 +153,7 @@ def test_seven_missed_days_kills_on_the_eighth() -> None:
 
 
 def test_welfare_kill_does_not_beat_loan_default() -> None:
-    """死因优先级：loan_default > welfare_neglect。"""
+    """破产原因优先级：loan_default > welfare_neglect。"""
     player = Player(id="p1", name="玩家", cash=0.0, mode="infinite")
     player.day = 2
     player.loan_debt = 600.0

@@ -177,7 +177,7 @@ def test_guide_modal_covers_the_three_required_topics() -> None:
     i18n = _i18n()
     assert "零花钱" in i18n["guide.step1_body"]
     assert "家底" in i18n["guide.step1_body"]
-    assert "棺材本" in i18n["guide.step1_body"]
+    assert "救命钱" in i18n["guide.step1_body"]
     assert "生活费" in i18n["guide.step1_body"]
     assert "梭哈" in i18n["guide.step2_body"]
     assert "割肉" in i18n["guide.step2_body"]
@@ -197,7 +197,7 @@ def test_guide_modal_has_three_numbered_steps() -> None:
     body = code.split("function GuideModal(", 1)[1].split("export default function Panel", 1)[0]
     assert body.count("step(") == 3, "《玩法说明》必须正好三步"
     # 注意：源码里 ``h(`` 与 ``Steps,`` 可能被换行拆开，所以用允许空白的正则，
-    # 别写成死板的字面量（否则改个排版就误报）。
+    # 别写成呆板的字面量（否则改个排版就误报）。
     assert re.search(r"h\(\s*Steps,", body), "必须用宿主的原生 Steps"
     assert re.search(r"h\(\s*Step,", body), "必须用宿主的原生 Step"
     assert "index: index" in body, "每一步都要带编号"
@@ -557,6 +557,6 @@ def test_no_dangerous_inline_styles() -> None:
 
 
 def test_version_is_0_9_5() -> None:
-    """版本号 = 0.9.8。"""
-    assert 'version = "0.9.8"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.9.8"' in _init_text()
+    """版本号 = 0.9.9。"""
+    assert 'version = "0.9.9"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.9.9"' in _init_text()

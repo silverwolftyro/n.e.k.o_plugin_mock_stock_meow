@@ -344,7 +344,7 @@ def test_visual_stage_turns_broke_after_the_threshold(plugin) -> None:
 
 
 def test_visual_stage_is_dying_in_infinite_mode(plugin) -> None:
-    """无限模式直接是"濒死"档。"""
+    """无限模式直接是"濒临破产"档。"""
     _value(run(plugin.join(mode="infinite", seed=9305)))
     payload = run(plugin.market_context())
     assert payload["visual"]["stage"] == "dying"
@@ -395,7 +395,7 @@ def test_panel_contains_the_p7_features() -> None:
     assert "closeOnEscape: false" in source
     assert "visual.loan_modal_body" in source
     # Emoji 海
-    assert "🤡" in source and "🪦" in source
+    assert "🤡" in source and "🥣" in source
     assert "visual.emoji_sea_title" in source
     # 弹幕 + 导演台（长按）
     assert "visual.danmaku_title" in source

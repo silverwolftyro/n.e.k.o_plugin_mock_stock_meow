@@ -266,11 +266,11 @@ def test_capsule_buttons_split_the_row_evenly() -> None:
 
 
 def test_money_labels_follow_the_family_stage() -> None:
-    """资金文案随家道三档变：零花钱 / 家底 / 棺材本。"""
+    """资金文案随家道三档变：零花钱 / 家底 / 救命钱。"""
     i18n = _i18n()
     assert i18n["visual.assets_rich"] == "零花钱"
     assert i18n["visual.assets_broke"] == "家底"
-    assert i18n["visual.assets_dying"] == "棺材本"
+    assert i18n["visual.assets_dying"] == "救命钱"
     source = _panel_text()
     assert "visual.assets_dying" in source
     assert "visual.cash_dying" in source

@@ -22,12 +22,12 @@
 * 所有标的 ID 形如 ``FAKE-xxx``，**不映射任何真实股票代码或外汇对**；
 * 价格、费率、代币均为虚构，**无现金价值**，不接入任何真实行情源；
 * 插件**不存在**充值、提现、兑换、入金、出金一类功能，连变量名与占位符都没有；
-* 游戏刻意演示「养套杀」（先让你小赢，在你上头的瞬间精准收割）与「每日账单斩杀」
+* 游戏刻意演示「养套杀」（先让你小赢，在你上头的瞬间精准收割）与「每日账单强制平仓」
   两种真实世界高频出现的收割手法，目的是让玩家在零成本环境里亲身体验被收割的
   全过程，从而对真实交易中的高收益诱导保持警惕。
 
 请勿把本插件的代码、参数或文案用于任何真实的金融工具、投资建议或营销场景。
-本文件内所有涉及收割／斩杀／二道贩子的逻辑均带注释说明其教育目的。
+本文件内所有涉及收割／强制平仓／二道贩子的逻辑均带注释说明其教育目的。
 
 局中隐藏规则（重要）
 --------------------
@@ -204,12 +204,12 @@ __all__ = ["MockStockMeowPlugin"]
 PLUGIN_ID = "mock_stock_meow"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.9.8"
+PLUGIN_VERSION = "0.9.9"
 
 #: P10：游戏速度档位 → **真实时间**推进间隔的倍率。
 #:
 #: **只改"现实里等多久跳一拍"，一个游戏数值都不碰**：每天多少 tick、
-#: 行情怎么走、手续费多少、斩杀线在哪 —— 全部不变。倍率越大＝等得越久。
+#: 行情怎么走、手续费多少、强制平仓线在哪 —— 全部不变。倍率越大＝等得越久。
 #:
 #: * ``slow``   —— 3 倍间隔，经典模式一个游戏日约 4.8 分钟（默认太窒息）
 #: * ``normal`` —— 1 倍，等同 0.9.2 的手感
@@ -882,7 +882,7 @@ class MockStockMeowPlugin(NekoPluginBase):
 
         P5.5 改动 2：新增 ``identity``（入场三选一）。
         它是**纯叙事字段** —— 开盘金、市场、初始天数全都不变，
-        只在 ``join`` / ``status`` 与**死亡结算页**上出现。
+        只在 ``join`` / ``status`` 与**破产结算页**上出现。
         """
         engine_config = await self._engine_config()
         if mode not in engine_config.difficulties:
@@ -1039,7 +1039,7 @@ class MockStockMeowPlugin(NekoPluginBase):
 
         await save_snapshot(self.state, market, player_id)
         # 记住玩家 id：局终后 ``market_state.player_id`` 被清空，面板要靠它
-        # 去找归档的结算报告（P4 遗留问题 4）。
+        # 去找归档的结算报告（P4 历史问题 4）。
         self._last_player_id = player_id
         # P5：第 1 天的新闻卡片（**只推第一条**，与新闻类型无关）。
         if setup_outcome is not None:
@@ -1053,7 +1053,7 @@ class MockStockMeowPlugin(NekoPluginBase):
             "new_game": True,
             "ticks_per_day": difficulty.ticks_per_day,
             # ── P5.5 改动 2：入场身份 + 开场台词 ────────────────────
-            # 呼应句**不在这里** —— 它只在死亡结算页出现。
+            # 呼应句**不在这里** —— 它只在破产结算页出现。
             "identity": identity,
             "identity_label": identity_label(identity),
             "identity_intro": identity_intro(identity),
@@ -1210,7 +1210,7 @@ class MockStockMeowPlugin(NekoPluginBase):
     @plugin_entry(
         id="status",
         name="查看状态",
-        description="查看自己的资产、持仓与距离斩杀线。",
+        description="查看自己的资产、持仓与距离强制平仓线。",
     )
     @_locked
     async def status(self) -> Ok:
@@ -1270,14 +1270,14 @@ class MockStockMeowPlugin(NekoPluginBase):
                 "fee_paid": round(player.total_fee_paid, 6),
                 "strikes": player.strikes,
                 "positions": positions,
-                # ── P3 新增：二道贩子提案 / 收割通知 / 死因 ──
+                # ── P3 新增：二道贩子提案 / 收割通知 / 破产原因 ──
                 # 这三项都**不含 heat 数值**（heat 只在 settle 出现）。
                 "pending_action": self._public_pending_action(player.pending_action or {}),
                 "pending_event": self._pending_event,
                 "death_reason": player.death_reason,
                 "death_title": player.death_title,
                 # ── P5.5 改动 2：入场身份（**只有 ID，不含呼应句**）──
-                # 呼应句只在死亡结算页出现，局中一律不给。
+                # 呼应句只在破产结算页出现，局中一律不给。
                 "identity": session.identity,
                 # ── P4 新增：低保 / 高利贷 / 当天新闻 ──
                 # 连续未领低保的天数（超过上限会被斩）。
@@ -1890,14 +1890,14 @@ class MockStockMeowPlugin(NekoPluginBase):
         )
 
     # ------------------------------------------------------------------
-    # P5.5 改动 4：天台虚惊一场（death_scene）
+    # P5.5 改动 4：天桥虚惊一场（death_scene）
     # ------------------------------------------------------------------
     #
-    # 三屏是**梦**：第一屏在天台，第二屏醒来（趴在出租屋的桌上），第三屏落在
+    # 三屏是**梦**：第一屏在天桥，第二屏醒来（趴在出租屋的桌上），第三屏落在
     # "你还有机会"。**不写任何具体的自杀细节**（不写"跳下去""往前走"）——
     # 留白本身就是表达。
     #
-    # 只对**无限模式的死亡**触发：经典模式是教学关，不需要这么重。
+    # 只对**无限模式的破产**触发：经典模式是教学关，不需要这么重。
 
     @staticmethod
     def _death_scene(
@@ -1919,15 +1919,15 @@ class MockStockMeowPlugin(NekoPluginBase):
             "screen1": _fill_text(
                 i18n_text(
                     "death_scene.screen1",
-                    "你站在天台上。风很大。\n你想起入场那天说的话：“{identity_quote}”",
+                    "你站在天桥上，看着车流。风很大。\n你想起入场那天说的话：“{identity_quote}”",
                 ),
                 params,
             ),
             "screen2": _fill_text(
                 i18n_text(
                     "death_scene.screen2",
-                    "……然后你醒了。\n你趴在出租屋的桌子上，手机屏幕还亮着，"
-                    "股市 K 线还在跳。\n是猫娘把你摇醒的。"
+                    "……然后你挨了一记飞踢。\n猫娘把你从天桥边踹回了出租屋。"
+                    "你醒了，趴在桌子上，手机屏幕还亮着，股市 K 线还在跳。\n"
                     "她说：“你刚才说梦话，说什么‘再借一笔就能回本’。”",
                 ),
                 params,
@@ -1935,7 +1935,7 @@ class MockStockMeowPlugin(NekoPluginBase):
             "screen3": _fill_text(
                 i18n_text(
                     "death_scene.screen3",
-                    "你死了。死因：{death_reason_label}。存活天数：{days} 天。\n"
+                    "你破产了。破产原因：{death_reason_label}。撑了 {days} 天。\n"
                     "但你醒过来了。\n现实里，你还有机会不玩这个游戏。",
                 ),
                 params,
@@ -2021,7 +2021,7 @@ class MockStockMeowPlugin(NekoPluginBase):
     async def _maybe_unlock_achievements(self, session: Session) -> None:
         """称号解锁的两个触发点（P5.5 改动 5 / 改动 6）。
 
-        1. **死因成就** —— 玩家死的那一刻就解锁（死因 → 称号）。
+        1. **破产成就** —— 玩家破产的那一刻就解锁（破产原因 → 称号）。
         2. **「无为而治」** —— 第 ``INACTION_UNLOCK_DAYS`` 天且零有效交易。
 
         两处都是**幂等**的（``achievements`` 表主键是 ``(player_id, title)``）。
@@ -2038,7 +2038,7 @@ class MockStockMeowPlugin(NekoPluginBase):
                     if unlocked is not None:
                         self.logger.info(
                             f"玩家 {player.id} 解锁称号：{unlocked['title']}"
-                            f"（死因 {reason}）"
+                            f"（破产原因 {reason}）"
                         )
             return
         await self._maybe_unlock_inaction(session)
@@ -2046,13 +2046,13 @@ class MockStockMeowPlugin(NekoPluginBase):
     async def _maybe_unlock_settlement_achievements(self, session: Session, report) -> None:
         """结算时的成就解锁（P5.5 改动 5 · P6 选项 B 修正）。
 
-        * 死因 → 对应称号（与日终那次重复时是**幂等**的，不会插两行）；
+        * 破产原因 → 对应称号（与日终那次重复时是**幂等**的，不会插两行）；
         * 结局 ``inaction`` → 「无为而治」；
         * **活着**结算时总资产为 0 → 「一贫如洗」。
 
         「一贫如洗」的口径是 P6 拍板的**选项 B**：必须是**活着**的。
-        选项 A（不论死活）会与 5 个死因成就**必然同时解锁**（死在盘上账上必然是零），
-        等于没有独立价值；选项 B 两者互斥，叙事才成立（"你没死，但什么都没了"）。
+        选项 A（不论结局）会与 5 个破产成就**必然同时解锁**（清盘时账上必然是零），
+        等于没有独立价值；选项 B 两者互斥，叙事才成立（"你没破产，但什么都没了"）。
         """
         player = session.player
         tick = int(getattr(report, "ticks_played", 0) or 0)
@@ -2217,10 +2217,10 @@ class MockStockMeowPlugin(NekoPluginBase):
             catgirl_result=catgirl_result,
             news_log=news_log,
         )
-        # ── P5.5 改动 5：结算时的成就解锁（死因 / 结局 / 一贫如洗）────
+        # ── P5.5 改动 5：结算时的成就解锁（破产原因 / 结局 / 一贫如洗）────
         await self._maybe_unlock_settlement_achievements(session, report)
         # ── P5.5 改动 2/3：结算页的叙事三件套 ──────────────────────
-        # 身份呼应句**只在死亡结算页**出现（活到终局不给）。
+        # 身份呼应句**只在破产结算页**出现（活到终局不给）。
         dead = not player.alive and bool(player.death_reason)
         identity_echo_text = identity_echo(session.identity) if dead else ""
         # 猫娘沉默旁白：只在**本局有猫娘**时出现，概率 30%，按 seed 稳定。
@@ -2235,7 +2235,7 @@ class MockStockMeowPlugin(NekoPluginBase):
             if ending == "inaction"
             else ""
         )
-        # ── P5.5 改动 5：死亡称号的叙事句（epitaph）────────────────
+        # ── P5.5 改动 5：破产称号的叙事句（epitaph）────────────────
         # **插件层**的映射表（引擎的 DEATH_TITLES 一行不动）。
         epitaph_text = ""
         if report.death_reason:
@@ -2250,7 +2250,7 @@ class MockStockMeowPlugin(NekoPluginBase):
                 if identity_echo_text
                 else epitaph_text
             )
-        # ── P5.5 改动 4：天台虚惊一场（**只对无限模式的死亡**）──────
+        # ── P5.5 改动 4：天桥虚惊一场（**只对无限模式的破产**）──────
         death_scene = self._death_scene(
             session,
             dead=dead,
@@ -2363,25 +2363,34 @@ class MockStockMeowPlugin(NekoPluginBase):
             "outstanding": round(player.loan_debt, 6),
             "amount": round(infinite.loan_amount, 6),
             "repay": round(infinite.loan_repay, 6),
-            "note": "借五百还六百。还不上，明天就是你的忌日。",
+            "note": "借五百还六百。还不上，明天就是你的清算日。",
         }
 
     # ------------------------------------------------------------------
-    # P5.5 改动 1：死因称号的**文案层覆盖**
+    # P5.5 改动 1：破产原因称号的**文案层覆盖**
     # ------------------------------------------------------------------
     #
     # 引擎的 ``DEATH_TITLES`` 里还留着"低保"字样（P5.5 总约束：``engine/``
     # 一行不动），但玩家**永远看不到**那一句 —— 插件层按 ``death_reason``
-    # （**死因枚举**，不是字符串比对）改写称号。
+    # （**破产原因枚举**，不是字符串比对）改写称号。
     #
-    #: 死因 → i18n key（值在 ``i18n/zh-CN.json`` 的 ``death.*`` 命名空间）。
+    #: 破产原因 → i18n key（值在 ``i18n/zh-CN.json`` 的 ``death.*`` 命名空间）。
+    #:
+    #: **5 种破产原因全覆盖**（P14.1）：引擎的 ``DEATH_TITLES`` 里仍留着
+    #: 几处过于激烈的措辞（引擎层一行不动），
+    #: 插件层必须把**每一种**都改写掉 —— 少覆盖一种，玩家就能从结算页
+    #: 直接读到引擎原文。
     _DEATH_TITLE_OVERRIDES: dict[str, str] = {
+        "starved": "death.starved",
+        "liquidated": "death.liquidated",
+        "harvested": "death.harvested",
         "welfare_neglect": "death.welfare_neglect",
+        "loan_default": "death.loan_default",
     }
 
     @classmethod
     def _override_death_title(cls, player: Player) -> None:
-        """把引擎产出的死因称号改写成插件层文案（**原地**修改）。"""
+        """把引擎产出的破产原因称号改写成插件层文案（**原地**修改）。"""
         reason = player.death_reason
         if not reason:
             return
@@ -2389,7 +2398,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         if key is None:
             return
         player.death_title = i18n_text(
-            key, "连续七天没去领工资。制度不养闲人 —— 但这条命是你自己的。"
+            key, "这一局到此为止。账上的数字已经替你回答了。"
         )
 
     async def _news_log(self) -> list[dict[str, Any]]:
@@ -2605,7 +2614,7 @@ class MockStockMeowPlugin(NekoPluginBase):
                 {"stock": stock.name, "weight": f"{weight:.0%}"},
             )
 
-        # ── ④ 猫娘自己饿死 → 猫娘嘲讽 ─────────────────────────────
+        # ── ④ 猫娘自己破产 → 猫娘嘲讽 ─────────────────────────────
         catgirl = session.catgirl
         if catgirl is not None and not catgirl.alive and daily is not None:
             await self._push_taunt(
@@ -2658,9 +2667,9 @@ class MockStockMeowPlugin(NekoPluginBase):
                     )
                 )
 
-        # ── ⑥ 斩杀卡片 + 现钱斩杀嘲讽 ──────────────────────────────
+        # ── ⑥ 强制平仓卡片 + 现钱强制平仓嘲讽 ──────────────────────────────
         if settlement is not None and settlement.dead and player.death_reason:
-            # 改动 5：死因的**叙事句**（epitaph）当称号用 —— 细节 A：
+            # 改动 5：破产原因的**叙事句**（epitaph）当称号用 —— 细节 A：
             # ``{epitaph} {身份呼应句}`` 一句话读完。
             epitaph = EPITAPHS.get(player.death_reason, "")
             await self._push_card(
@@ -2728,7 +2737,7 @@ class MockStockMeowPlugin(NekoPluginBase):
                 )
 
     async def _harvest_count(self, player_id: str) -> int:
-        """这个玩家一共被收割了几次（斩杀卡片用）。"""
+        """这个玩家一共被收割了几次（强制平仓卡片用）。"""
         try:
             rows = await self._repo.fetch_all(
                 "SELECT COUNT(*) AS n FROM liquidation_log WHERE player_id = ?",
@@ -3666,7 +3675,7 @@ class MockStockMeowPlugin(NekoPluginBase):
     def _story_apply_debt(
         self, player: Player, state: dict[str, Any], day: int
     ) -> float:
-        """剧情借贷**到期扣款**（从现金里扣；扣不动就欠着，**绝不判死**）。
+        """剧情借贷**到期扣款**（从现金里扣；扣不动就欠着，**绝不判破产**）。
 
         **只在内存里改现金** —— 调用方（tick 流水线）随后会把玩家整行写回，
         所以不需要额外的一次数据库写入，也不会与 tick 抢写。
@@ -3899,7 +3908,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         tick = market.tick
         journal = _TickJournal()
         # 记住玩家 id：局终后 ``market_state.player_id`` 被清空，
-        # 面板要靠它去找归档的结算报告（P4 遗留问题 4）。
+        # 面板要靠它去找归档的结算报告（P4 历史问题 4）。
         self._last_player_id = player.id
 
         # ── 步 2：更新所有存活标的价格（公共底盘）────────────────
@@ -3963,7 +3972,7 @@ class MockStockMeowPlugin(NekoPluginBase):
             # ── P12：剧情借贷到期扣款（**在 tick 里**）────────────────
             # 只改内存里的 ``player.cash``；``_commit_tick`` 随后会把玩家整行
             # 写回 ⇒ 不用额外一次数据库写入，也不会与 tick 抢写（没有丢更新）。
-            # 扣不动就**欠着**（绝不判死）—— 借钱的人已经够惨了。
+            # 扣不动就**欠着**（绝不判破产）—— 借钱的人已经够惨了。
             try:
                 story_state = await self._story_load_state(str(player.id))
                 repaid = self._story_apply_debt(player, story_state, int(player.day))
@@ -3980,7 +3989,7 @@ class MockStockMeowPlugin(NekoPluginBase):
             except Exception as error:  # noqa: BLE001 - 剧情绝不能把结算带崩
                 self.logger.warning(f"剧情还债异常（不影响结算）：{error}")
 
-        # ── P5.5：死因称号的文案层覆盖（引擎零改动）───────────────
+        # ── P5.5：破产原因称号的文案层覆盖（引擎零改动）───────────────
         # 引擎给的称号里还有"低保"字样；这里按 death_reason 改写，
         # 于是落库的、面板上的、卡片里的称号**全部**是"打工工资"的说法。
         self._override_death_title(player)
@@ -4025,7 +4034,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         await self._push_cards(session, outcome, engine_config)
 
         # ── P5.5 改动 5/6：称号解锁 ────────────────────────────────
-        # 死因成就（死的那一刻就解锁）+ 「无为而治」（第 14 天零有效交易）。
+        # 破产成就（清盘的那一刻就解锁）+ 「无为而治」（第 14 天零有效交易）。
         await self._maybe_unlock_achievements(session)
 
         # ── P4：经典模式第 30 个游戏日自动终局并自动结算 ──────────
@@ -4412,7 +4421,7 @@ class MockStockMeowPlugin(NekoPluginBase):
     @plugin_entry(
         id="daily_loan",
         name="借高利贷",
-        description="借一笔高利贷：到手 500，次日还 600，还不上直接斩杀。每天限借一次。",
+        description="借一笔高利贷：到手 500，次日还 600，还不上直接强制平仓。每天限借一次。",
     )
     @_locked
     async def daily_loan(self) -> Ok:
@@ -4885,7 +4894,7 @@ class MockStockMeowPlugin(NekoPluginBase):
     # 四条指令全部**复用引擎既有的函数**，引擎层（``engine/``）一行不改：
     #   * ``crash``   → ``engine.market.apply_jump``（引擎已有的纯函数）
     #   * ``loan``    → ``InfiniteConfig`` 的既有借贷参数
-    #   * ``welfare`` → 引擎既有的 ``welfare_neglect`` 死因线
+    #   * ``welfare`` → 引擎既有的 ``welfare_neglect`` 破产原因线
     #   * ``kill``    → ``engine.settlement.apply_death``
 
     @ui.action(
@@ -4902,7 +4911,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         description=(
             "**直播特制版专用**的导演台指令。开源纯净版下这个入口恒报错。"
             "op=crash 让某只标的暴跌（要 stock_id）/ loan 强制发高利贷"
-            "（仅无限模式）/ welfare 强制断供 / kill 立即斩杀。"
+            "（仅无限模式）/ welfare 强制断供 / kill 立即强制平仓。"
         ),
         input_schema={
             "type": "object",
@@ -4925,7 +4934,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         """导演台指令（**纯净版恒报错**）。
 
         这些干预**只发生在插件层**：暴跌复用引擎既有的 ``apply_jump``，
-        借贷复用引擎配置里的既有参数，斩杀复用引擎既有的 ``apply_death``。
+        借贷复用引擎配置里的既有参数，强制平仓复用引擎既有的 ``apply_death``。
         引擎的公式与数值一个都没改。
 
         暴跌是**排队制**：面板点一下就排一条，**下一个 tick** 施加 ——
@@ -5062,7 +5071,7 @@ class MockStockMeowPlugin(NekoPluginBase):
                 "loan_debt": round(player.loan_debt, 6),
                 "note": i18n_text(
                     "director.note.loan",
-                    "魔爪契约已生效。明天记得还，忘了就当你签的是遗嘱。",
+                    "魔爪契约已生效。明天记得还，忘了就当你签的是卖身契。",
                 ),
             }
         )
@@ -5070,9 +5079,9 @@ class MockStockMeowPlugin(NekoPluginBase):
     async def _director_force_welfare(
         self, session: Session, engine_config: EngineConfig
     ) -> Ok:
-        """导演强制断供（把连续未领天数拉过引擎的斩杀线）。
+        """导演强制断供（把连续未领天数拉过引擎的强制平仓线）。
 
-        用的是引擎**既有的** ``welfare_neglect`` 死因 —— 引擎只管判死，
+        用的是引擎**既有的** ``welfare_neglect`` 破产原因 —— 引擎只管判破产，
         怎么走到那条线是插件层的事。
         """
         player = session.player
@@ -5106,7 +5115,7 @@ class MockStockMeowPlugin(NekoPluginBase):
     async def _director_force_kill(
         self, session: Session, engine_config: EngineConfig
     ) -> Ok:
-        """导演立即斩杀（复用引擎既有的 ``apply_death``）。"""
+        """导演立即强制平仓（复用引擎既有的 ``apply_death``）。"""
         player = session.player
         apply_death(player, "harvested")
         self._override_death_title(player)
@@ -5144,7 +5153,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         id="declare_bankrupt",
         name="宣布破产",
         description=(
-            "交不起下一顿饭时的最后一条路：当场结束这一局（死因：交不起账单），"
+            "交不起下一顿饭时的最后一条路：当场结束这一局（破产原因：交不起账单），"
             "并给出结算报告。经典模式没有高利贷，弹窗上就只剩这一条路。"
         ),
     )
@@ -5152,7 +5161,7 @@ class MockStockMeowPlugin(NekoPluginBase):
     async def declare_bankrupt(self) -> Ok:
         """宣布破产（面板「赛博网贷广告」弹窗的**逃生通道**之一）。
 
-        走的是**引擎既有的** ``apply_death(player, "starved")`` —— 死因文案
+        走的是**引擎既有的** ``apply_death(player, "starved")`` —— 破产原因文案
         仍然是引擎那一套，引擎层一行不改。归档路径与 ``settle`` 入口**完全
         复用**（结算报告 + 归档 JSON + 清空 ``market_state.player_id``）。
 
@@ -5204,9 +5213,9 @@ class MockStockMeowPlugin(NekoPluginBase):
                 seed=int(player.trade_count),
                 params={"days": int(player.day)},
             )
-            or i18n_text("taunt.bankrupt.1", "你按了破产。放心，天台的风是免费送你的。")
+            or i18n_text("taunt.bankrupt.1", "你按了破产。放心，天桥的风是免费送你的。")
         )
-        # P7.3：玩家已经死了，网贷弹窗的待办一笔勾销（别让 watchdog 再动它）。
+        # P7.3：玩家已经被清盘了，网贷弹窗的待办一笔勾销（别让 watchdog 再动它）。
         self._loan_prompt_at = 0.0
         return Ok(payload)
 
@@ -5292,7 +5301,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         self._loan_prompt_at = 0.0
 
         if choice == "refuse":
-            # 逃生通道：我不借了，把我埋了吧。
+            # 逃生通道：我不借了，把我清出去吧。
             return await self._do_declare_bankrupt(session, engine_config)
 
         # choice == "borrow"
@@ -5557,7 +5566,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         )
 
     async def _take_loan(self, session: Session, engine_config: EngineConfig) -> Ok:
-        """借高利贷（P4）：到手 500，次日还 600，还不上直接斩杀。"""
+        """借高利贷（P4）：到手 500，次日还 600，还不上直接强制平仓。"""
         player = session.player
         if session.mode != "infinite":
             return Ok(
@@ -5628,11 +5637,11 @@ class MockStockMeowPlugin(NekoPluginBase):
     ) -> Ok:
         """撤销二道贩子的强制卖出。
 
-        P4 语义：**撤销不再额外 +1 三振，也不斩杀**。
+        P4 语义：**撤销不再额外 +1 三振，也不强制平仓**。
 
         ``strikes`` 数的是"连续交不起的次数"，它在**日终结算**时就记上了 ——
-        "你确实交不起"是事实，撤销只是反悔，不是没发生过。三振斩杀也由结算
-        负责，撤销窗口里反悔一次不会让你立刻死，但明天你依然交不起。
+        "你确实交不起"是事实，撤销只是反悔，不是没发生过。三振强制平仓也由结算
+        负责，撤销窗口里反悔一次不会让你立刻清盘，但明天你依然交不起。
         """
         player = session.player
         market = session.market
@@ -5794,7 +5803,7 @@ class MockStockMeowPlugin(NekoPluginBase):
     def _distance_to_death(
         self, session: Session, engine_config: EngineConfig
     ) -> float | None:
-        """距离斩杀线（没有生活费的档位为 None）。"""
+        """距离强制平仓线（没有生活费的档位为 None）。"""
         next_cost = self._next_living_cost(session.difficulty, engine_config)
         if next_cost <= 0:
             return None
@@ -5809,7 +5818,7 @@ class MockStockMeowPlugin(NekoPluginBase):
     #   * 新手引导 —— 首次打开面板自动弹一次【玩法说明】，状态记在 player_id 上。
     #
     # 引擎层（engine/）与模式层（modes/）**一行不改**：这里没有任何一个
-    # 数字会进入行情、手续费、斩杀线或日终结算的计算。
+    # 数字会进入行情、手续费、强制平仓线或日终结算的计算。
     # ------------------------------------------------------------------
 
     async def _ensure_settings_cache(self) -> None:
@@ -5971,7 +5980,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         **局中隐藏**：载荷不含 heat / seed / 反转日 / 新闻真假。
 
         局终之后（经典模式第 30 天自动结算）``market_state.player_id`` 被清空，
-        此时载荷带上**归档的结算报告**（P4 遗留问题 4：自动终局后玩家看不到
+        此时载荷带上**归档的结算报告**（P4 历史问题 4：自动终局后玩家看不到
         结算报告）。结算报告里有 heat 曲线与种子 —— 那是**结算页**才允许
         出现的东西，而此刻局已经结束了。
         """
@@ -6294,14 +6303,14 @@ class MockStockMeowPlugin(NekoPluginBase):
             total_assets = player.total_asset(prices)
             distance = self._distance_to_death(session, engine_config)
 
-        # 病危：现金为负、或者离斩杀只差一步、或者已经死了。
+        # 资金链断裂：现金为负、或者离强制平仓只差一步、或者已经被清盘了。
         critical = bool(
             cash < 0
             or (distance is not None and distance <= panic_distance)
             or not alive
         )
 
-        # 三档：濒死 > 断供 > 富二代。
+        # 三档：濒临破产 > 断供 > 富二代。
         stage = "rich"
         if mode == "infinite" or critical or total_assets <= dying_assets:
             stage = "dying"
@@ -6346,7 +6355,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         return {
             "stage": stage,
             "critical": critical,
-            "critical_emoji": "💀" if not alive else "🩸",
+            "critical_emoji": "🤡" if not alive else "💸",
             "stage_thresholds": {
                 "broke_day": broke_day,
                 "dying_assets": dying_assets,
@@ -6366,7 +6375,7 @@ class MockStockMeowPlugin(NekoPluginBase):
                 # P7.3：本次轰炸**本来该持续多久**（秒）—— 前端据此算硬上限。
                 "duration": int(round(float(self._director_boom_duration) or 5.0)),
             },
-            # P7.3：网贷弹窗的死锁兜底信息（纯表现层 + 倒计时）。
+            # P7.3：网贷弹窗的锁死兜底信息（纯表现层 + 倒计时）。
             "loan_prompt": {
                 "pending": loan_prompt_pending,
                 "seconds_left": int(loan_prompt_left) + 1 if loan_prompt_pending else 0,
@@ -6834,7 +6843,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         return max(0, ANALYSES_PER_DAY - used)
 
     def _latest_settlement(self) -> dict[str, Any] | None:
-        """最近一次归档的结算报告（面板用；P4 遗留问题 4）。
+        """最近一次归档的结算报告（面板用；P4 历史问题 4）。
 
         经典模式第 30 天**自动结算**之后 ``market_state.player_id`` 被清空，
         ``settle`` 入口也只会回 ``no_active_game`` —— 玩家就再也看不到结算报告

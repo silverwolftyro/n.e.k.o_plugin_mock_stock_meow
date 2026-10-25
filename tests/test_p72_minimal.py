@@ -272,11 +272,11 @@ def test_kline_is_always_present_in_the_payload(plugin) -> None:
 
 
 def test_financial_jargon_is_replaced() -> None:
-    """总资产 → 零花钱 / 家底 / 棺材本；强制平仓 → 底裤被扒。"""
+    """总资产 → 零花钱 / 家底 / 救命钱；强制平仓 → 底裤被扒。"""
     table = _i18n()
     assert table["visual.assets_rich"] == "零花钱"
     assert table["visual.assets_broke"] == "家底"
-    assert table["visual.assets_dying"] == "棺材本"
+    assert table["visual.assets_dying"] == "救命钱"
     assert table["visual.force_liquid"] == "底裤被扒"
     assert table["visual.hint_rich"] == "老爸给的钱"
     assert table["visual.hint_broke"] == "省着点花，要交房租了"
@@ -311,7 +311,7 @@ def test_three_stage_fonts_are_css_only_and_safe() -> None:
 
 
 def test_dying_flash_uses_a_timer_not_animation() -> None:
-    """濒死档「数字偶尔闪红」用 **JS 定时器**切颜色（0.8.0 崩 UI 的坑）。"""
+    """濒临破产档「数字偶尔闪红」用 **JS 定时器**切颜色（0.8.0 崩 UI 的坑）。"""
     code = _panel_code()
     assert "flashOn" in code
     assert "setFlashOn(true)" in code

@@ -85,7 +85,7 @@ def test_a_trader_does_not_get_the_inaction_ending(plugin) -> None:
 
 
 def test_inaction_requires_being_alive(plugin) -> None:
-    """死了就没有隐藏结局。"""
+    """破产了就没有隐藏结局。"""
     run(plugin.join(mode="infinite", seed=503))
     repo = Repo(plugin.db)
     _sell_baseline_stock(plugin, repo)

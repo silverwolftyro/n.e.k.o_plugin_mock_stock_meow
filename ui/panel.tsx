@@ -371,7 +371,7 @@ type State = {
   story?: Story
 }
 
-/** P5.5 改动 4：天台虚惊一场的三屏。 */
+/** P5.5 改动 4：天桥虚惊一场的三屏。 */
 type DeathScene = {
   screen1?: string
   screen2?: string
@@ -835,7 +835,7 @@ const RRM_CSS = `
   flex: 0 0 auto;
 }
 
-/* ── ⑬ P7.2 遗留的三档字体（只改字体，不改布局）──────────────────── */
+/* ── ⑬ P7.2 传下来的三档字体（只改字体，不改布局）──────────────────── */
 .rrm-font-rich { font-family: "YouYuan", "Yuanti SC", "Hiragino Maru Gothic ProN", "Microsoft YaHei UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
 .rrm-font-broke { font-weight: 300; }
 .rrm-font-dying { font-weight: 500; }
@@ -1128,7 +1128,7 @@ function BigStat(props: {
  * **危机态**（现金 < 明天的生活费）：整条变红并**轻微闪烁**，
  * 现金数字也一起变红闪烁 —— 极强的警示。
  *
- * 闪烁是 **JS 定时器切颜色**做的（跟 P7.2 的濒死数字同款），
+ * 闪烁是 **JS 定时器切颜色**做的（跟 P7.2 的濒临破产数字同款），
  * **不用 CSS 动画**（0.8.0 的崩溃根因之一）。
  *
  * 样式全部走**内联 style**：P14 的纪律是「极度克制地使用 CSS」，
@@ -1674,7 +1674,7 @@ function BankruptArt(props: { alt: string }) {
  * （``neko-step`` / ``neko-step-index`` / ``neko-step-title``）。
  * 换回原生组件 ⇒ 少一堆自定义 CSS，也更像"官方原生样式"。
  *
- * 三步分别讲：① 零花钱/家底/棺材本 + 每日生活费；② 一键梭哈/一键割肉 + 看涨跌图；
+ * 三步分别讲：① 零花钱/家底/救命钱 + 每日生活费；② 一键梭哈/一键割肉 + 看涨跌图；
  * ③ 猫娘会实时嘴臭、接受不了别玩。
  */
 function GuideModal(props: {
@@ -1919,7 +1919,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   const idleTaunt = t(idleTauntKey)
   // ── P6 档 2：按需拉到的 K 线（局中载荷只带前 20 只，其余现拉）────
   const [klineDetail, setKlineDetail] = useState<Record<string, any> | null>(null)
-  // ── P5.5 改动 4：天台三屏（1 → 2 → 3，间隔自动推进）─────────────
+  // ── P5.5 改动 4：天桥三屏（1 → 2 → 3，间隔自动推进）─────────────
   const [sceneScreen, setSceneScreen] = useState<number>(1)
   // ── P5.5 改动 7：称号图鉴的折叠状态（持久化）────────────────────
   const [achievementsOpen, setAchievementsOpen] = useLocalState<string>(
@@ -1955,7 +1955,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       clearInterval(timer)
     }
   }, [props.api])
-  // ── P7.2：濒死档「数字偶尔闪红」（**JS 定时器**，不用 CSS 动画）──
+  // ── P7.2：濒临破产档「数字偶尔闪红」（**JS 定时器**，不用 CSS 动画）──
   const [flashOn, setFlashOn] = useState(false)
   // ── P7.2：弹窗轰炸的倒计时心跳（用来把 5 秒倒计时画出来）─────────
   const [, setBoomTick] = useState(0)
@@ -2245,7 +2245,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   }
   useEffect(() => () => endHold(), [])
 
-  // ── P7.2：濒死档「数字偶尔闪红」 ────────────────────────────────
+  // ── P7.2：濒临破产档「数字偶尔闪红」 ────────────────────────────────
   // **不用 CSS 动画**（0.8.0 的崩溃根因之一）：用 JS 定时器把颜色切一下。
   useEffect(() => {
     if (stage !== "dying") {
@@ -2265,7 +2265,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
 
   // ── P14.0：资金水位条的**危机闪烁** ──────────────────────────────
   // 现金比明天的生活费还少 ⇒ 整根水位条变红并轻微闪烁。
-  // 同样**不用 CSS 动画**：JS 定时器切颜色（跟上面濒死数字同款）。
+  // 同样**不用 CSS 动画**：JS 定时器切颜色（跟上面濒临破产数字同款）。
   const nextBill = Math.max(0, Number(state.next_bill || 0))
   const cashNow = Math.max(0, Number(state.cash || 0))
   const cashCrisis = nextBill > 0 && cashNow < nextBill
@@ -2395,7 +2395,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       : stage === "broke"
         ? t("visual.cash_broke")
         : t("visual.cash_rich")
-  // P7.2：总资产按档位换名字（零花钱 / 家底 / 棺材本）。
+  // P7.2：总资产按档位换名字（零花钱 / 家底 / 救命钱）。
   const assetsLabel =
     stage === "dying"
       ? t("visual.assets_dying")
@@ -2426,7 +2426,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   const pnlColor = pnl > 0.001 ? "var(--success)" : pnl < -0.001 ? "var(--danger)" : "var(--muted)"
   const pnlHint =
     pnl > 0.001 ? t("visual.pnl_up") : pnl < -0.001 ? t("visual.pnl_down") : t("visual.pnl_flat")
-  // 濒死档：数字**偶尔闪红**（用 JS 定时器切颜色，不用 CSS 动画）。
+  // 濒临破产档：数字**偶尔闪红**（用 JS 定时器切颜色，不用 CSS 动画）。
   const flashColor = flashOn ? "var(--danger)" : undefined
 
   // ── P13：仓位控制（连续滑块 + 直输框）+ 实时预览 ──────────────────
@@ -2665,7 +2665,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     const size = Math.max(50, Number(visual.emoji_sea_size || 60))
     const items: string[] = []
     for (let index = 0; index < size; index += 1) {
-      items.push(index % 2 === 0 ? "🤡" : "🪦")
+      items.push(index % 2 === 0 ? "🤡" : "🥣")
     }
     return items
   }, [visual.emoji_sea_size])
@@ -3047,7 +3047,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     // 就**不渲染**这个按钮 —— 绝不能拿一个空 action 去调。
     const joinAction = actionById("join")
 
-    // ── P5.5 改动 4：天台虚惊一场（分三屏，第三屏是结算数据）──────
+    // ── P5.5 改动 4：天桥虚惊一场（分三屏，第三屏是结算数据）──────
     if (scene && sceneScreen < 3) {
       const current =
         sceneScreen === 1 ? scene.screen1 : sceneScreen === 2 ? scene.screen2 : scene.screen3
@@ -3103,7 +3103,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     //   ① 标签用了带占位符的 "panel.mode"（"模式：{mode}"），而这里
     //      t() **没有传参** ⇒ 玩家看到的就是字面量「{mode}」。
     //      结算页的模式是**一行里的一个值**，所以标签单独给一个"模式"。
-    //   ② 死因 / 结局 / 入场身份之前直接显示 starved / quick 这种英文枚举。
+    //   ② 破产原因 / 结局 / 入场身份之前直接显示 starved / quick 这种英文枚举。
     const deadReport = Boolean(report.death_reason)
     const modeText = String(report.mode || "")
     const modeValue = modeText === "infinite"
@@ -3153,7 +3153,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                   },
                 ]}
               />
-              {/* P5.5 改动 2：身份呼应句 —— 只在死亡结算页出现 */}
+              {/* P5.5 改动 2：身份呼应句 —— 只在破产结算页出现 */}
               {report.identity_echo ? <Text>{report.identity_echo}</Text> : null}
               {/* P5.5 改动 1：「无为而治」的打工叙事 */}
               {report.inaction_worker ? <Text>{report.inaction_worker}</Text> : null}
@@ -3207,7 +3207,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             </Stack>
           </Card>
 
-          {/* ── P7 模块二 ④：Emoji 海结算（至少 50 个 🤡 / 🪦）── */}
+          {/* ── P7 模块二 ④：Emoji 海结算（至少 50 个 🤡 / 🥣）── */}
           <Card title={t("visual.emoji_sea_title")}>
             <Stack gap={8}>
               <Text>{t("visual.emoji_sea_caption")}</Text>
@@ -3565,7 +3565,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   //
   // 现在有三道保险，任何一道都能把玩家放出来：
   //   ① 不用 `ActionButton`，直接宿主 `Button` + `props.api.call`，**点了立刻关**；
-  //   ② **永远**给一个「我不借了，把我埋了吧」的逃生按钮；
+  //   ② **永远**给一个「我不借了，把我清出去吧」的逃生按钮；
   //   ③ 30 秒本地倒计时，到点自己关（服务端看门狗同时自动结算）。
   const loanChoice = (choice: string) => {
     // ── 同步关窗：不管后端成不成功，玩家都不会被卡住 ──
@@ -3651,7 +3651,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
         {critical ? (
           <Alert
             tone="danger"
-            message={`${visual.critical_emoji || "🩸"} ${t("visual.critical")}`}
+            message={`${visual.critical_emoji || "💸"} ${t("visual.critical")}`}
           />
         ) : null}
         {titleBar}
@@ -3736,7 +3736,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
 
         {/* ── P8.0 ②：家道三档的第一屏数字 ──────────────────────────
             顺序改成「盈亏 | 现钱 | **身家**」—— 身家那张卡落在**右上角**，
-            它的名字随 stage 变：零花钱（富二代）/ 家底（断供）/ 棺材本（濒死）。 */}
+            它的名字随 stage 变：零花钱（富二代）/ 家底（断供）/ 救命钱（濒临破产）。 */}
         <Grid cols={3} gap={12}>
           <BigStat
             label={t("visual.pnl_title")}

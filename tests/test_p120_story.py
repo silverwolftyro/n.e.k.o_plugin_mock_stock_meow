@@ -402,9 +402,9 @@ def test_the_story_block_is_pure_memory() -> None:
 
 
 def test_the_story_debt_is_repaid_without_killing_the_player() -> None:
-    """剧情借贷到期扣款 ⇒ **绝不判死**（扣不动就欠着）。"""
+    """剧情借贷到期扣款 ⇒ **绝不判破产**（扣不动就欠着）。"""
     body = _method_body(_init_text(), "_story_apply_debt")
-    assert "alive" not in body, "剧情还债不许碰生死"
+    assert "alive" not in body, "剧情还债不许碰结局"
     assert "death_reason" not in body
 
 
@@ -648,5 +648,5 @@ def test_the_panel_uses_no_bare_chinese_literals() -> None:
 
 
 def test_the_version_is_bumped() -> None:
-    assert 'version = "0.9.8"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.9.8"' in _init_text()
+    assert 'version = "0.9.9"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.9.9"' in _init_text()

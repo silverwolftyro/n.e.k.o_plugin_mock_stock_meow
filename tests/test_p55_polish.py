@@ -5,7 +5,7 @@
 1. **改动 1（低保 → 打工工资）**：用户可见文案里**零个**「低保」；
    引擎的常量**逐字未动**（引擎零改动），但插件层改写后的称号不含「低保」。
 2. **改动 2（入场三选一）**：三个身份都能落库；非法身份被拒；
-   ``status`` 与**死亡结算页**给出身份；**局中**载荷不含呼应句。
+   ``status`` 与**破产结算页**给出身份；**局中**载荷不含呼应句。
 3. **改动 3（猫娘「她不说」）**：两个新变体在 i18n 里；
    选取**按 seed 稳定**；猫娘沉默旁白概率 30% 且只在有猫娘时出现。
 4. **红线**：``engine/`` 与 ``modes/`` 零改动（``Player`` 没有 identity 字段、
@@ -113,21 +113,21 @@ def test_plugin_overrides_death_title_by_reason() -> None:
     assert OLD_WORD not in (player.death_title or "")
     assert "工资" in (player.death_title or "")
 
-    # 其它死因**不**被改写。
+    # **未知**破产原因**不**被改写（引擎那 5 种全部要覆盖，见 P14.1）。
     other = Player("p", "n", 0.0, "classic_arcade")
-    other.death_reason = "starved"
+    other.death_reason = "not_a_real_reason"
     other.death_title = "交不起第三天的账单。"
     MockStockMeowPlugin._override_death_title(other)
     assert other.death_title == "交不起第三天的账单。"
 
 
 def test_version_is_a_patch_bump() -> None:
-    """版本号 = 0.9.8（P14.0：资金水位可视化 + 多标的仓位联动 + 模式引导重构；P13.0：Yui 灵魂化 + 交易去量子化；P12.0 是 0.9.6；P11.1：并发根治；P11.0 是 0.9.4；P10 是 0.9.3；P9.0 是 0.9.2；P8.1 是 0.9.1；P8.0 是 0.9.0；P7.4 是 0.8.4；P7.3 是 0.8.3；P7.2 是 0.8.2；P7.1 是 0.8.1；P7 是 0.8.0）。"""
+    """版本号 = 0.9.9（P14.1：去死亡化合规整改；P14.0：资金水位可视化 + 多标的仓位联动 + 模式引导重构；P13.0：Yui 灵魂化 + 交易去量子化；P12.0 是 0.9.6；P11.1：并发根治；P11.0 是 0.9.4；P10 是 0.9.3；P9.0 是 0.9.2；P8.1 是 0.9.1；P8.0 是 0.9.0；P7.4 是 0.8.4；P7.3 是 0.8.3；P7.2 是 0.8.2；P7.1 是 0.8.1；P7 是 0.8.0）。"""
     from plugins.mock_stock_meow import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.9.8"
+    assert PLUGIN_VERSION == "0.9.9"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.9.8"' in toml
+    assert 'version = "0.9.9"' in toml
 
 
 # ---------------------------------------------------------------- ① 改动 1
@@ -187,7 +187,7 @@ def test_daily_claim_entry_speaks_in_worker_terms(plugin) -> None:
 def test_welfare_neglect_kill_title_is_rewritten_end_to_end() -> None:
     """端到端：引擎判 ``welfare_neglect`` → 插件层把称号改写成「工资」。
 
-    走的是**真实**的日终结算（引擎判死）+ 真实的插件层改写方法，
+    走的是**真实**的日终结算（引擎判破产）+ 真实的插件层改写方法，
     不是拿字符串硬凑。
     """
     from engine.models import Player
@@ -288,7 +288,7 @@ def test_status_returns_the_identity(plugin) -> None:
 
 
 def test_panel_payload_never_carries_the_identity_echo(plugin) -> None:
-    """**局中**载荷里没有身份呼应句（呼应句只在死亡结算页）。"""
+    """**局中**载荷里没有身份呼应句（呼应句只在破产结算页）。"""
     run(plugin.join(mode="classic_arcade", seed=9306, identity="debt"))
     engine_config = run(plugin._engine_config())
     session, error = run(plugin._session_or_error(engine_config))
@@ -300,12 +300,12 @@ def test_panel_payload_never_carries_the_identity_echo(plugin) -> None:
 
 
 def test_settlement_payload_carries_the_identity_echo(plugin) -> None:
-    """死亡结算页：三个身份 → 三句不同的呼应句。"""
+    """破产结算页：三个身份 → 三句不同的呼应句。"""
     echoes: dict[str, str] = {}
     for identity in ("debt", "prove", "quick"):
         instance = _fresh_plugin(plugin)
         run(instance.join(mode="classic_arcade", seed=9307, identity=identity))
-        # 直接把玩家改成死亡（模拟被斩杀），再走结算报告。
+        # 直接把玩家改成破产（模拟被强制平仓），再走结算报告。
         run(
             Repo(instance.db).transaction(
                 [
@@ -328,12 +328,12 @@ def test_settlement_payload_carries_the_identity_echo(plugin) -> None:
 
     assert len(set(echoes.values())) == 3, f"三个身份的呼应句应各不相同：{echoes}"
     assert echoes["debt"] == "你入场时说想帮家里还债。现在家里要帮你还债了。"
-    assert echoes["prove"] == "你入场时说想证明自己。你证明了：满仓的人，死得最快。"
+    assert echoes["prove"] == "你入场时说想证明自己。你证明了：满仓的人，清盘得最快。"
     assert echoes["quick"] == "你入场时说想快点赚到钱。你确实很快——快到连饭都忘了吃。"
 
 
 def test_survivor_settlement_has_no_identity_echo(plugin) -> None:
-    """活到终局（没死）→ **不给**身份呼应句。"""
+    """活到终局（没破产）→ **不给**身份呼应句。"""
     run(plugin.join(mode="classic_arcade", seed=9308, identity="debt"))
     engine_config = run(plugin._engine_config())
     from plugins.mock_stock_meow.storage.session import load_session

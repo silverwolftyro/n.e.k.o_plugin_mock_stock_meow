@@ -423,7 +423,7 @@ def test_panel_payload_exposes_the_catgirl_public_state(plugin) -> None:
 
 
 def test_panel_payload_shows_the_archived_settlement_after_the_game(plugin) -> None:
-    """局终之后：面板要能看到归档的结算报告（P4 遗留问题 4）。"""
+    """局终之后：面板要能看到归档的结算报告（P4 历史问题 4）。"""
     run(plugin.join(mode="classic_beginner", seed=9125))
     run(plugin.settle())
     payload = run(plugin.market_context())

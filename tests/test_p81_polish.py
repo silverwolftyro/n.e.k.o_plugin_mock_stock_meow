@@ -4,7 +4,7 @@
 
 1. **结算页占位符泄漏**：``t("panel.mode")`` 没传参 ⇒ 玩家直接看到
    字面量「模式：{mode}」；
-2. **英文枚举裸露**：死因 ``starved``、入场身份 ``quick``、结局
+2. **英文枚举裸露**：破产原因 ``starved``、入场身份 ``quick``、结局
    ``inaction`` 直接怼在界面上；
 3. **K 线开局尴尬**：点数不足时最后一根柱子永远是满格，开局就是一根
    顶天立地的绿柱；
@@ -128,7 +128,7 @@ def test_no_i18n_placeholder_can_leak_to_the_screen() -> None:
 def test_settlement_enums_are_translated() -> None:
     """结算页不许把**英文枚举**直接显示给玩家。
 
-    0.9.0 真机截图里赫然写着「死因: starved」「入场身份: quick」——
+    0.9.0 真机截图里赫然写着「破产原因: starved」「入场身份: quick」——
     那是后端的内部 key，玩家完全看不懂。现在统一走 i18n 词典。
     """
     code = _panel_code()
@@ -159,7 +159,7 @@ def test_enum_helper_never_shows_the_internal_key() -> None:
 
 
 def test_enum_i18n_keys_exist() -> None:
-    """枚举翻译用的 i18n 键必须齐全（身份 / 死因 / 结局）。"""
+    """枚举翻译用的 i18n 键必须齐全（身份 / 破产原因 / 结局）。"""
     i18n = _i18n()
     for key in (
         "identity.label.debt",
@@ -346,6 +346,6 @@ def test_assets_are_still_inline_data_uris() -> None:
 
 
 def test_version_is_0_9_1() -> None:
-    """版本号 = 0.9.8。"""
+    """版本号 = 0.9.9。"""
     toml = _TOML.read_text(encoding="utf-8")
-    assert 'version = "0.9.8"' in toml
+    assert 'version = "0.9.9"' in toml

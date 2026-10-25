@@ -3,7 +3,7 @@
 守六条线：
 
 1. **「一贫如洗」选项 B**：必须是**活着**结算且总资产为 0 才解锁；
-   死了只解锁对应死因成就；图鉴仍然是 8 个。
+   破产了只解锁对应破产原因成就；图鉴仍然是 8 个。
 2. **错误码走 i18n 查表**：插件层**零**硬编码中文错误消息；
    每个用到的错误码在 ``i18n/zh-CN.json`` 里都有条目；实际报错消息来自 i18n。
 3. **kline action（P6 档 2 第 6 项）**：按需拉任意标的的 K 线；局中隐藏规则照旧。
@@ -68,7 +68,7 @@ def _kill_player(repo: Repo, reason: str = "starved") -> None:
 
 
 def test_broke_achievement_needs_the_player_to_be_alive(plugin) -> None:
-    """死了 → **不**解锁「一贫如洗」（只解锁对应死因成就）。"""
+    """破产了 → **不**解锁「一贫如洗」（只解锁对应破产原因成就）。"""
     run(plugin.join(mode="infinite", seed=7200))
     repo = Repo(plugin.db)
     _kill_player(repo, "starved")
@@ -76,7 +76,7 @@ def test_broke_achievement_needs_the_player_to_be_alive(plugin) -> None:
     rows = run(repo.fetch_all("SELECT title FROM achievements"))
     titles = {str(row["title"]) for row in rows}
     assert "颗粒无收" in titles
-    assert "一贫如洗" not in titles, "死了不该解锁「一贫如洗」"
+    assert "一贫如洗" not in titles, "破产了不该解锁「一贫如洗」"
 
 
 def test_broke_achievement_unlocks_for_a_living_broke_player(plugin) -> None:
@@ -314,7 +314,7 @@ def test_worktree_has_no_crlf_files() -> None:
 
 
 def test_version_is_0_7_4() -> None:
-    """版本号 = 0.9.8。
+    """版本号 = 0.9.9。
 
     版本史：
 
@@ -331,14 +331,15 @@ def test_version_is_0_7_4() -> None:
     * 0.9.4 —— P11：猫娘外置交互引导（主动搭话 + 呼叫猫娘 + 兜底弹窗）。
     * 0.9.5 —— P11.1：并发根治（上下文非阻塞 + 推进节流 + 面板请求锁）。
     * 0.9.6 —— P12.0：剧情引擎（四幕叙事 + 外置 Yui 驱动）+ 交易 GUI 化（滑块仓位）。
+    * 0.9.9 —— P14.1：去死亡化合规整改（玩家可见文案全面去死亡化 + 引擎死因插件层全覆盖映射）。
     * 0.9.8 —— P14.0：资金水位可视化（生活费红线）+ 多标的仓位总限制联动 + 模式引导重构（街机 / 命运挑战 / 无尽）。
     * 0.9.7 —— P13.0：Yui 灵魂化（交还叙事权）+ 交易去量子化（连续仓位 + 直输）。
     """
     from plugins.mock_stock_meow import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.9.8"
+    assert PLUGIN_VERSION == "0.9.9"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.9.8"' in toml
+    assert 'version = "0.9.9"' in toml
 
 
 # ------------------------------------------------- ⑥ 面板文案全走 i18n
@@ -375,7 +376,7 @@ def test_panel_dynamic_i18n_keys_all_exist() -> None:
     ):
         assert key in table, f"动态 i18n 键缺失：{key}"
 
-    # P8.1：结算页的**英文枚举**翻译（死因 / 入场身份 / 结局）也走动态键，
+    # P8.1：结算页的**英文枚举**翻译（破产原因 / 入场身份 / 结局）也走动态键，
     # 形态是 ``${prefix}.${key}`` —— 前缀固定，取值由后端给。
     for prefix in ("death_reason", "identity.label", "ending"):
         assert any(key.startswith(prefix + ".") for key in table), (

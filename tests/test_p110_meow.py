@@ -643,6 +643,6 @@ def test_panel_uses_only_dictionary_keys() -> None:
 
 
 def test_version_is_0_9_5() -> None:
-    """版本号 = 0.9.8。"""
-    assert 'version = "0.9.8"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.9.8"' in _init_text()
+    """版本号 = 0.9.9。"""
+    assert 'version = "0.9.9"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.9.9"' in _init_text()

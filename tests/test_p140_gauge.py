@@ -142,7 +142,7 @@ def test_the_crisis_state_turns_everything_red() -> None:
 def test_the_alarm_blinks_with_a_js_timer_not_css() -> None:
     """闪烁 = **JS 定时器切颜色**，不许 CSS 动画。
 
-    0.8.0 的崩溃根因之一就是动画/关键帧；P7.2 的濒死数字已经是这个写法，
+    0.8.0 的崩溃根因之一就是动画/关键帧；P7.2 的濒临破产数字已经是这个写法，
     P14 的水位条必须**沿用同一套**，不许新造轮子。
     """
     code = _panel_code()
@@ -425,7 +425,7 @@ def test_the_new_i18n_keys_exist() -> None:
 
 
 def test_the_version_is_0_9_8() -> None:
-    """版本号 = 0.9.8。"""
-    assert 'version = "0.9.8"' in _TOML.read_text(encoding="utf-8")
+    """版本号 = 0.9.9。"""
+    assert 'version = "0.9.9"' in _TOML.read_text(encoding="utf-8")
     init = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.9.8"' in init
+    assert 'PLUGIN_VERSION = "0.9.9"' in init

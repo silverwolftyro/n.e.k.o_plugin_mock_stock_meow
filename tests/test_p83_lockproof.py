@@ -269,7 +269,7 @@ def test_loan_prompt_borrow_twice_still_returns_ok(plugin) -> None:
 
 
 def test_loan_prompt_refuse_kills_the_player(plugin) -> None:
-    """「我不借了，把我埋了吧」→ 当场结束这一局（引擎既有死因）。"""
+    """「我不借了，把我清出去吧」→ 当场结束这一局（引擎既有破产原因）。"""
     _value(_run(plugin.join(mode="infinite", seed=9305)))
     _run(plugin.loan_prompt(choice="refuse"))
     payload = _value(_run(plugin.market_context()))
@@ -391,7 +391,7 @@ def test_panel_i18n_keys_all_exist() -> None:
 
 def test_version_is_bumped() -> None:
     raw = _PLUGIN_TOML.read_text(encoding="utf-8")
-    assert 'version = "0.9.8"' in raw
+    assert 'version = "0.9.9"' in raw
 
 
 def test_engine_and_mode_layers_are_still_untouched() -> None:
