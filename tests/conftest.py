@@ -35,6 +35,13 @@ for _path in (str(_PLUGIN_ROOT), str(_PLUGINS_PARENT)):
 
 # 宿主 SDK（``plugin.sdk.plugin``）由 venv 的可编辑安装提供；源码树不在
 # ``sys.path`` 上时给出明确报错，而不是让人猜。
+def _import_host_sdk() -> Any:
+    """真正 import 宿主 SDK（会连带把它的传递依赖也检查一遍）。"""
+    import plugin.sdk.plugin as _host_sdk
+
+    return _host_sdk
+
+
 def _ensure_host_sdk() -> None:
     """确保宿主 SDK 可导入；失败时把**真正缺的那个模块**带出来。
 
@@ -46,7 +53,7 @@ def _ensure_host_sdk() -> None:
     把它**追加**到 ``sys.path`` 末尾再 import（追加在末尾，不遮蔽已安装的 SDK）。
     """
     try:
-        import plugin.sdk.plugin  # noqa: F401
+        _import_host_sdk()
         return
     except ModuleNotFoundError as error:
         first_error = error
@@ -60,7 +67,7 @@ def _ensure_host_sdk() -> None:
     for name in [n for n in sys.modules if n == "plugin" or n.startswith("plugin.")]:
         del sys.modules[name]
     try:
-        import plugin.sdk.plugin  # noqa: F401
+        _import_host_sdk()
     except ModuleNotFoundError as error:
         raise RuntimeError(
             f"宿主 SDK 不可用：缺少模块 {error.name!r}（首次报错：{first_error}）。"
