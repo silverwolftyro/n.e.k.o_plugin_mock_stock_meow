@@ -195,9 +195,14 @@ def test_kline_waits_for_enough_points() -> None:
 
 
 def test_kline_stays_the_main_visual() -> None:
-    """K 线依然是上半区的主视觉（高度不能被这次修复顺带砍掉）。"""
+    """K 线依然是上半区的主视觉（高度不能被这次修复顺带砍掉）。
+
+    P21.0：高度改成 CSS 表达式（clamp(232px, 34vh, 520px)）——
+    跟着 iframe 高度自适应，全屏时自动填满上半部分。
+    守卫盯的是**下限**不许退。
+    """
     code = _panel_code()
-    match = re.search(r"const height = (\d+)", code)
+    match = re.search(r"const KLINE_HEIGHT_CSS = \"clamp\((\d+)px", code)
     assert match, "K 线必须有明确的高度"
     assert int(match.group(1)) >= 200, "K 线是主视觉，高度不能低于 200px"
 
@@ -344,6 +349,6 @@ def test_assets_are_still_inline_data_uris() -> None:
 
 
 def test_version_is_0_9_1() -> None:
-    """版本号 = 0.10.3。"""
+    """版本号 = 0.10.4。"""
     toml = _TOML.read_text(encoding="utf-8")
-    assert 'version = "0.10.3"' in toml
+    assert 'version = "0.10.4"' in toml

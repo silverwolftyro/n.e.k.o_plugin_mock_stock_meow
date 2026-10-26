@@ -373,10 +373,10 @@ def test_the_engine_and_mode_layers_are_untouched() -> None:
 
 
 def test_the_version_is_bumped_to_0_10_1() -> None:
-    """版本号 = 0.10.3。"""
+    """版本号 = 0.10.4。"""
     from plugins.mock_stock_meow import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.10.3"
+    assert PLUGIN_VERSION == "0.10.4"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.10.3"' in toml
+    assert 'version = "0.10.4"' in toml
 

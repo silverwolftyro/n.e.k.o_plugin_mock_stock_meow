@@ -495,11 +495,15 @@ def test_shadow_is_soft_and_wide() -> None:
 
 
 def test_background_is_more_translucent() -> None:
-    """浅蓝底色再通透一档（三段渐变：顶部天蓝 → 中段浅蓝 → 近白）。"""
+    """浅蓝底色再通透一档（三段渐变：顶部天蓝 → 中段浅蓝 → 近白）。
+
+    P21.0：底色叠成两层（上面一层淡蓝晕），主渐变本身一个字没改。
+    """
     css = _panel_css()
     assert (
-        "background: linear-gradient(180deg, #e4efff 0%, #f4faff 48%, #fbfdff 100%)" in css
-    )
+        "linear-gradient(180deg, #e4efff 0%, #f4faff 48%, #fbfdff 100%)" in css
+    ), "底色的主渐变不许被改掉"
+    assert "background-size: cover" in css
 
 
 def test_dangerous_css_is_still_banned() -> None:
@@ -549,6 +553,6 @@ def test_no_dangerous_inline_styles() -> None:
 
 
 def test_version_is_0_9_5() -> None:
-    """版本号 = 0.10.3。"""
-    assert 'version = "0.10.3"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.10.3"' in _init_text()
+    """版本号 = 0.10.4。"""
+    assert 'version = "0.10.4"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.10.4"' in _init_text()

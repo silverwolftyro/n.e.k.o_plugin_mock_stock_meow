@@ -170,10 +170,11 @@ def test_an_unknown_name_hits_nothing() -> None:
 # ══════════════════════════════════════════════════════════════════════
 
 
-def test_the_name_is_capped_at_twelve_characters() -> None:
+def test_the_name_is_capped_at_six_characters() -> None:
+    """P21.0：名字限 **6 个字**（太长会撑爆面板标题栏）。"""
     from plugins.mock_stock_meow.name_easter_eggs import MAX_NAME_LENGTH, sanitize_name
 
-    assert MAX_NAME_LENGTH == 12
+    assert MAX_NAME_LENGTH == 6
     assert len(sanitize_name("一" * 40)) == MAX_NAME_LENGTH
 
 

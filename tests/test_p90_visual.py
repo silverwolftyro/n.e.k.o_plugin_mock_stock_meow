@@ -84,14 +84,19 @@ def test_background_is_the_design_gradient() -> None:
 
     P10 微调：底色再**通透**一档 —— 顶部那片天蓝压得更透，中段快速褪成
     近白，卡片于是像是「浮」在浅蓝空气里而不是贴在色块上。
+
+    P21.0：底色**叠两层**（上面一层淡蓝晕 + 下面这层主渐变），
+    并用 ``background-size: cover`` 在大屏下铺满。
     """
     css = _panel_css()
-    assert "background: linear-gradient(180deg, #e4efff 0%, #f4faff 48%, #fbfdff 100%)" in css, (
-        "背景必须是浅蓝到纯白的纵向渐变"
-    )
+    base = "linear-gradient(180deg, #e4efff 0%, #f4faff 48%, #fbfdff 100%)"
+    assert base in css, "背景必须有浅蓝到纯白的纵向渐变"
     # 面板根节点上要有（渐变铺在 .rrm-root 上，而不是 body 上）。
     root = _block(css, ".rrm-root {")
-    assert "linear-gradient(180deg, #e4efff 0%" in root, "渐变必须挂在 .rrm-root 上"
+    assert base in root, "渐变必须挂在 .rrm-root 上"
+    # P21.0：沉浸式底色（两层 + cover）。
+    assert "background-size: cover" in root
+    assert root.count("linear-gradient(") >= 2, "底色要叠两层（全屏下才不显单薄）"
 
 
 def test_cards_are_glassy_with_soft_blue_shadow() -> None:
@@ -141,12 +146,16 @@ def test_trade_buttons_use_the_design_gradients() -> None:
 
 
 def test_trade_buttons_are_tall_and_round() -> None:
-    """按钮高度 ≥56px、圆角 28px、字号 18px 加粗。"""
+    """按钮高度 ≥56px、圆角 28px、字号 18px 加粗。
+
+    P21.0：三个值都改成 **clamp()**（下限不变，上限随全屏放大）——
+    这里守的是「**下限不许退**」。
+    """
     css = _panel_css()
     block = _block(css, ".rrm-root .neko-button.rrm-pill {")
-    assert "height: 56px" in block
-    assert "border-radius: 28px" in block
-    assert "font-size: 18px" in block
+    assert "height: clamp(56px" in block
+    assert "border-radius: clamp(28px" in block
+    assert "font-size: clamp(18px" in block
     assert "font-weight: 800" in block
     assert "white-space: nowrap" in block, "中文不许竖排"
 
@@ -308,7 +317,7 @@ def test_assets_are_still_inline_data_uris() -> None:
 
 
 def test_version_is_0_9_5() -> None:
-    """版本号 = 0.10.3。"""
-    assert 'version = "0.10.3"' in _TOML.read_text(encoding="utf-8")
+    """版本号 = 0.10.4。"""
+    assert 'version = "0.10.4"' in _TOML.read_text(encoding="utf-8")
     init = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.10.3"' in init
+    assert 'PLUGIN_VERSION = "0.10.4"' in init

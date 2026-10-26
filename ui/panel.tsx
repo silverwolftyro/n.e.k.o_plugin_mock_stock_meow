@@ -511,7 +511,16 @@ const RRM_CSS = `
   --surface-strong: #ffffff;
   --bg: #e4efff;
   --radius-md: 20px;
-  background: linear-gradient(180deg, #e4efff 0%, #f4faff 48%, #fbfdff 100%);
+  /* P21.0：全屏沉浸 —— 底色**叠两层**：
+     ① 顶部一层很淡的蓝晕（180deg，往下化开）；
+     ② 原来的主渐变（浅蓝 → 近白）。
+     两层都只用纵向渐变（斜向的那种 0.8.0 炸过一次），
+     background-size: cover 让它在大屏下铺满而不是被拉扁。 */
+  background:
+    linear-gradient(180deg, rgba(91, 143, 249, 0.12) 0%, rgba(91, 143, 249, 0) 38%),
+    linear-gradient(180deg, #e4efff 0%, #f4faff 48%, #fbfdff 100%);
+  background-size: cover;
+  background-repeat: no-repeat;
   color: var(--text);
   /* P13：让**原生控件**跟着浅色主题走 —— 滑块没填满的那截轨道原本是
      浏览器深色模式的默认黑，在浅色面板上非常刺眼。
@@ -617,16 +626,29 @@ const RRM_CSS = `
 .rrm-root .rrm-kline-bar-up { background: linear-gradient(180deg, #6fd8bd 0%, rgba(90, 200, 168, 0.22) 100%); }
 .rrm-root .rrm-kline-bar-down { background: linear-gradient(180deg, #ff8fa4 0%, rgba(255, 107, 129, 0.22) 100%); }
 
+/* P21.0：新手兜底的「幽灵提示」—— 从下面浮上来一点点。
+   只用 transform + transition；那几样会让宿主布局崩掉的东西一个没用。 */
+.rrm-root .rrm-ghost-hint {
+  transform: translateY(5px);
+  transition: transform 240ms ease-out;
+}
+.rrm-root .rrm-ghost-hint.rrm-ghost-hint-in { transform: translateY(0); }
+
 /* ── ⑧ 操作台的两个大胶囊按钮：渐变质感 + 56px 高 + 18px 粗体 ─────── */
+/* P21.0：全屏时按钮跟着面板一起变大（vh = iframe 视口高度，
+   vw = iframe 宽度）—— 直播大屏上「掏钱买 / 割肉卖」要一眼就看见。
+   clamp() 给上下限，窄窗口不至于挤爆。
+   注意：这个注释在 CSS 模板字符串里，**一个反引号都不许出现**
+   （P11.1 与 P12.0 各踩过一次：当场截断模板 ⇒ 面板白屏）。 */
 .rrm-root .neko-button.rrm-pill {
   flex: 1 1 0;
   min-width: 0;
-  height: 56px;
+  height: clamp(56px, 7.5vh, 92px);
   padding: 0 16px;
-  font-size: 18px;
+  font-size: clamp(18px, 1.5vw, 28px);
   font-weight: 800;
   letter-spacing: 1px;
-  border-radius: 28px;
+  border-radius: clamp(28px, 4vh, 46px);
   border: none;
   /* 真机教训：按钮被压窄时中文会**竖着排**（一字一行），难看且读不出来。
      锁死不换行，宁可两行空间也要横着排。 */
@@ -1116,14 +1138,35 @@ const BOOM_HARD_LIMIT_MS = 5000
 const PANEL_POLL_INTERVAL_MS = 3000
 
 /**
- * P16.0：**前两关**（街机 = 新手村 / 入门 = 断供前夕）走「简单面板」。
+ * P21.0：**三档 UI 密度**（渐进式简化 —— 把复杂藏起来，别在新手村吓人）。
  *
- * 前两关的诉求是「闭着眼睛瞎买也能赚钱」—— 复杂的水位条与多标的台账
- * 在这里是**干扰**，不是帮助。后面两档恢复完整信息（压迫感该在那里出现）。
+ * P16.0 只有「简单 / 完整」两档，前两关一起走简单面板。
+ * P21.0 拆成三档，因为**入门档和街机档的诉求不一样**：
+ *
+ * | 档位 | 密度 | 诉求 |
+ * | :-- | :-- | :-- |
+ * | 街机 | ``minimal`` | 纯爽局：只留核心玩法区块，别吓跑人 |
+ * | 入门 | ``guarded`` | 开始教生存：恢复水位条，但还不玩多标的计划 |
+ * | 进阶 / 地狱 / 无尽 | ``full`` | 火力全开：压迫感该在那里出现 |
+ *
+ * **只影响面板的显示**（条件渲染），**不影响任何底层计算** ——
+ * 引擎层与模式层一行没动，500 局基线照样逐字节全等。
  */
-const SIMPLE_MODES = ["classic_arcade", "classic_beginner"]
+type UiLevel = "minimal" | "guarded" | "full"
+
+/** 街机（纯爽局）：核心玩法之外什么都不给看。 */
+const MINIMAL_UI_MODES = ["classic_arcade"]
+/** 入门（断供前夕）：恢复生存提示，但仍不玩多标的计划。 */
+const GUARDED_UI_MODES = ["classic_beginner"]
 /** 前两关的持仓台账只铺前 N 只（其余折成一行字）。 */
 const SIMPLE_POSITION_LIMIT = 3
+
+/** 档位 ⇒ UI 密度（认不出来的档位一律按 ``full`` —— 宁可多给，不给空）。 */
+function uiLevelFor(mode: string): UiLevel {
+  if (MINIMAL_UI_MODES.indexOf(mode) >= 0) return "minimal"
+  if (GUARDED_UI_MODES.indexOf(mode) >= 0) return "guarded"
+  return "full"
+}
 
 function percent(value: number | undefined | null): string {
   if (value === undefined || value === null) return "—"
@@ -1172,7 +1215,13 @@ function BigStat(props: {
   value: string
   hint?: string
   color?: string
-  size?: number
+  /**
+   * 字号：数字（px）或 **CSS 长度表达式**（P21.0）。
+   *
+   * P21.0：全屏时希望核心数字跟着面板一起变大 ⇒ 传
+   * ``clamp(30px, 3.4vw, 56px)`` 这样的值（``vw`` = iframe 宽度）。
+   */
+  size?: number | string
   /**
    * P16.0：跳动时的**强调**（缩一下）。
    *
@@ -1191,7 +1240,8 @@ function BigStat(props: {
       {
         className: "neko-stat-value",
         style: {
-          fontSize: `${props.size || 34}px`,
+          fontSize:
+            typeof props.size === "string" ? props.size : `${props.size || 34}px`,
           color: props.color,
           lineHeight: "1.15",
           transform: props.pop ? "scale(1.12)" : undefined,
@@ -1746,6 +1796,20 @@ function PositionTile(props: { position: Position; t: Translate }) {
  */
 const MIN_KLINE_POINTS = 5
 
+/**
+ * P21.0：K 线高度随**宿主 iframe 的高度**自适应。
+ *
+ * ``vh`` 在 iframe 里指的是 **iframe 自己的视口高度** —— 也就是插件面板
+ * 的高度。全屏时它变高 ⇒ K 线跟着长高，正好填满上半部分，
+ * 不会在大屏下留一大片白底。
+ *
+ * ``clamp()`` 给上下限：窄窗口不至于挤成一条线，大窗口也不会长到失控。
+ *
+ * **只用长度单位**（不碰 position / filter / opacity）——
+ * 0.8.0 崩 UI 的根因就是那几样东西。
+ */
+const KLINE_HEIGHT_CSS = "clamp(232px, 34vh, 520px)"
+
 function Kline(props: {
   points: KlinePoint[]
   emptyText: string
@@ -1753,7 +1817,9 @@ function Kline(props: {
 }) {
   const points = props.points || []
   // P8.0：K 线是**上半区的主视觉** —— 更高、更抢眼。
-  const height = 232
+  // P21.0：高度改成 CSS 值（跟着 iframe 高度走），柱子的高度改用**百分比** ——
+  // 百分比是相对容器算的，所以容器长高时柱子自动跟着长高（不需要 JS 测量）。
+  const height = KLINE_HEIGHT_CSS
   if (points.length === 0) {
     return h("div", null, h("span", null, props.emptyText))
   }
@@ -1766,7 +1832,7 @@ function Kline(props: {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          height: `${height}px`,
+          height,
         },
       },
       h("span", null, props.warmingText)
@@ -1779,7 +1845,8 @@ function Kline(props: {
   const bars = points.map((point, index) => {
     const tick = point[0]
     const price = point[1]
-    const barHeight = Math.max(2, Math.round(((price - min) / span) * (height - 16)))
+    // 柱子高度用**百分比**（相对容器），所以容器自适应高度时柱子跟着自适应。
+    const ratio = (price - min) / span
     const previous = index > 0 ? points[index - 1][1] : price
     // P9.0：柱子改成**纵向渐变**（顶上实、底下化开），底下再垫一层网格线 ——
     // 这就是设计图里那条 K 线区的「光影」。
@@ -1791,7 +1858,9 @@ function Kline(props: {
         flex: "1 1 0",
         minWidth: "3px",
         maxWidth: "16px",
-        height: `${barHeight}px`,
+        height: `${(ratio * 100).toFixed(2)}%`,
+        // 贴底的那根也要看得见（百分比算出来可能是 0）。
+        minHeight: "2px",
         marginRight: "2px",
         borderRadius: "3px",
       },
@@ -1804,7 +1873,7 @@ function Kline(props: {
       style: {
         display: "flex",
         alignItems: "flex-end",
-        height: `${height}px`,
+        height,
         padding: "6px 0",
         overflowX: "auto",
       },
@@ -2367,7 +2436,9 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     setNameTouched(true)
     const cleaned = String(raw === undefined || raw === null ? "" : raw)
       .replace(/[\r\n\t]/g, " ")
-      .slice(0, 12)
+      // P21.0：限 **6 个字** —— 太长会撑爆面板上的标题栏。
+      // 后端还会再洗一遍（``name_easter_eggs.MAX_NAME_LENGTH``）。
+      .slice(0, 6)
     setNameDraft(cleaned)
   }
   // ── P11：猫娘外置交互引导（主动搭话）───────────────────────────
@@ -2506,6 +2577,8 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       showToast(t("visual.no_money"), "warning")
       return
     }
+    // P21.0：第一次成交 ⇒ 飘出新手兜底提示（没动滑块就直接买也算）。
+    triggerGhostHint()
     await callAction("buy", { stock_id: effectiveStockId, amount: buyAmount })
     clearTradeDrafts()
     // P14：这只已经买过了 ⇒ 它那份"计划"作废（不然台账会重复计算）。
@@ -2523,6 +2596,8 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       showToast(t("visual.nothing_to_sell"), "warning")
       return
     }
+    // P21.0：第一次成交 ⇒ 飘出新手兜底提示（没动滑块就直接卖也算）。
+    triggerGhostHint()
     await callAction("sell", { stock_id: effectiveSellStockId, amount: sellAmount })
     clearTradeDrafts()
   }
@@ -2711,10 +2786,37 @@ export default function Panel(props: PluginSurfaceProps<State>) {
   // P8.0：行情网格最多铺 12 张方块卡（再多是视觉噪音，不是信息）。
   const visibleStocks = stocks.slice(0, 12)
   const hiddenStockCount = Math.max(0, stocks.length - visibleStocks.length)
-  // ── P16.0：前两关（街机 / 入门）走**简单面板** ──────────────────────
-  // 诉求是「闭着眼睛瞎买也能赚钱」—— 复杂的水位条与多标的台账在前两关
-  // 是**干扰**。后面两档恢复完整信息（压迫感该在那里出现）。
-  const simpleUi = SIMPLE_MODES.indexOf(String(state.mode || "")) >= 0
+  // ── P21.0：三档 UI 密度（渐进式简化）──────────────────────────────
+  //
+  // 只影响**显示**：底层的计算、费率、判定一个字都没动。
+  const uiLevel = uiLevelFor(String(state.mode || ""))
+  const fullUi = uiLevel === "full"
+  const guardedUi = uiLevel === "guarded"
+  const minimalUi = uiLevel === "minimal"
+  // 前两关的持仓只铺前 3 只（其余折成一行字）—— P16.0 的既有口径。
+  const simpleUi = !fullUi
+  // ── 教程例外：**教程点到哪，那块就必须看得见** ───────────────────
+  //
+  // 街机档的教程第 4 步就是「看水位」（锚点 ``gauge``），而街机档
+  // 默认**不显示**水位条 —— 不处理的话，教程圈的就是空气
+  // （P18.0 踩过一次同样的坑：锚点 class 漏了，圈了半天没圈到东西）。
+  //
+  // 所以：**教程正在圈的那一块，强制显示**。规则一句话：
+  // 「教程点到哪，哪块就必须可见」。
+  const tutorialNeeds = (anchor: string): boolean => tutorialAnchor === anchor
+  // 水位条：入门起恢复（开始教生存了）；街机默认不显示。
+  const showGauge = fullUi || guardedUi || tutorialNeeds("gauge")
+  // 连击徽章：街机与入门都不给（纯爽局配件，前两关先教活下来）。
+  const showCombo = fullUi
+  // 集中度警告 / 计划台账：只有后面三档才玩。
+  const showConcentration = fullUi
+  const showPlanLedger = fullUi
+  // 家道徽标（丰盈 / 断供 / 濒临破产）与「距离强制平仓线」：
+  // 街机档没有账单，这两样**恒定没意义**，纯噪音 ⇒ 藏起来。
+  const showFamilyBadge = !minimalUi
+  const showKillLine = !minimalUi
+  // 明日账单提示：街机档压根没有账单 ⇒ 不显示。
+  const showBillAlert = !minimalUi
   // 台账按市值从大到小排；前两关只铺前 3 只，其余折成一行字。
   const rankedPositions = positions
     .slice()
@@ -2923,12 +3025,55 @@ export default function Panel(props: PluginSurfaceProps<State>) {
     "rrm.sell_position_pct",
     100
   )
+  // ── P21.0：新手兜底的「幽灵提示」──────────────────────────────────
+  //
+  // 很多主播会直接跳过教程开干 ⇒ 他第一次动手时，两眼一抹黑。
+  // 所以：他**第一次动滑块 / 第一次成交**时，操作区旁边飘出一行小字
+  //（「不会玩可以点上面的【呼叫猫娘】」）。
+  //
+  // **这是静态 UI 文案，不是 Yui 台词** —— 台词仍然 100% 由她生成
+  // （P13 契约）。这里只负责**指路**：把人送到能问人的地方去。
+  const [ghostHintOn, setGhostHintOn] = useState(false)
+  const [ghostHintIn, setGhostHintIn] = useState(false)
+  const ghostHintUsed = useRef(false)
+  // 教程正在教 ⇒ 有人盯着，不需要这行提示。
+  const tutorialCoaching = Boolean(tutorial.active)
+  const triggerGhostHint = () => {
+    if (ghostHintUsed.current || tutorialCoaching) return
+    ghostHintUsed.current = true
+    setGhostHintOn(true)
+  }
+  // 「飘出」= 先低一点点，再抬上来（**JS 定时器 + transform**，
+  // 不用 CSS 动画 —— 0.8.0 的崩溃根因之一）。
+  useEffect(() => {
+    if (!ghostHintOn) {
+      setGhostHintIn(false)
+      return
+    }
+    const rise = setTimeout(() => setGhostHintIn(true), 30)
+    const fade = setTimeout(() => setGhostHintOn(false), 9000)
+    return () => {
+      clearTimeout(rise)
+      clearTimeout(fade)
+    }
+  }, [ghostHintOn])
   const planBudget = planBudgetMap || {}
   // 其它标的已经占用的额度（不含当前标的）。
-  const othersBudget = Object.keys(planBudget).reduce((sum, key) => {
-    if (key === effectiveStockId) return sum
-    return sum + Math.max(0, Number(planBudget[key] || 0))
-  }, 0)
+  //
+  // ── P21.0：前两关**不玩多标的计划** ⇒ 这里恒为 0 ──────────────────
+  //
+  // 台账藏起来了，台账占掉的额度也必须一起消失 ——
+  // 否则玩家会撞上一个「滑条莫名其妙拉不满」的鬼现象，
+  // 而他根本看不到原因（台账不在面板上）。
+  //
+  // 换句话说：前两关的买入滑条上限 = **全部现金**，就是一个纯粹的
+  // 「这回掏多少」。
+  const othersBudget = showPlanLedger
+    ? Object.keys(planBudget).reduce((sum, key) => {
+        if (key === effectiveStockId) return sum
+        return sum + Math.max(0, Number(planBudget[key] || 0))
+      }, 0)
+    : 0
   // **本轮上限**：现金 − 别人占掉的 ⇒ 后拉动的滑条被它截断。
   const capBudget = Math.max(0, cash - othersBudget)
   const capPct = cash > 0 ? Math.min(100, (capBudget / cash) * 100) : 0
@@ -2952,6 +3097,8 @@ export default function Panel(props: PluginSurfaceProps<State>) {
       ...(prev || {}),
       [effectiveStockId]: budget,
     }))
+    // P21.0：第一次动买入滑块 ⇒ 飘出新手兜底提示。
+    triggerGhostHint()
   }
   const buyRate = Number(state.fees?.buy_rate || 0)
   const sellRate = Number(state.fees?.sell_rate || 0)
@@ -3972,7 +4119,15 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                 Field,
                 {
                   label: t("panel.name_input_label"),
-                  help: t("panel.name_input_hint"),
+                  // P21.0：两行提示 —— 一行劝退，一行**吊胃口**
+                  // （「名字太嚣张，容易触发特殊彩蛋」）。
+                  help: h(
+                    "span",
+                    null,
+                    t("panel.name_input_hint"),
+                    h("br", null),
+                    t("panel.name_input_hint2")
+                  ),
                 },
                 h(Input, {
                   value: nameDraft,
@@ -4210,13 +4365,20 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             label={t("panel.to_settle", { ticks: state.ticks_to_settle })}
           />
           <StatusBadge tone="default" label={t("panel.tick", { tick: state.tick })} />
-          <StatusBadge tone="default" label={stageLabel} />
-          <Text>
-            {t("panel.distance_to_kill")}:{" "}
-            {state.distance_to_kill === null || state.distance_to_kill === undefined
-              ? "—"
-              : money(state.distance_to_kill)}
-          </Text>
+          {/* ── P21.0：家道徽标（丰盈 / 断供 / 濒临破产）──────────────
+              街机档没有账单 ⇒ 家道**恒定**是「丰盈」⇒ 纯噪音，藏起来。 */}
+          {showFamilyBadge ? <StatusBadge tone="default" label={stageLabel} /> : null}
+          {/* ── P21.0：「距离强制平仓线」—— 街机档没有线可距 ⇒ 不显示。
+              （这行字在街机档永远是「—」，而且「强制平仓」四个字本身就是
+                新手最不需要看到的词。） */}
+          {showKillLine ? (
+            <Text>
+              {t("panel.distance_to_kill")}:{" "}
+              {state.distance_to_kill === null || state.distance_to_kill === undefined
+                ? "—"
+                : money(state.distance_to_kill)}
+            </Text>
+          ) : null}
         </Inline>
 
         {/* ── P19.0：导演段的「进度」（**只在开关打开时才渲染**）────────
@@ -4299,12 +4461,14 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             顺序改成「盈亏 | 现钱 | **身家**」—— 身家那张卡落在**右上角**，
             它的名字随 stage 变：零花钱（富二代）/ 家底（断供）/ 救命钱（濒临破产）。 */}
         <Grid cols={3} gap={12}>
+          {/* P21.0：字号改成 **CSS 表达式** ⇒ 全屏（面板更宽）时数字跟着变大，
+              窄窗口又不会缩成一团。``vw`` 指的是 iframe 自己的宽度。 */}
           <BigStat
             label={t("visual.pnl_title")}
             value={`${pnlShown > 0 ? "+" : ""}${money(pnlShown)}`}
             hint={`${t("visual.total_pnl")} · ${pnlHint}`}
             color={pnlColor}
-            size={36}
+            size="clamp(30px, 3.4vw, 58px)"
             pop={pnlPop}
           />
           <BigStat
@@ -4319,47 +4483,54 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                   : "var(--danger)"
                 : undefined
             }
-            size={30}
+            size="clamp(26px, 2.8vw, 46px)"
           />
           <BigStat
             label={assetsLabel}
             value={money(totalAssets)}
             hint={t("visual.assets_hint", { stage: stageLabel })}
             color={flashColor}
-            size={36}
+            size="clamp(30px, 3.4vw, 58px)"
           />
         </Grid>
 
-        {/* ── P16.0：连击徽章（街机档的爽感配件）───────────────────── */}
-        {h(ComboBadge, { streak: comboStreak, best: comboBest, t: t })}
+        {/* ── P16.0：连击徽章（P21.0：只有后面三档才给看）────────────── */}
+        {showCombo ? h(ComboBadge, { streak: comboStreak, best: comboBest, t: t }) : null}
 
-        {/* ── P14.0：资金水位条（明天的生活费 = 那条红线）────────────── */}
-        {h(CashGauge, {
-          cash: cash,
-          bill: nextBill,
-          crisis: cashCrisis,
-          alarmOn: gaugeAlarm,
-          t: t,
-          compact: simpleUi,
-        })}
+        {/* ── P14.0：资金水位条（P21.0：入门起恢复；街机默认藏起来）────
+            **教程圈到它的时候强制显示** —— 教程点到哪，哪块就必须可见。 */}
+        {showGauge
+          ? h(CashGauge, {
+              cash: cash,
+              bill: nextBill,
+              crisis: cashCrisis,
+              alarmOn: gaugeAlarm,
+              t: t,
+              // 前两关压成**一行字**（完整的水位条在那里是干扰）。
+              compact: simpleUi,
+            })
+          : null}
 
-        {/* ── P7.2 ③：明日账单（交不起就是红色警告）────────────────── */}
-        {(state.bill_gap || 0) > 0 ? (
-          <Alert
-            tone="danger"
-            message={t("panel.bill_warn", {
-              gap: money(state.bill_gap),
-              next: money(state.next_bill),
-              cash: money(state.cash),
-              missed: state.missed_bills || 0,
-            })}
-          />
-        ) : (
-          <Alert
-            tone="success"
-            message={t("panel.bill_ok", { next: money(state.next_bill), cash: money(state.cash) })}
-          />
-        )}
+        {/* ── P7.2 ③：明日账单（交不起就是红色警告）──────────────────
+            P21.0：街机档没有账单 ⇒ 整块不渲染（恒定的「明天要交 0」是噪音）。 */}
+        {showBillAlert ? (
+          (state.bill_gap || 0) > 0 ? (
+            <Alert
+              tone="danger"
+              message={t("panel.bill_warn", {
+                gap: money(state.bill_gap),
+                next: money(state.next_bill),
+                cash: money(state.cash),
+                missed: state.missed_bills || 0,
+              })}
+            />
+          ) : (
+            <Alert
+              tone="success"
+              message={t("panel.bill_ok", { next: money(state.next_bill), cash: money(state.cash) })}
+            />
+          )
+        ) : null}
 
         {/* ── P8.0 ③：中半区 —— 行情**方块卡片网格** ──────────────────
             用宿主 `Columns` 的 fluid 模式：面板宽就是 4 列，窄就是 2 列。
@@ -4395,7 +4566,10 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                 <Text>{t("panel.positions_more", { count: hiddenPositionCount })}</Text>
               ) : null}
             )}
-            {!simpleUi && (state.concentration || 0) > 0.6 ? (
+            {/* ── P14.0：集中度警告（P21.0：只有后面三档才给看）────────
+                前两关的诉求是「闭着眼睛瞎买也能赚钱」——
+                「你的钱全压在一只上」这种警告在这里是**干扰**。 */}
+            {showConcentration && (state.concentration || 0) > 0.6 ? (
               <Alert
                 tone="warning"
                 message={t("visual.concentration_warn", {
@@ -4506,6 +4680,8 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                     onChange: (value: any) => {
                       setSellPositionPct(Number(value))
                       clearTradeDrafts()
+                      // P21.0：第一次动卖出滑块 ⇒ 飘出新手兜底提示。
+                      triggerGhostHint()
                     },
                   })
                 )}
@@ -4552,6 +4728,28 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                   )
                 : null
             )}
+
+            {/* ── P21.0：新手兜底的「幽灵提示」──────────────────────
+                跳过教程直接开干的人，第一次动手时旁边飘出这一行。
+                静态 UI 文案（**不是** Yui 台词）—— 只负责指路。 */}
+            {ghostHintOn
+              ? h(
+                  "div",
+                  {
+                    className: ghostHintIn
+                      ? "rrm-ghost-hint rrm-ghost-hint-in"
+                      : "rrm-ghost-hint",
+                    style: {
+                      fontSize: "12px",
+                      lineHeight: "1.6",
+                      color: "var(--muted)",
+                      fontStyle: "italic",
+                      padding: "2px 2px 0",
+                    },
+                  },
+                  t("panel.ghost_hint")
+                )
+              : null}
 
             {/* ── P8.0 ④：两个胶囊大按钮**并排**独占一行 ──────────────
                 真机教训（0.9.0 首轮）：它们原本和 `Select` 挤在同一行，
@@ -4730,7 +4928,12 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                 玩家可以给**好几只**标的排计划。这一栏把"打算花多少"
                 摊开给玩家看：每只排了多少、总额多少。
                 别的标的占掉的额度会**截断**买入滑条 ——
-                拉扯的阻力感，就是极限的提示。 */}
+                拉扯的阻力感，就是极限的提示。
+
+                P21.0：前两关**不玩**这一套 ⇒ 整块不渲染
+                （而且台账占掉的额度也一起归零，见 othersBudget）——
+                藏起来的东西不能还在暗中起作用。 */}
+            {showPlanLedger ? (
             <Stack gap={6} className="rrm-plan">
               <Inline gap={8} align="center" justify="space-between">
                 <Text>{t("panel.plan_title")}</Text>
@@ -4794,6 +4997,7 @@ export default function Panel(props: PluginSurfaceProps<State>) {
                   )
                 : h(Text, null, t("panel.plan_empty"))}
             </Stack>
+            ) : null}
 
             <Divider />
 

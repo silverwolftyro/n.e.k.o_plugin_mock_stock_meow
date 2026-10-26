@@ -54,7 +54,10 @@ __all__ = [
 DEFAULT_PLAYER_NAME = "无名韭菜"
 
 #: 名字最长多少个字符（防呆：面板截断 + 后端再截一次）。
-MAX_NAME_LENGTH = 12
+#:
+#: P21.0：从 12 收到 **6** —— 名字会出现在面板标题栏与结算页里，
+#: 太长会撑爆排版（也会让提示词注入的载荷更长）。
+MAX_NAME_LENGTH = 6
 
 #: 分类。
 CATEGORY_SELF_DEPRECATING = "self_deprecating"

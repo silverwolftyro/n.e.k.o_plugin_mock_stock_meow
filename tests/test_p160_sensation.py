@@ -366,15 +366,23 @@ def test_the_combo_only_touches_the_presentation_fields() -> None:
 
 
 def test_the_first_two_levels_get_the_simple_panel() -> None:
-    """前两关（街机 / 入门）⇒ 水位条压成一行、台账只铺前 3 只。"""
+    """前两关（街机 / 入门）⇒ 面板**更简单**。
+
+    P21.0：P16.0 的两档模型升级成**三档**（街机 / 入门 / 后面三档）——
+    街机是纯爽局，入门开始教生存，两者的诉求不一样。
+
+    这里守的不变式：**前两关不吃复杂信息**（持仓只铺前 3 只、水位条压成
+    一行、集中度警告不出现），后面三档才火力全开。
+    """
     code = _panel_code()
-    assert 'const SIMPLE_MODES = ["classic_arcade", "classic_beginner"]' in code
+    assert 'const MINIMAL_UI_MODES = ["classic_arcade"]' in code
+    assert 'const GUARDED_UI_MODES = ["classic_beginner"]' in code
     assert "SIMPLE_POSITION_LIMIT" in code
     assert "compact: simpleUi" in code, "资金水位条必须按前两关切紧凑模式"
     assert "shownPositions.map" in code, "持仓台账必须按前两关裁剪"
-    assert "!simpleUi && (state.concentration || 0) > 0.6" in code, (
-        "集中度警告在前两关不该出现（那是教学指标，不是爽感）"
-    )
+    # 集中度警告只在**后面三档**出现（前两关不该有 —— 那是教学指标，不是爽感）。
+    assert "const showConcentration = fullUi" in code
+    assert "showConcentration && (state.concentration || 0) > 0.6" in code
 
 
 def test_the_new_effects_use_js_timers_not_css_animation() -> None:

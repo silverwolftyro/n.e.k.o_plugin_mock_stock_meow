@@ -217,7 +217,9 @@ def test_kline_is_the_first_card_and_full_width() -> None:
     # 全宽：柱子用 flex 撑开，而不是固定宽度挤在左边。
     assert 'flex: "1 1 0"' in code
     # 主视觉：高度不能低于 200px。
-    match = re.search(r"const height = (\d+)", code)
+    # P21.0：高度改成 CSS 表达式（clamp(232px, 34vh, 520px)）——
+    # 跟着 iframe 高度自适应；守卫盯的是**下限**不许退。
+    match = re.search(r"const KLINE_HEIGHT_CSS = \"clamp\((\d+)px", code)
     assert match, "K 线必须有明确的高度"
     assert int(match.group(1)) >= 200, f"K 线是主视觉，高度只有 {match.group(1)}px"
 

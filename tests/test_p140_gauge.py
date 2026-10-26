@@ -158,7 +158,9 @@ def test_the_alarm_blinks_with_a_js_timer_not_css() -> None:
 def test_the_cash_number_turns_red_in_crisis() -> None:
     """现金那个**大号数字**也要跟着变红（不只是水位条）。"""
     code = _panel_code()
-    block = _function_source(code, "label={cashLabel}", "size={30}")
+    # P21.0：字号从写死的 30px 改成 clamp()（全屏时跟着面板变大），
+    # 所以这里按「现钱那张卡」的范围取。
+    block = _function_source(code, "label={cashLabel}", "label={assetsLabel}")
     assert "cashCrisis" in block, "现金数字必须认危机态"
     assert "var(--danger)" in block, "危机态的现金数字必须是红色"
 
@@ -421,7 +423,7 @@ def test_the_new_i18n_keys_exist() -> None:
 
 
 def test_the_version_is_0_9_8() -> None:
-    """版本号 = 0.10.3。"""
-    assert 'version = "0.10.3"' in _TOML.read_text(encoding="utf-8")
+    """版本号 = 0.10.4。"""
+    assert 'version = "0.10.4"' in _TOML.read_text(encoding="utf-8")
     init = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.10.3"' in init
+    assert 'PLUGIN_VERSION = "0.10.4"' in init
