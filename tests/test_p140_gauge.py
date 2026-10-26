@@ -423,7 +423,7 @@ def test_the_new_i18n_keys_exist() -> None:
 
 
 def test_the_version_is_0_9_8() -> None:
-    """版本号 = 0.10.4。"""
-    assert 'version = "0.10.4"' in _TOML.read_text(encoding="utf-8")
+    """版本号 = 0.10.5。"""
+    assert 'version = "0.10.5"' in _TOML.read_text(encoding="utf-8")
     init = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.10.4"' in init
+    assert 'PLUGIN_VERSION = "0.10.5"' in init

@@ -4557,14 +4557,16 @@ export default function Panel(props: PluginSurfaceProps<State>) {
             {positions.length === 0 ? (
               <Text>{t("panel.no_positions")}</Text>
             ) : (
-              <Columns fluid minWidth={196} gap={16}>
-                {shownPositions.map((position) =>
-                  h(PositionTile, { key: position.stock_id, position, t })
-                )}
-              </Columns>
-              {hiddenPositionCount > 0 ? (
-                <Text>{t("panel.positions_more", { count: hiddenPositionCount })}</Text>
-              ) : null}
+              <Stack gap={12}>
+                <Columns fluid minWidth={196} gap={16}>
+                  {shownPositions.map((position) =>
+                    h(PositionTile, { key: position.stock_id, position, t })
+                  )}
+                </Columns>
+                {hiddenPositionCount > 0 ? (
+                  <Text>{t("panel.positions_more", { count: hiddenPositionCount })}</Text>
+                ) : null}
+              </Stack>
             )}
             {/* ── P14.0：集中度警告（P21.0：只有后面三档才给看）────────
                 前两关的诉求是「闭着眼睛瞎买也能赚钱」——
