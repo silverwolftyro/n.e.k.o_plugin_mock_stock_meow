@@ -259,7 +259,7 @@ class _Scanner:
     def _open_brace(self, start: int) -> None:
         frame = self.frame
         prev_raw = frame.last_raw
-        if prev_raw in {"=>", ")", "else", "do", "try", "finally"}:
+        if prev_raw in _BLOCK_PREV_TOKENS:
             is_block = True
         elif not frame.stmt:
             # 表达式语境：``{`` 只能是对象字面量 / 类型字面量
