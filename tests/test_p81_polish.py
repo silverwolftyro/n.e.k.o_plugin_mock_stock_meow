@@ -211,15 +211,15 @@ def test_kline_stays_the_main_visual() -> None:
 
 
 def test_trade_buttons_are_compact_and_centred() -> None:
-    """两个胶囊按钮**各占 48%**、紧凑并排、整排居中。"""
+    """P27.1：底部三个胶囊按钮**等宽三列**、紧凑并排、整排居中。"""
     css = _panel_css()
     assert ".rrm-root .neko-grid.rrm-trade-row {" in css
     block = css.split(".rrm-root .neko-grid.rrm-trade-row {", 1)[1].split("}", 1)[0]
-    assert "48%" in block, "两个胶囊按钮必须各占 48% 宽"
+    assert "repeat(3, minmax(0, 1fr))" in block, "三个胶囊按钮必须等宽三列"
     assert "justify-content: center" in block, "整排要居中"
     code = _panel_code()
     assert 'className="rrm-trade-row"' in code
-    assert "<Grid cols={2} gap={8}" in code, "胶囊行的间距要收紧到 8"
+    assert "<Grid cols={3} gap={8}" in code, "胶囊行的间距要收紧到 8"
 
 
 def test_select_rows_are_width_limited() -> None:
@@ -351,4 +351,4 @@ def test_assets_are_still_inline_data_uris() -> None:
 def test_version_is_0_9_1() -> None:
     """版本号 = 0.10.5。"""
     toml = _TOML.read_text(encoding="utf-8")
-    assert 'version = "0.10.5"' in toml
+    assert 'version = "0.12.0-live-ultimate"' in toml

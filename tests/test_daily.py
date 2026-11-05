@@ -33,6 +33,21 @@ def _set_cash(repo: Repo, player_id: str, cash: float) -> None:
     run(repo.transaction([("UPDATE players SET cash = ? WHERE id = ?", (cash, player_id))]))
 
 
+def _no_community_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    """把群友随机事件**关掉**（掷点钉成"必不中"）。
+
+    P26.0 的「天降 Token」是 5% 概率的**真随机**彩蛋：它一旦命中，玩家就有
+    了钱 ⇒ 交得起生活费 ⇒ 不会触发二道贩子强制卖出 ⇒ 下面这两条会**偶发**失败。
+
+    这两条要验的是"交不起生活费 ⇒ 强制卖出 ⇒ 撤销窗口"这条**主线**，
+    与彩蛋无关 —— 所以这里把彩蛋关掉，让主线断言是确定的。
+    """
+    import importlib
+
+    module = importlib.import_module("plugins.mock_stock_meow")
+    monkeypatch.setattr(module, "community_roll", lambda *, chance: False)
+
+
 # ---------------------------------------------------------------- 引擎层
 
 
@@ -179,8 +194,9 @@ def test_day_rollover_deducts_living_cost_and_advances_day(plugin) -> None:
     assert status["cash"] < before  # 扣了生活费
 
 
-def test_distress_sell_happens_by_default(plugin) -> None:
+def test_distress_sell_happens_by_default(plugin, monkeypatch) -> None:
     """交不起生活费 → 默认执行二道贩子强制卖出，并开撤销窗口。"""
+    _no_community_events(monkeypatch)
     _value(run(plugin.join(mode="classic_beginner", seed=42)))
     repo = Repo(plugin.db)
     player_id = _player_id(repo)
@@ -213,8 +229,9 @@ def test_distress_sell_happens_by_default(plugin) -> None:
     assert rows[0]["action"] == "forced_sell"
 
 
-def test_daily_reject_undoes_the_forced_sell(plugin) -> None:
+def test_daily_reject_undoes_the_forced_sell(plugin, monkeypatch) -> None:
     """撤销窗口内 ``daily(action="reject")`` → 仓位与现金原样退回，三振 +1。"""
+    _no_community_events(monkeypatch)
     _value(run(plugin.join(mode="classic_beginner", seed=43)))
     repo = Repo(plugin.db)
     player_id = _player_id(repo)

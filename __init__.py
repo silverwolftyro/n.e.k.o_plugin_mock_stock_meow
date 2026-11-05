@@ -41,6 +41,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
 import random
@@ -107,6 +108,19 @@ from .combo import (
     COMBO_MODES,
     ComboTracker,
 )
+from .community_events import (
+    EVENT_KIND_TOKEN,
+    INTEL_CHANCE,
+    MAX_TOKEN_RESCUES_PER_GAME,
+    TOKEN_RESCUE_CHANCE,
+    CommunityEvent,
+    build_intel_event,
+    build_token_rescue_event,
+    pick_intel_target,
+)
+from .community_events import (
+    roll as community_roll,
+)
 from .emotion import (
     EmotionProfile,
     banned_visible_death_words,
@@ -167,15 +181,43 @@ from .engine.settlement import (
     sell_fee,
     welfare_entitlement,
 )
+from .fakenews import (
+    FakeNewsLedger,
+    build_fake_news_outrage_payload,
+)
+from .live_guard import (
+    GOD_RALLY_CONCENTRATION,
+    GOD_RALLY_LIMIT,
+    GOD_RALLY_RATE,
+    GOD_RESCUE_LIMIT,
+    INTUITION_COOLDOWN_TICKS,
+    INTUITION_MAX_WARNINGS,
+    INTUITION_SETTLE_TICKS,
+    DangerSignal,
+    IntuitionWatch,
+    apply_rally,
+    danger_signal_text,
+    pick_danger_signal,
+    pick_rally_target,
+    player_options_text,
+    settle_text,
+)
 from .meow import (
     GREET_PROMPT,
     MEOW_AUTO_COOLDOWN_SECONDS,
     MEOW_CALL_COOLDOWN_SECONDS,
     NAG_PROMPT,
+    YUI_AUTHORITY_PROMPT,
+    YUI_RECEIPT_CYCLE_DIRECTIVE,
+    YUI_TRADE_FACTS,
     call_prompt,
     fallback_line,
     idle_prompt,
     rotate_topic,
+    yui_duo_commentary,
+    yui_duo_prompt,
+    yui_trade_failure_prompt,
+    yui_trade_receipt_prompt,
 )
 from .modes import get_mode
 from .modes.shared import (
@@ -202,9 +244,23 @@ from .name_easter_eggs import (
     apply_cash_multiplier,
     build_fact,
     daily_return_gain,
+    is_developer_cat,
     match_egg,
     public_info,
     sanitize_name,
+)
+from .short_book import (
+    DEFAULT_SHORT_LEVERAGE,
+    SHORT_LEVERAGES,
+    SHORT_MAX_POSITIONS,
+    SHORT_MIN_MARGIN,
+    ShortPosition,
+    mark_short,
+    normalize_leverage,
+    open_short,
+    roll_short,
+    short_positions_to_rows,
+    yui_opponent_curve,
 )
 from .storage.repo import DbUnavailableError, Repo
 from .storage.session import (
@@ -257,6 +313,27 @@ BEGINNER_CASH_MULTIPLIER = 1.2
 #: 街机 = 新手村、入门 = 断供前夕 —— 这两关的诉求是「先甜」；
 #: 进阶与地狱是**收割场**，放水会直接毁掉压迫感，所以**不给**。
 SOFTENED_MODES: tuple[str, ...] = ("classic_arcade", "classic_beginner")
+
+#: P28.0 · 第一关（街机档）的档位 id。
+#:
+#: 第一关的定位只有一条：**爽**。于是这一档拿到三样特别待遇 ——
+#:
+#: ① ``peak_threshold`` 被抬到 ``ARCADE_PEAK_THRESHOLD``（上头即暴跌**永不触发**）；
+#: ② 卖出亏损由系统**暗中补钱**（玩家永远是赚的）；
+#: ③ 面板只留 K 线 + 买卖两键 + 现钱（见 ``ui/panel.tsx`` 的 ``arcadeSimple``）。
+#:
+#: 三样**全部是插件层**的运行时干预：``engine/`` 与 ``modes/`` 一行不改
+#: ⇒ ``tests/simulate.py`` 的 500 局基线仍逐字节一致。
+MODE_ARCADE = "classic_arcade"
+
+#: P28.0 · 第一关的「上头即暴跌」阈值（**插件层覆写**）。
+#:
+#: 引擎默认 ``peak_threshold = 40.0``（heat 越过它就算一次峰值），
+#: 峰值会触发收割、也会触发「最上头那一秒的全仓暴跌」。
+#: 第一关**绝对禁止**这套机制 ⇒ 阈值抬到一个 heat 不可能够到的数。
+#: 数值取 ``1e9`` 而不是「随便一个大数」：heat 是浮点累加，
+#: 任何有限阈值在极端局里都还有被够到的可能。
+ARCADE_PEAK_THRESHOLD = 1.0e9
 
 #: P16.0 · 蜜月期新闻真实度（**插件层覆写**，引擎默认值一个字节都没动）。
 #:
@@ -325,6 +402,30 @@ def _softened_config_for(mode: str, config: EngineConfig) -> EngineConfig:
     return _apply_beginner_softening(config)
 
 
+def _apply_arcade_softening(mode: str, config: EngineConfig) -> EngineConfig:
+    """P28.0 · 第一关（街机档）：**「上头即暴跌」彻底失效**。
+
+    第一关的唯一目的是「爽」—— 让新手与主播都产生「我是天才」的错觉。
+    「在你最上头的那一秒精准收割」是**后面几档**的压迫感来源，
+    放在第一关只会把新手吓跑。
+
+    做法（**插件层**）：把 ``heat.peak_threshold`` 抬到
+    ``ARCADE_PEAK_THRESHOLD``（1e9）。引擎的 ``is_at_peak`` 在任何现实局里
+    都够不到这个数 ⇒ **峰值收割**与**峰值触发的阶段切换**都不会发生。
+
+    注意街机档的难度档位用的是 ``harvest_trigger="fixed_trades"``
+    （阶段切换本来就按成交笔数走），但 ``modes/shared.py`` 里的
+    **峰值收割**是独立算的 —— 所以只放宽阈值就够，不需要碰难度档位。
+
+    引擎层与模式层**一行不改**：``engine/config.py`` 的默认值保持原样，
+    覆写只发生在运行时 ⇒ ``tests/simulate.py`` 的 500 局基线逐字节一致。
+    """
+    if mode != MODE_ARCADE:
+        return config
+    heat = replace(config.heat, peak_threshold=ARCADE_PEAK_THRESHOLD)
+    return replace(config, heat=heat)
+
+
 def _config_for_player(player_name: str, mode: str, config: EngineConfig) -> EngineConfig:
     """按**档位**与**名字彩蛋**决定运行时配置（P20.0）。
 
@@ -341,6 +442,8 @@ def _config_for_player(player_name: str, mode: str, config: EngineConfig) -> Eng
     ``players.name`` 里，所以宿主重启后效果照样在，不需要额外的状态。
     """
     config = _softened_config_for(mode, config)
+    # P28.0：第一关再叠一层「上头即暴跌」的彻底豁免。
+    config = _apply_arcade_softening(mode, config)
     egg = match_egg(player_name)
     if egg is None:
         return config
@@ -409,7 +512,7 @@ __all__ = ["MockStockMeowPlugin"]
 PLUGIN_ID = "mock_stock_meow"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.10.5"
+PLUGIN_VERSION = "0.12.0-live-ultimate"
 
 #: P10：游戏速度档位 → **真实时间**推进间隔的倍率。
 #:
@@ -456,6 +559,128 @@ _SETTING_TUTORIAL_TIERS = "tutorial_tiers"
 _SETTING_MEOW_GREETED = "meow_greeted"
 _SETTING_MEOW_NAG_PLAYER = "meow_nag_player"
 _SETTING_MEOW_LAST_AT = "meow_last_at"
+
+#: P23.0：Yui 的**操控模式**（``settings`` 表键名）。
+#:
+#: 这是一份**玩家可见的偏好**（跟"游戏速度""自动手动"同级）——
+#: 它决定 Yui **能不能动手**，而不只是"她说什么话"。
+#:
+#: 三种模式（玩家拍板，见 ``文档/P23.0-方案-Yui操控链路与大K线布局.md`` §2.7）：
+#:
+#: * ``live``     —— **直播专用**：Yui 一站式负责买卖（玩家犹豫或上头时她可以
+#:   强行干涉）。交易工具**直接放行**。
+#: * ``assist``   —— **辅助式（默认）**：Yui 只给建议；玩家明示「帮忙搞」之后，
+#:   才在**授权窗口**内允许她代劳。
+#: * ``spectate`` —— **纯看戏**：只评论，不碰账户。交易工具**硬拒**（兜底防线）。
+#:
+#: 落库是因为它是**跨重启**的偏好；读值走 ``_settings_map_cache``（一次会话读完）。
+_SETTING_YUI_MODE = "yui_mode"
+
+#: P23.0：Yui 的操控模式（**字符串字面量**，别用 Enum —— 要落库）。
+YUI_MODE_LIVE = "live"
+YUI_MODE_ASSIST = "assist"
+YUI_MODE_SPECTATE = "spectate"
+
+#: P28.0：``duo`` —— **人机协同双打**（直播的第二个按钮）。
+#:
+#: 玩家自己手动买卖，Yui **一根手指都不碰账户**（连授权窗口都不算）：
+#: 她只负责疯狂点评、给「云玩家内参」（可能是假的）、亏钱时嘲笑、赚钱时吹捧。
+#:
+#: 为什么不复用 ``assist``：``assist`` 允许玩家明示授权后由她代劳，
+#: 而「双打」的卖点恰恰是**她不许动手** —— 两种语义塞进一档，
+#: 工具层的硬闸门就没法拿「模式」当唯一判据了。
+#:
+#: 闸门在 :meth:`_yui_gate`：**硬拒**（提示词管不住模型，工具层才管得住）。
+YUI_MODE_DUO = "duo"
+
+#: 全部合法模式（顺序 = 面板上的展示顺序）。
+YUI_MODES: tuple[str, ...] = (
+    YUI_MODE_LIVE,
+    YUI_MODE_DUO,
+    YUI_MODE_ASSIST,
+    YUI_MODE_SPECTATE,
+)
+
+#: LLM（Yui 自己）**可以切换**的模式。
+#:
+#: 刻意**不含** ``live``：直播托管是**主播自己**在面板上开的授权，
+#: Yui 不许给自己升权 —— 否则「模型把「帮忙看看」理解成「帮我全仓了」」
+#: 这一步就**没有任何硬防线**了（提示词管不住模型，工具层才管得住）。
+#:
+#: 允许的两个模式都是**收紧**方向的：``assist``（只给建议）与
+#: ``spectate``（只评论）。从 ``live`` 切到它们 = 玩家说「你别管了」，
+#: 那是玩家在收回授权，Yui 有权执行。
+YUI_LLM_SWITCHABLE_MODES: tuple[str, ...] = (YUI_MODE_ASSIST, YUI_MODE_SPECTATE)
+
+#: 默认模式：**辅助式**。
+#:
+#: 默认值选 ``assist`` 而不是 ``live`` 是**安全默认值** ——
+#: 装上插件的第一秒，Yui 绝不能自己动玩家的钱。
+YUI_MODE_DEFAULT = YUI_MODE_ASSIST
+
+# ------------------------------------------------------------------
+# P24.0：Yui 的「话痨级别」
+# ------------------------------------------------------------------
+#
+# 直播时没动静太干了：玩家要的是"她在旁边一直叨叨"，
+# 但太叨叨又会把画面刷爆。所以这是一个**玩家可见的偏好**
+#（跟"游戏速度""自动手动"同级），直接决定**后台多久开一次 Yui 回合**。
+#
+# 三档：
+#
+# * ``quiet``   —— **安静**：只在**重大事件**（新闻 / 爆仓 / 斩杀线）时开口。
+# * ``normal``  —— **正常（默认）**：直播托管时**每隔 3 个 tick** 开一次回合。
+# * ``chatty``  —— **话痨**：**每个 tick** 都开一次回合，外加事件插话。
+#
+# 落库（同 ``_SETTING_YUI_MODE``）；读值走内存缓存。
+_SETTING_YUI_TALK_LEVEL = "yui_talk_level"
+
+YUI_TALK_QUIET = "quiet"
+YUI_TALK_NORMAL = "normal"
+YUI_TALK_CHATTY = "chatty"
+
+#: 全部合法档位（顺序 = 面板上的展示顺序）。
+YUI_TALK_LEVELS: tuple[str, ...] = (YUI_TALK_QUIET, YUI_TALK_NORMAL, YUI_TALK_CHATTY)
+
+#: 默认档位：**正常**。
+YUI_TALK_LEVEL_DEFAULT = YUI_TALK_NORMAL
+
+#: 每档「**每隔几个 tick** 开一次主动回合」。
+#:
+#: ``0`` = **不主动开**（安静档只在重大事件时说话）。
+#:
+#: 这就是"每隔 N 个 tick"里的那个 N —— 它**由话痨级别决定**，
+#: 而话痨级别是玩家可调的偏好。
+YUI_TALK_TICK_INTERVALS: dict[str, int] = {
+    YUI_TALK_QUIET: 0,
+    YUI_TALK_NORMAL: 3,
+    YUI_TALK_CHATTY: 1,
+}
+
+#: 两次主动回合之间的**最小墙钟间隔**（秒）—— 限流的第二道闸。
+#:
+#: 只靠 tick 间隔不够：``skip_day`` 之类的快进会一口气跑十几个 tick，
+#: 于是"每 3 个 tick 开一次"在一瞬间变成"开五次"。墙钟闸门兜住这个。
+YUI_TALK_MIN_GAP_SECONDS = 10.0
+
+#: P23.0：辅助模式下，玩家明示「帮忙搞」之后的**授权窗口**（秒）。
+#:
+#: 为什么要有窗口而不是一个永久开关：授权必须**有时效** ——
+#: 玩家五秒钟前说「帮我买」，不代表三十秒后他还想要 Yui 替他下单。
+#: 窗口一过，Yui 自动退回「只给建议」。
+YUI_ASSIST_GRANT_WINDOW_SECONDS = 120.0
+
+#: P23.0：Yui **每天**最多能下的单（节流配额）。
+#:
+#: 三道防线的最后一道：模式闸门管「能不能」，授权窗口管「此刻能不能」，
+#: 配额管「今天别太疯」。超额 ⇒ 工具**拒绝**（而不是排队等）。
+YUI_TRADES_PER_DAY = 3
+
+#: P23.0：【耻辱柱】最多展示多少条历史破产记录。
+#:
+#: 面板是个 iframe，表格太长会把页面撑爆 —— 而且**越短越丢人**的那些
+#: 排在最前面，真正要看的就那么几十行。
+_SHAME_MAX_ROWS = 50
 
 #: P12：剧情状态（``settings`` 表）的键名。
 #:
@@ -507,6 +732,33 @@ _TAG_LABELS = {"stable": "稳定", "neutral": "中性", "explosive": "爆炸"}
 #: 每天的分析次数（P5）。分析是**有成本**的：想拿到当天的模糊提示，就得花次数。
 ANALYSES_PER_DAY = 2
 
+# ── P27.0：做空（极简账本）──────────────────────────────────────────
+#
+# 做空整本账都在**插件层**（``short_book.py``）：引擎层与模式层一行不改，
+# 所以 500 局基线逐字节不变。这里的常量只是**插件层自己的开关**。
+
+#: 做空账本存在插件级设置表里的键（值是一段 JSON）。
+SHORT_BOOK_SETTING_KEY = "p270_short_book"
+
+#: 资产曲线（玩家 vs Yui）存在插件级设置表里的键。
+EQUITY_CURVE_SETTING_KEY = "p270_equity_curve"
+
+#: 一份「报纸」（额外一次分析）的价钱 —— 后面几档要自己掏钱买。
+#:
+#: 口径：约等于**六天生活费**。起步现金（进阶档 ~170、地狱档 ~168）够买，
+#: 但一下掏掉三分之一 ⇒「后面你得自己买报纸了」这句话是真有分量的，
+#: 却又不会让按钮从头到尾都点不动（直播时观众要看得见它生效）。
+REPORT_PRICE = 60.0
+
+#: 新手前两档：老爸给的高级报纸，白拿（不扣钱）。
+REPORT_FREE_MODES = ("classic_arcade", "classic_beginner")
+
+#: 一天最多额外买几份报纸（防止玩家把报纸当无限资源）。
+REPORT_MAX_EXTRA = 3
+
+#: 资产曲线最多留多少个点（别让设置表越滚越大）。
+EQUITY_CURVE_MAX_POINTS = 240
+
 #: 面板载荷里最多带多少只标的的 K 线（细节 2：限流）。
 #:
 #: 宿主用 ``document.createElement`` 建元素，**画不了 SVG**，K 线只能用 CSS 拼；
@@ -556,6 +808,26 @@ _ENGINE_CONFIG_TTL = 5.0
 #: 每多少次心跳打一条"心跳体检"日志（1 秒心跳 → 每分钟一条）。
 _HEARTBEAT_LOG_EVERY = 60
 
+#: P26.0：**单次心跳的硬超时**（秒）。
+#:
+#: 为什么必须有：宿主对每个 handler 都是 ``asyncio.run()``（见宿主
+#: ``plugin/core/host.py`` 的 ``_run_timer_interval``）—— 心跳 handler
+#: **不返回**，那个定时线程就**永远卡在这一轮**，后面再也不会有下一次心跳。
+#: 于是市场当场冻结：面板还在、按钮还能点，但时间不再流动（直播事故）。
+#:
+#: 所以心跳**必须**有硬上限：超时 ⇒ 放弃这一轮 ⇒ 记日志 ⇒ 下一轮照常跑。
+#:
+#: 30 秒是"绝不会误伤正常心跳"的量级：一拍 tick 的流水线本身另有
+#: ``_TICK_PIPELINE_TIMEOUT_SECONDS``（20 秒）兜底，两者都触发才叫卡死。
+_HEARTBEAT_TIMEOUT_SECONDS = 30.0
+
+#: P26.0：**单拍 tick 流水线的硬超时**（秒）。
+#:
+#: 比引擎自带的 ``tick_skip_seconds``（15 秒）**大**：引擎那道闸是
+#: "这一拍算太慢就别写回"，属于**正常**的慢；这里守的是"**永远不回来**"
+#: （await 挂死）。所以阈值必须更大 ⇒ 正常慢拍的行为**完全不变**。
+_TICK_PIPELINE_TIMEOUT_SECONDS = 20.0
+
 #: 猫娘弹幕在内存里最多留多少条。
 _DANMAKU_MAX = 20
 
@@ -564,6 +836,9 @@ _DANMAKU_PAYLOAD_MAX = 8
 
 #: P7.2：每个标的的**走势小折线**带多少个点（降采样，别把载荷撑爆）。
 _PANEL_SPARK_POINTS = 18
+
+#: P26.0：面板上最多留多少条**群友事件**记录。
+_COMMUNITY_EVENTS_MAX = 8
 
 #: P7.3：网贷弹窗的**超时兜底**（秒）。
 #:
@@ -602,6 +877,47 @@ JOIN_MODES = (
     "infinite",
 )
 
+#: P23.1：LLM 传过来的档位**别名**。
+#:
+#: 真机事故：猫娘在聊天里说「来一局街机」，LLM 就把 ``mode`` 传成
+#: ``"arcade"`` / ``"街机"`` / ``"简单"`` —— 全都不在 ``JOIN_MODES`` 里，
+#: 于是开局被拒，猫娘只好回一句「开局失败了喵」。
+#:
+#: 这里把常见说法**归一化**回正式档位；认不出来才回落街机档。
+_JOIN_MODE_ALIASES: dict[str, str] = {
+    "arcade": "classic_arcade",
+    "classic": "classic_arcade",
+    "街机": "classic_arcade",
+    "简单": "classic_arcade",
+    "容易": "classic_arcade",
+    "easy": "classic_arcade",
+    "beginner": "classic_beginner",
+    "入门": "classic_beginner",
+    "新手": "classic_beginner",
+    "advanced": "classic_advanced",
+    "进阶": "classic_advanced",
+    "高级": "classic_advanced",
+    "hell": "classic_hell",
+    "地狱": "classic_hell",
+    "最难": "classic_hell",
+    "infinite": "infinite",
+    "无尽": "infinite",
+    "无限": "infinite",
+}
+
+
+def _normalize_join_mode(raw: Any) -> str:
+    """把 LLM 传来的档位说法**归一化**成正式档位。
+
+    认不出来 ⇒ 回落 ``classic_arcade``（街机档最适合"来一局"这种随口一提）。
+    """
+    value = str(raw or "").strip().lower()
+    if not value:
+        return "classic_arcade"
+    if value in JOIN_MODES:
+        return value
+    return _JOIN_MODE_ALIASES.get(value, "classic_arcade")
+
 #: 结算页固定反诈文案（**不可通过配置关闭**）。
 ANTI_FRAUD_NOTICE = (
     "你连这个纯虚构的游戏都玩不过。全球最聪明的钱，正在真实市场里等着你。别去。"
@@ -637,6 +953,19 @@ def _fill_text(text: str, params: dict[str, Any]) -> str:
     for key, value in params.items():
         text = text.replace("{" + str(key) + "}", str(value))
     return text
+
+
+def _cell(row: Any, key: str, default: Any = "") -> Any:
+    """读一行里的某个字段（``sqlite3.Row`` 与 ``dict`` 都能读）。
+
+    宿主数据库的行对象是 ``sqlite3.Row`` —— 它**没有** ``.get()``；
+    而测试替身有时给的是 ``dict``。两种都兼容一下，省得每次都踩。
+    """
+    try:
+        value = row[key]
+    except (KeyError, IndexError, TypeError):
+        return default
+    return default if value is None else value
 
 
 def _err(code: str, detail: str | None = None) -> Err:
@@ -743,6 +1072,42 @@ class MockStockMeowPlugin(NekoPluginBase):
         self._last_tick_at = 0.0
         #: 心跳计数（每 ``_HEARTBEAT_LOG_EVERY`` 次打一条体检日志）。
         self._heartbeat_count = 0
+        #: P26.0：心跳**被硬超时打断**的次数（自愈计数，直播体检用）。
+        self._heartbeat_timeouts = 0
+        #: P26.0：tick 流水线**被硬超时打断**的次数（跳拍计数）。
+        self._tick_timeouts = 0
+        # ── P26.0：群友随机事件（插件层彩蛋）────────────────────────
+        #: 已经发生过的群友事件（面板要显示，最近 8 条）。
+        self._community_events: list[CommunityEvent] = []
+        #: 本局天降 Token 的次数（上限 ``MAX_TOKEN_RESCUES_PER_GAME``）。
+        self._token_rescue_count = 0
+        #: 已经推给 Yui 的群友事件 id（别重复推）。
+        self._yui_seen_community: set[str] = set()
+        # ── P26.1：直播护栏（插件层）────────────────────────────────
+        #: 已经发出过的「危险感知」预警（用来几拍之后对账）。
+        #: 纯内存态：重启后不恢复 —— 对账只是直播效果，不是游戏规则。
+        self._intuition_watch: list[IntuitionWatch] = []
+        #: 本局发出的预警次数（上限 ``INTUITION_MAX_WARNINGS``）。
+        self._intuition_warnings = 0
+        #: 上一次发出预警的 tick（**全局**最小间隔，节流用）。
+        self._intuition_last_tick = -10_000
+        #: 本局**强制**垫付的次数（上限 ``GOD_RESCUE_LIMIT``）。
+        #: 与 P26.0 的随机救助**分开计数**：护栏不吃随机事件的额度。
+        self._god_rescue_count = 0
+        #: 本局「庄家洗盘」假反弹的次数（上限 ``GOD_RALLY_LIMIT``）。
+        self._god_rally_count = 0
+        #: 已经排好、**下一拍**生效的假反弹（``None`` = 没有）。
+        self._god_rally_pending: dict[str, Any] | None = None
+        # ── P27.0：做空账本与资产曲线的**内存缓存** ───────────────────
+        #: 面板上下文是**同步**的（5 秒超时，不能查库）⇒ 空头账本在这里
+        #: 留一份缓存；开仓、盯市之后同步更新。
+        self._short_book_cache: list[ShortPosition] = []
+        #: 缓存属于哪一个玩家（换局就清空）。
+        self._short_book_player_id: str = ""
+        #: 玩家的资产曲线（每一拍记一个总资产）。
+        self._equity_points: list[float] = []
+        #: 资产曲线属于哪一个玩家。
+        self._equity_player_id: str = ""
         #: 二道贩子强制卖出的撤销窗口截止时间戳（秒）。
         self._daily_window_until = 0.0
         #: 最近一次收割事件（局中通知用；**不含 heat 数值**）。
@@ -813,6 +1178,64 @@ class MockStockMeowPlugin(NekoPluginBase):
         self._meow_nag_player: str = ""
         self._meow_last_at: float = 0.0
         self._meow_call_count: int = 0
+        # ── P23.0：Yui 操控端口的**内存态** ───────────────────────────────
+        #
+        # **全部纯内存**：跨重启活下来的是「模式」（落 ``settings`` 表），
+        # 授权窗口与配额**故意不落库** —— 授权必须由玩家**当场的明示**产生，
+        # 重启一次就作废（这是安全默认值）。
+        #
+        #: Yui 当前的操控模式（``live`` / ``assist`` / ``spectate``）。
+        self._yui_mode: str = YUI_MODE_DEFAULT
+        #: 玩家最近一次明示授权的时间戳（epoch 秒）；0 = 从未授权。
+        self._yui_grant_at: float = 0.0
+        #: 今天的 Yui 成交笔数（配额）。
+        self._yui_trade_count: int = 0
+        #: 上面那个计数**属于哪一天**（跨天自动清零）。
+        self._yui_trade_day: int = 0
+        #: P27.2：**回执周期锁** —— 成交之后到"玩家下一次主动操作"之间，
+        #: Yui **只许汇报**，不许再下单（防"她替玩家追单"）。
+        #:
+        #: 纯内存（与授权窗口、配额一样**故意不落库**）：重启一次就作废，
+        #: 这是安全默认值 —— 宁可少一次交易，也不许"重启就能追单"。
+        self._yui_trade_cycle_locked: bool = False
+        #: 最近一次 Yui 介入的**摘要**（面板横幅用；纯表现层）。
+        self._yui_last_action: dict[str, Any] | None = None
+        # ── P24.0：话痨级别与主动回合的内存态 ──────────────────────────
+        #
+        #: 话痨级别（落 ``settings`` 表；读值走内存缓存）。
+        self._yui_talk_level: str = YUI_TALK_LEVEL_DEFAULT
+        #: 上一次**主动回合**的墙钟时间（epoch 秒）—— 限流闸门。
+        self._yui_talk_last_at: float = 0.0
+        #: 已经播报过的新闻 id —— 用来只播**新**闻。
+        self._yui_seen_news: set[str] = set()
+        #: ── P28.0：人机协同双打（``duo``）的**点评素材**输入 ────────────
+        #:
+        #: 纯内存（与授权窗口、配额一样**故意不落库**）：双打是**当前这一局**
+        #: 的直播状态，重启后重来一遍更自然。
+        #: 玩家刚做了什么（``buy`` / ``sell`` / ``idle``）—— 点评的题材。
+        self._yui_duo_action: str = "idle"
+        #: 玩家**已实现**的盈亏累计（正 = 赚，负 = 亏）—— 吹捧还是嘲笑。
+        self._yui_duo_pnl: float = 0.0
+        #: ── P28.0：假新闻「活人感」的**插件层记账** ───────────────────────
+        #:
+        #: :class:`.fakenews.FakeNewsLedger` 按天记下**当天的假新闻**，
+        #: 次日开盘时取走（``consume``）⇒ 同一批假新闻**只爆发一次**。
+        #: 同样**只在内存**：要的是「活人感」，不是账本。
+        self._fake_news_ledger: FakeNewsLedger = FakeNewsLedger()
+        #: 玩家**买过报纸**（``buy_report``）的日子 —— 「昨天买的报纸是假的」
+        #: 这句话的前置条件：他得真买过报纸，才谈得上「被骗了」。
+        self._fake_news_bought_days: set[int] = set()
+        #: 玩家**当天已实现的亏损**（元）—— 供愤怒文案报出确切金额。
+        #: 亏没亏是真账；**没亏就不报金额**（不编造）。
+        self._fake_news_loss_by_day: dict[int, float] = {}
+        #: **待外推**的 Yui 提示词队列（``(提示词, 原因, 优先级)``）。
+        #:
+        #: 为什么要有队列：提示词是在 tick 里**持锁**时攒的，
+        #: 而推送必须**锁外**做（``push_message`` 要 await 宿主 IPC，
+        #: 持锁 await 会冻住事件循环 —— P11.1 那个 500 红色警告的根因）。
+        self._yui_pending_prompts: list[tuple[str, str, int]] = []
+        #: Yui 介入的**序号**（面板靠它判断"这条是不是新的"）。
+        self._yui_seq: int = 0
         #: 兜底弹窗的**序号**（面板靠它判断"这条是不是新的"）。
         #: 宿主不支持主动搭话时，插件把台词写进这个槽位，面板轮询到序号变了
         #: 就弹出"拟态外置对话"。
@@ -1154,6 +1577,8 @@ class MockStockMeowPlugin(NekoPluginBase):
         # 后端**永远不信任面板**：面板传什么，这里都重新洗一遍。
         clean_name = sanitize_name(player_name, banned=banned_visible_death_words())
         egg = match_egg(clean_name)
+        # P27.2：新的一局 ⇒ 回执周期锁**归零**（上一局的账不许带到这一局）。
+        self._yui_trade_cycle_unlock()
         # 档位替换（只对**经典档**）：无尽已经是深渊，换成地狱反而是降级。
         if egg is not None and egg.mode_override and mode != "infinite":
             mode = egg.mode_override
@@ -1174,7 +1599,13 @@ class MockStockMeowPlugin(NekoPluginBase):
         if error is not None:
             return error
         if session is not None:
-            return _err("already_joined")
+            # P27.2：上一局的玩家**已经退场** ⇒ 这一局其实早就结束了 ⇒ 允许开新局。
+            # （不退场就还是"already_joined" —— 活着的玩家不许中途换局。）
+            if session.player.alive:
+                return _err("already_joined")
+            self.logger.info(
+                f"玩家 {session.player.id} 已退场 ⇒ 直接开新局（旧席位由新局覆盖）"
+            )
 
         # 主种子只需要唯一，不需要可复现——可复现的是引擎层派生出来的随机流。
         actual_seed = (
@@ -1348,6 +1779,17 @@ class MockStockMeowPlugin(NekoPluginBase):
         self._last_player_id = player_id
         # P16.0：新的一局 ⇒ 连击从头开始（纯表现层）。
         self._combo.reset()
+        # ── P27.2：新的一局 ⇒ **Yui 的日配额归零**────────────────────────
+        # 配额是"**局内**每一天"的上限（跨天自动清零）。新的一局 day 又从
+        # 1 开始 —— 所以上一局 day=1 用掉的配额**绝对不能**带进这一局。
+        # 不归零的后果：玩家连开两局，第二局的**第一天** Yui 就彻底哑火
+        # （配额显示 0，她的每一次工具调用都被日配额闸门挡掉）。
+        # 直播事故：玩家以为"Yui 坏了"。
+        self._yui_trade_day = 0
+        self._yui_trade_count = 0
+        self._yui_last_action = None
+        # 新局 ⇒ 上一局的"回执周期锁"也不能留着（那一回合已经结束了）。
+        self._yui_trade_cycle_unlock()
         # ── P19.0：新的一局 ⇒ 黑天鹅纪录归零（否则上一局的纪录会挡住本局）──
         self._black_swan_peak = 0.0
         self._black_swan_fired = False
@@ -1420,7 +1862,9 @@ class MockStockMeowPlugin(NekoPluginBase):
             "开始一局「拟股喵喵」（纯虚构的反诈沙盘，标的价格全是假的）。"
             "当玩家说「加入一局」「开始炒股」「来一局」「开户」「玩拟股喵喵」"
             "「反诈沙盘」这类话时，调用这个工具。"
-            "已经在局中就不要调用，直接用 mock_stock_meow_status 查现状。"
+            "如果玩家已经在局中，这个工具**不会报错** —— 它会告诉你"
+            "「玩家已经在局中」，这时候改用 mock_stock_meow_status 查现状，"
+            "或者用 mock_stock_meow_yui_trade 帮他操作。"
         ),
         parameters={
             "type": "object",
@@ -1432,6 +1876,15 @@ class MockStockMeowPlugin(NekoPluginBase):
                         "模式：classic_arcade=街机（没有生活费，最好上手）、"
                         "classic_beginner=入门、classic_advanced=进阶、"
                         "classic_hell=地狱、infinite=无尽（要自己领生活费+高利贷，能一直玩）"
+                        "（口语说法如「街机」「入门」「无尽」也会被自动认出来）"
+                    ),
+                },
+                "identity": {
+                    "type": "string",
+                    "enum": list(IDENTITIES),
+                    "description": (
+                        "入场身份（纯叙事，不影响任何数值）："
+                        "debt=还债的 / prove=证明自己的 / quick=不想打工的"
                     ),
                 },
             },
@@ -1439,7 +1892,13 @@ class MockStockMeowPlugin(NekoPluginBase):
         },
         timeout=30.0,
     )
-    async def llm_join(self, *, mode: str = "classic_arcade", **_: Any) -> dict:
+    async def llm_join(
+        self,
+        *,
+        mode: str = "classic_arcade",
+        identity: str = "",
+        **_: Any,
+    ) -> dict:
         """LLM 工具：开局（玩家在聊天框说「加入一局」就走这里）。
 
         返回**普通 dict**（不是 ``Ok``）—— 官方约定：handler 返回普通值会被
@@ -1448,12 +1907,42 @@ class MockStockMeowPlugin(NekoPluginBase):
 
         参数用 keyword-only 加 ``**_``：LLM 偶尔会多吐几个键，而且宿主在有
         ``host_reply`` 时还会往参数里塞一个 ``_ctx``，多出来的键必须能吞掉。
+
+        P23.1（真机事故，两个）：
+
+        1. **玩家已经在局中**时**不报错**。真机上猫娘说「开局失败了喵」、
+           系统却回「已经在局里啦」—— 两句自相矛盾，玩家以为插件坏了。
+           正确做法是告诉她「玩家已经在局中，你可以用 yui_trade 帮他操作，
+           或者等他破产」。
+        2. **档位说法要能认**。猫娘把「街机」传成 ``arcade`` 也会被拒，
+           于是开局失败 ⇒ 统一走 ``_normalize_join_mode`` 归一化。
         """
-        if mode not in JOIN_MODES:
-            mode = "classic_arcade"
-        result = await self.join(mode=mode)
+        normalized_mode = _normalize_join_mode(mode)
+        normalized_identity = str(identity or "").strip().lower()
+        if normalized_identity not in IDENTITIES:
+            normalized_identity = DEFAULT_IDENTITY
+        result = await self.join(
+            mode=normalized_mode,
+            identity=normalized_identity,
+        )
         if result.is_err():
             error = result.err()
+            code = str(getattr(error, "code", "") or "")
+            if code == "already_joined":
+                # 已经在局中 ⇒ **温和引导**，不是失败。
+                return {
+                    "output": {
+                        "ok": True,
+                        "already_in_game": True,
+                        "mode": normalized_mode,
+                        "message": i18n_text(
+                            "llm.join.already",
+                            "玩家已经在局中啦，别再开新局。"
+                            "你可以用 yui_trade 帮他操作，或者等他破产。",
+                        ),
+                    },
+                    "is_error": False,
+                }
             message = str(getattr(error, "message", "") or "开局失败")
             return {
                 "output": {"ok": False, "message": message},
@@ -1534,6 +2023,1726 @@ class MockStockMeowPlugin(NekoPluginBase):
             },
             "is_error": False,
         }
+
+    # ------------------------------------------------------------------
+    # P23.0：Yui 操控端口（**三道防线**）
+    # ------------------------------------------------------------------
+    #
+    # 这是《拟股喵喵》第一次**把账户的钥匙交给 LLM**。
+    #
+    # 硬约束（P23.0 验收）：
+    #
+    # * **引擎层 / 模式层零改动** —— Yui 只能调用插件层**既有**的
+    #   :meth:`buy` / :meth:`sell`；这两个入口底层走的是**同一个**引擎
+    #   ``execute_buy`` / ``execute_sell`` ⇒ Yui 的单与玩家的单走的是
+    #   **同一条流水线**（同样扣费、同样算持仓、同样被收割）。
+    # * **Yui 不许改数值** —— 她只能"下指令"，不能直接改现金 / 持仓。
+    # * **不许死锁** —— ``self._lock`` 是**不可重入**的 ``threading.Lock``，
+    #   所以本节的方法**一律不套 ``@_locked``**；真正的临界区由
+    #   :meth:`buy` / :meth:`sell` 自己持有。
+    #
+    # 三道防线（缺一不可）：
+    #
+    # ① **模式闸门** —— ``spectate`` 模式下交易工具**硬拒**
+    #    （提示词管不住模型，工具层才管得住）。
+    # ② **授权窗口** —— ``assist`` 模式下玩家必须**当场的明示**授权
+    #    （``mock_stock_meow_yui_grant``），窗口过期自动失效。
+    # ③ **日配额** —— 每天最多 ``YUI_TRADES_PER_DAY`` 单，防"上头"。
+
+    def _yui_current_mode(self) -> str:
+        """Yui 当前的操控模式（读内存；非法值回落**安全默认**）。"""
+        mode = str(getattr(self, "_yui_mode", "") or "").strip().lower()
+        return mode if mode in YUI_MODES else YUI_MODE_DEFAULT
+
+    def _yui_is_granted(self) -> bool:
+        """辅助模式下，玩家明示的**授权窗口**是否还开着。"""
+        granted_at = float(getattr(self, "_yui_grant_at", 0.0) or 0.0)
+        if granted_at <= 0.0:
+            return False
+        return (time.time() - granted_at) < YUI_ASSIST_GRANT_WINDOW_SECONDS
+
+    def _yui_quota_left(self, day: int) -> int:
+        """今天的 Yui 成交配额还剩几单（跨天自动清零）。"""
+        if int(getattr(self, "_yui_trade_day", 0) or 0) != int(day):
+            return YUI_TRADES_PER_DAY
+        used = int(getattr(self, "_yui_trade_count", 0) or 0)
+        return max(0, YUI_TRADES_PER_DAY - used)
+
+    def _yui_gate(self, day: int) -> tuple[bool, str]:
+        """Yui 的交易闸门：返回 ``(放行?, 拒绝原因)``。
+
+        三道防线按顺序过 —— 任何一道不过就**直接拒绝**（不是排队等）。
+        """
+        mode = self._yui_current_mode()
+        if mode == YUI_MODE_SPECTATE:
+            return False, i18n_text(
+                "yui.reject.spectate",
+                "当前是纯看戏模式：只评论，不碰账户。",
+            )
+        if mode == YUI_MODE_DUO:
+            # P28.0：**人机协同双打** —— 玩家自己手动买卖，Yui 绝不碰账户。
+            # 这道闸门是硬拒：提示词里已经写了「严禁调用交易工具」，
+            # 但提示词管不住模型 —— 工具层才管得住（与 spectate 同一量级）。
+            return False, i18n_text(
+                "yui.reject.duo",
+                "双打模式：账户归玩家，你只点评，不碰。",
+            )
+        if mode == YUI_MODE_ASSIST and not self._yui_is_granted():
+            return False, i18n_text(
+                "yui.reject.no_grant",
+                "玩家还没明示让你动手 —— 你现在只能给建议。",
+            )
+        if self._yui_quota_left(day) <= 0:
+            return False, i18n_text(
+                "yui.reject.quota",
+                "今天的操作配额已经用完了。",
+            )
+        return True, ""
+
+    # ------------------------------------------------------------------
+    # P27.2：**回执周期锁**（防追单）
+    # ------------------------------------------------------------------
+    #
+    # 为什么要这一道
+    # --------------
+    # P27.1 的成交回执会**多触发一个 AI 回合**（``ai_behavior="respond"``）。
+    # 那个回合里，模型可能顺手**再下一单** —— 玩家压根没同意的那一单
+    # 已经成交了。这就是直播里最难看的那种事故：她"替玩家追单"。
+    #
+    # 提示词那一层已经加严（``YUI_RECEIPT_CYCLE_DIRECTIVE``），
+    # 但**提示词管不住模型** —— 工具层才管得住。所以这里有一道**代码锁**：
+    #
+    # * **上锁**：Yui 成交（拿到回执）之后立刻上锁；
+    # * **开锁**：玩家**下一次主动操作**（推进一拍 / 买卖 / 分析 / 跳过一天 …）
+    #   或者**下一个 tick** —— 也就是"新的一回合"开始时。
+    #
+    # 锁住期间 ``mock_stock_meow_yui_trade`` **直接拒绝**，而且
+    # **不推送**任何东西（拒绝只是工具返回值，她在自己那一回合里
+    # 看到错误、如实汇报就完事 —— 再推一条就会再触发一个回合 ⇒ 循环）。
+
+    def _yui_trade_cycle_is_locked(self) -> bool:
+        """回执周期锁是否还扣着（纯内存读）。"""
+        return bool(getattr(self, "_yui_trade_cycle_locked", False))
+
+    def _yui_trade_cycle_lock(self) -> None:
+        """上锁：这一回合只许汇报，不许再下单。"""
+        self._yui_trade_cycle_locked = True
+
+    def _yui_trade_cycle_unlock(self) -> None:
+        """开锁：玩家又开口了（或新的一拍开始）⇒ 可以再动手。"""
+        self._yui_trade_cycle_locked = False
+
+    async def _yui_apply_mode(self, mode: str) -> tuple[bool, str]:
+        """切换 Yui 的操控模式（落库 + 刷新内存缓存）。返回 ``(成功?, 详情)``。"""
+        value = str(mode or "").strip().lower()
+        if value not in YUI_MODES:
+            return False, i18n_text(
+                "yui.mode.bad",
+                "模式只能是 live / duo / assist / spectate。",
+            )
+        if not await self._repo.set_setting(_SETTING_YUI_MODE, value):
+            return False, i18n_text("error.db_unavailable", "数据库不可用")
+        self._yui_mode = value
+        if self._settings_map_cache is None:
+            self._settings_map_cache = {}
+        self._settings_map_cache[_SETTING_YUI_MODE] = value
+        # 换模式 ⇒ **授权立刻作废**（旧模式下的授权不许带到新模式）。
+        self._yui_grant_at = 0.0
+        return True, value
+
+    @llm_tool(
+        name="mock_stock_meow_yui_mode",
+        description=(
+            "切换你自己的操控模式（玩家在聊天里明说时调用）。"
+            "assist = 辅助式：只给建议，玩家明示「帮忙搞」之后才可以动手；"
+            "spectate = 纯看戏：只评论，绝不碰账户。"
+            "live（直播托管）**不由这个工具切换** —— 那是主播自己在面板上开的授权。"
+            "duo（人机协同双打）同理**不由这个工具切换** —— 那是主播自己在面板上开的授权。"
+            "玩家说「你别管了」「只看戏」⇒ spectate；"
+            "玩家说「给点建议」「帮我看看」⇒ assist。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": list(YUI_LLM_SWITCHABLE_MODES),
+                    "description": "assist（辅助式，只给建议）或 spectate（纯看戏，不碰账户）",
+                },
+            },
+            "required": ["mode"],
+        },
+        timeout=15.0,
+    )
+    async def llm_yui_mode(self, *, mode: str = "", **_: Any) -> dict:
+        """Yui 切换自己的操控模式（**不能给自己升权到 live**）。"""
+        value = str(mode or "").strip().lower()
+        if value not in YUI_LLM_SWITCHABLE_MODES:
+            message = i18n_text(
+                "yui.mode.bad",
+                "模式只能是 assist 或 spectate。",
+            )
+            return {
+                "output": {"ok": False, "message": message},
+                "is_error": True,
+                "error": message,
+            }
+        ok, detail = await self._yui_apply_mode(value)
+        if not ok:
+            return {
+                "output": {"ok": False, "message": detail},
+                "is_error": True,
+                "error": detail,
+            }
+        return {
+            "output": {
+                "ok": True,
+                "mode": value,
+                "message": i18n_text(
+                    "yui.mode.changed",
+                    "模式已切换。",
+                ),
+            },
+            "is_error": False,
+        }
+
+    @llm_tool(
+        name="mock_stock_meow_yui_grant",
+        description=(
+            "玩家**明示**把账户交给你时调用"
+            "（玩家说「你来帮我买」「帮我全仓了」「你来操作」「我授权你」这类话）。"
+            "这个工具**只**打开一扇短时的授权窗口（两分钟），**不直接下单** —— "
+            "下单用 mock_stock_meow_yui_trade。"
+            "玩家没明说就**不要**调用它；你也可以只给建议、不申请授权。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        timeout=15.0,
+    )
+    async def llm_yui_grant(self, **_: Any) -> dict:
+        """玩家明示授权 ⇒ 打开授权窗口（并告诉 Yui「你现在有权动手了」）。"""
+        mode = self._yui_current_mode()
+        if mode == YUI_MODE_SPECTATE:
+            message = i18n_text(
+                "yui.reject.spectate",
+                "当前是纯看戏模式：只评论，不碰账户。",
+            )
+            return {
+                "output": {"ok": False, "message": message},
+                "is_error": True,
+                "error": message,
+            }
+        if mode == YUI_MODE_DUO:
+            # P28.0：双打模式下**连授权窗口都不许开** ——
+            # 开了窗口就等于给她留了一条「可以动手」的路，而双打的卖点
+            # 恰恰是她**一根手指都不碰账户**。
+            message = i18n_text(
+                "yui.reject.duo",
+                "双打模式：账户归玩家，你只点评，不碰。",
+            )
+            return {
+                "output": {"ok": False, "message": message},
+                "is_error": True,
+                "error": message,
+            }
+        self._yui_grant_at = time.time()
+        # 「Prompt 放开」的落点：把"你有权动手"这句话**真的**告诉 Yui。
+        # 走 ``_push_proactive``（P11 的外置开口通道）—— 不新增 respond 通道。
+        await self._push_proactive(YUI_AUTHORITY_PROMPT, reason="yui_grant")
+        return {
+            "output": {
+                "ok": True,
+                "mode": mode,
+                "grant_seconds": int(YUI_ASSIST_GRANT_WINDOW_SECONDS),
+                "message": i18n_text(
+                    "yui.grant.ok",
+                    "授权已开启，接下来可以动手了。",
+                ),
+            },
+            "is_error": False,
+        }
+
+    @llm_tool(
+        name="mock_stock_meow_yui_trade",
+        description=(
+            "**你有权亲手操作这个账户** —— 买入或卖出一只虚构标的。"
+            "玩家犹豫不决、极度上头、或明确把账户交给你时，"
+            "你可以直接替他下单（这是你的权力，不是他的请求）。"
+            "参数：stock_id（标的 ID，形如 FAKE-001）、action（buy / sell）、"
+            "ratio（仓位比例 0~1，1 = 全仓）。"
+            "硬性约束（工具层会真的拒绝，别浪费调用）："
+            "纯看戏模式与双打模式下会被直接拒绝；辅助模式下玩家必须先明示授权；"
+            "每天有操作配额。"
+            "**只有本工具返回 ok=true 才算成交**；返回错误时只能照那条错误实说，"
+            "严禁编造买到了哪只票、买了几股、花了多少钱。"
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "stock_id": {"type": "string", "description": "标的 ID，形如 FAKE-001"},
+                "action": {
+                    "type": "string",
+                    "enum": ["buy", "sell"],
+                    "description": "买（buy）还是卖（sell）",
+                },
+                "ratio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "仓位比例：0~1。买 = 占现金的比例；卖 = 占持仓的比例。1 = 全仓",
+                },
+            },
+            "required": ["stock_id", "action"],
+        },
+        timeout=30.0,
+    )
+    async def llm_yui_trade(
+        self,
+        *,
+        stock_id: str = "",
+        action: str = "buy",
+        ratio: float = 1.0,
+        **_: Any,
+    ) -> dict:
+        """Yui 亲手下单（**只调插件层既有的 buy / sell**）。
+
+        **绝不套 ``@_locked``** —— ``self._lock`` 是不可重入的
+        ``threading.Lock``，套上去就会与 :meth:`buy` 嵌套**死锁**。
+
+        P23.0：这里**自己非阻塞地拿锁**（``blocking=False``）——
+        P11.1 的教训：阻塞式 ``acquire()`` 会把**整个事件循环**冻住，
+        宿主那次 5 秒预算的上下文查询被排队 ⇒ 500 红色警告。
+        锁忙（有人在跑 tick / 玩家正在点）⇒ **立刻**回一句温和的话，
+        下一拍再说 —— **绝不**把事件循环冻住。
+        """
+
+        def _fail(message: str) -> dict[str, Any]:
+            return {
+                "output": {"ok": False, "message": message},
+                "is_error": True,
+                "error": message,
+            }
+
+        # ── 拿锁：**非阻塞**（P11.1 的教训，一个字都不许改成阻塞）──────
+        if not self._lock.acquire(blocking=False):
+            # P27.1：锁忙也是一种"没成交" ⇒ **如实**推给她（她不许编）。
+            await self._push_yui_trade_failure(
+                action=str(action),
+                stock=str(stock_id),
+                reason=i18n_text(
+                    "yui.busy",
+                    "手上有别的活，下一拍再来。",
+                ),
+                cash=None,
+            )
+            return _fail(
+                i18n_text(
+                    "yui.busy",
+                    "手上有别的活，下一拍再来。",
+                )
+            )
+        try:
+            return await self._yui_trade_locked(
+                stock_id=str(stock_id),
+                action=str(action),
+                ratio=ratio,
+            )
+        finally:
+            self._lock.release()
+
+    async def _yui_trade_locked(
+        self, *, stock_id: str, action: str, ratio: float
+    ) -> dict:
+        """Yui 下单的**真身**（**调用方必须已经持锁**）。
+
+        P23.0：``buy()`` / ``sell()`` 只是壳，真身分别是
+        :meth:`_buy_impl` / :meth:`_sell_impl` —— **Yui 与玩家走同一段代码**。
+        """
+
+        # P27.1：失败现场（"失败回执"要用的现金数）。没开局就没有现金可说。
+        live_cash: float | None = None
+
+        async def _fail(message: str) -> dict[str, Any]:
+            """失败：**如实**把原因推给 Yui。
+
+            P27.1（真机事故：她说「买成了不存在的股票」）：
+            工具报错时，**她自己也必须知道**这一笔没成交 —— 所以这里把
+            那条错误原文推给她，她只能照这条说，不许编。
+            """
+            await self._push_yui_trade_failure(
+                action=str(action or ""),
+                stock=str(stock_id or ""),
+                reason=message,
+                cash=live_cash,
+            )
+            return {
+                "output": {"ok": False, "message": message},
+                "is_error": True,
+                "error": message,
+            }
+
+        engine_config = await self._engine_config()
+        session, error = await self._session_or_error(engine_config)
+        if error is not None:
+            return await _fail(str(getattr(error, "message", "") or "读不到对局"))
+        if session is None:
+            return await _fail(
+                i18n_text(
+                    "llm.status.idle",
+                    "当前没有进行中的对局。可以调用 mock_stock_meow_join 开一局。",
+                )
+            )
+
+        player = session.player
+        day = int(player.day)
+        # P27.1：失败回执里要报"账户现状" ⇒ 先把现金记下来。
+        live_cash = float(player.cash)
+
+        # ── ① 模式闸门 ② 授权窗口 ③ 日配额 ──────────────────────────
+        allowed, why = self._yui_gate(day)
+        if not allowed:
+            return await _fail(why)
+
+        # ── ④ P27.2：**回执周期锁**（防追单）────────────────────────
+        #
+        # 这一格**故意不走** ``_fail`` —— ``_fail`` 会推一条失败回执，
+        # 而失败回执会**再触发一个 AI 回合** ⇒ 她在那个回合里又会试一次
+        # ⇒ 又一条失败回执 ⇒ 无限循环。
+        # 追单拒绝**只回工具返回值**：她在自己这一回合里看到错误，
+        # 如实说一句"这一轮不再动手"就完事了（这才是"停下来"）。
+        if self._yui_trade_cycle_is_locked():
+            message = i18n_text(
+                "yui.reject.receipt_cycle",
+                "这一轮已经报过账了 —— 先把上一笔讲清楚，别再下单，"
+                "等玩家下一次开口。",
+            )
+            return {
+                "output": {"ok": False, "message": message, "receipt_cycle": True},
+                "is_error": True,
+                "error": message,
+            }
+
+        side = str(action or "").strip().lower()
+        if side not in ("buy", "sell"):
+            return await _fail(i18n_text("yui.bad_action", "action 只能是 buy 或 sell。"))
+
+        try:
+            share = float(ratio)
+        except (TypeError, ValueError):
+            share = 1.0
+        share = min(1.0, max(0.0, share))
+        if share <= 0.0:
+            return await _fail(i18n_text("yui.bad_ratio", "ratio 必须在 0 与 1 之间。"))
+
+        # ── 解析标的：ID、名字、**模糊**都认 ──────────────────────────
+        # P24.0：真机事故 —— 她说「流萤物流1号」，工具只认 ``FAKE-001``
+        # ⇒ 一句「找不到标的」，直播当场冷场。
+        # 现在按 精确 id / 精确名字 / 精确显示名 / **子串** 四层找
+        # （见 ``_resolve_yui_stock``），找不到也是**温和**地说。
+        market = session.market
+        target = self._resolve_yui_stock(stock_id, market)
+        if target is None:
+            return await _fail(
+                i18n_text(
+                    "yui.stock_not_found",
+                    "没找到你说的这只 —— 换个说法，或者先看看今天有哪些票。",
+                )
+            )
+        if not target.alive:
+            return await _fail(i18n_text("error.stock_delisted", "这只标的已经退市了。"))
+
+        price = float(target.price)
+        if side == "buy":
+            # 全仓要把手续费算进去：买入总开销 = 名义额 × (1 + 买入费率)。
+            budget = float(player.cash) * share
+            notional = budget / (1.0 + float(engine_config.fees.buy_rate))
+            amount = notional / price if price > 0 else 0.0
+        else:
+            position = player.positions.get(target.id)
+            if position is None or float(position.amount) <= 0:
+                return await _fail(i18n_text("error.insufficient_position", "没有可卖的持仓。"))
+            amount = float(position.amount) * share
+        if amount <= 0.0:
+            return await _fail(i18n_text("yui.no_amount", "算不出可交易的数量。"))
+
+        # ── **唯一的执行路径**：插件层既有的 buy / sell（真身）────────────
+        # （引擎层 / 模式层零改动；玩家与 Yui 走同一条流水线。）
+        if side == "buy":
+            result = await self._buy_impl(target.id, amount, reason="yui")
+        else:
+            result = await self._sell_impl(target.id, amount, reason="yui")
+        if result.is_err():
+            failure = result.err()
+            return await _fail(str(getattr(failure, "message", "") or "成交失败"))
+        payload = result.unwrap()
+
+        # ── 记账（配额 + 面板横幅用的最近一次介入）────────────────────
+        self._yui_trade_day = day
+        self._yui_trade_count = int(self._yui_trade_count) + 1
+        self._yui_seq = int(self._yui_seq) + 1
+        # P27.2：**回执周期上锁** —— 这一笔已经成交 ⇒ 这一回合只许汇报。
+        # （开锁 = 玩家下一次主动操作 / 下一个 tick；见 ``_yui_trade_cycle_*``。）
+        self._yui_trade_cycle_lock()
+        filled = float(payload.get("amount", amount) or 0.0)
+        done_price = float(payload.get("price", price) or 0.0)
+        cash_after = float(payload.get("cash_after", player.cash) or 0.0)
+        self._yui_last_action = {
+            "seq": int(self._yui_seq),
+            "action": side,
+            "stock_id": str(target.id),
+            "stock_name": str(target.name),
+            "ratio": round(share, 4),
+            "amount": round(filled, 6),
+            "price": round(done_price, 6),
+            "cash_after": round(cash_after, 6),
+            "at": time.time(),
+        }
+        # 面板弹幕（**纯表现层**；kind="yui" 让面板能区别于猫娘自己的嘲讽）。
+        self._push_danmaku(
+            _fill_text(
+                i18n_text(
+                    "yui.danmaku",
+                    "🐾 Yui 的魔爪介入了 —— {action} {stock}",
+                ),
+                {
+                    "action": "买入" if side == "buy" else "卖出",
+                    "stock": str(target.name),
+                },
+            ),
+            kind="yui",
+        )
+        # ── P27.1：**实盘校验** —— 把系统算出来的真实结果喂给她 ────────
+        # 她只能顺着这张回执说话：标的、数量、金额、余额都是真的。
+        # （现金差 = 实际花费 / 实际回款，**不做任何估计**。）
+        await self._push_yui_trade_receipt(
+            action=side,
+            stock=str(target.name),
+            amount=filled,
+            price=done_price,
+            money=abs(cash_after - float(player.cash)),
+            cash_after=cash_after,
+        )
+        return {
+            "output": {
+                "ok": True,
+                "action": side,
+                "stock_id": str(target.id),
+                "stock_name": str(target.name),
+                "amount": round(filled, 6),
+                "price": round(done_price, 6),
+                "cash_after": round(cash_after, 6),
+                "quota_left": self._yui_quota_left(day),
+                # P27.1：**回执也放进工具返回值** —— 她这一轮就能看到事实，
+                # 不必等下一次主动搭话才知道自己买了什么。
+                "receipt": (
+                    f"你刚才{'买入了' if side == 'buy' else '卖出了'} "
+                    f"{filled:.4f} 股 {target.name}，"
+                    f"成交价 {done_price:.4f} 元，"
+                    f"账户现在剩 {cash_after:.2f} 元。"
+                ),
+                "message": _fill_text(
+                    i18n_text(
+                        "yui.trade.done",
+                        "已经替你{action}了 {stock}（{amount} 股）。",
+                    ),
+                    {
+                        "action": "买入" if side == "buy" else "卖出",
+                        "stock": str(target.name),
+                        "amount": f"{filled:.4f}",
+                    },
+                ),
+            },
+            "is_error": False,
+        }
+
+    # ------------------------------------------------------------------
+    # P27.1：**交易幻觉**的两条回执通道
+    # ------------------------------------------------------------------
+    #
+    # 真机事故：玩家说「深蓝科技」，Yui 却说「已经全仓买了琥珀能源」，
+    # 随后又说「买成了不存在的股票」。
+    #
+    # 根因：**她可以在没有成交结果的情况下自说自话** —— 提示词只给了
+    # 「有权动手」，没给「**只有工具说了算**」这条边界；工具报错时，
+    # 错误只在工具返回值里飘着，没人把「这一笔没成交」这件事**讲给她听**。
+    #
+    # 这两条通道就是补上那一讲：
+    #
+    # * :meth:`_push_yui_trade_receipt` —— 成交后推**回执**（实盘校验）；
+    # * :meth:`_push_yui_trade_failure` —— 失败后推**错误原文**（失败反馈）。
+    #
+    # 宿主 ``push_message`` 是**同步提交**（不等 LLM 回合结束）⇒ 在工具
+    # 里推是安全的，不会把 30 秒的工具超时撑爆。
+
+    async def _push_yui_trade_receipt(
+        self,
+        *,
+        action: str,
+        stock: str,
+        amount: float,
+        price: float,
+        money: float,
+        cash_after: float,
+    ) -> bool:
+        """成交后：把**系统算出来的真实结果**推给 Yui（实盘校验）。"""
+        prompt = yui_trade_receipt_prompt(
+            action=action,
+            stock=stock,
+            amount=amount,
+            price=price,
+            money=money,
+            cash_after=cash_after,
+        )
+        self.logger.info(f"Yui 成交回执：{action} {stock} {amount:.4f} 股")
+        return await self._push_proactive(prompt, reason="yui_trade_receipt", priority=3)
+
+    async def _push_yui_trade_failure(
+        self,
+        *,
+        action: str,
+        stock: str,
+        reason: str,
+        cash: float | None = None,
+    ) -> bool:
+        """失败后：把**那条错误原文**推给 Yui（失败反馈机制）。
+
+        P27.2：这条推送走 ``ai_behavior="read"`` —— **只进上下文、不触发回合**。
+        失败就发生在她当前这一回合里（是她在调工具），她本来就会照实说；
+        用 ``respond`` 多触发一个回合，她会在那个回合里**再试一次**
+        ⇒ 又一条失败回执 ⇒ 无限循环。
+        """
+        prompt = yui_trade_failure_prompt(
+            action=action,
+            stock=stock,
+            reason=reason,
+            cash=cash,
+        )
+        self.logger.info(f"Yui 操作失败回执：{action} {stock} —— {reason}")
+        return await self._push_proactive(
+            prompt,
+            reason="yui_trade_failure",
+            priority=3,
+            ai_behavior="read",
+        )
+
+    def _yui_block(self, day: int = 0) -> dict[str, Any]:
+        """面板载荷的 ``yui`` 块：模式 + 授权 + 配额 + 最近一次介入。
+
+        **纯表现层**：这里没有任何游戏数值。
+        """
+        return {
+            "mode": self._yui_current_mode(),
+            "granted": self._yui_is_granted(),
+            "grant_seconds": int(YUI_ASSIST_GRANT_WINDOW_SECONDS),
+            "quota_left": self._yui_quota_left(day),
+            "quota_total": int(YUI_TRADES_PER_DAY),
+            # P27.2：回执周期锁的状态（面板可以据此提示"这一轮她不许再动手"）。
+            "cycle_locked": self._yui_trade_cycle_is_locked(),
+            "seq": int(getattr(self, "_yui_seq", 0) or 0),
+            "last": self._yui_last_action,
+            # ── P24.0：话痨级别（面板要显示当前档 + 隔几拍开一次回合）──
+            "talk_level": self._yui_talk_level_now(),
+            "talk_interval": self._yui_talk_interval(),
+        }
+
+    @ui.action(
+        id="yui_mode",
+        label="Yui 模式",
+        icon="chat",
+        tone="default",
+        group="trade",
+        order=3,
+    )
+    @plugin_entry(
+        id="yui_mode",
+        name="Yui 模式",
+        description=(
+            "切换 Yui 的操控模式：live=直播托管（她一站式负责买卖）、"
+            "duo=人机协同双打（玩家手动买卖，她只点评绝不碰账户）、"
+            "assist=辅助式（只给建议，玩家明示后才可以动手）、"
+            "spectate=纯看戏（只评论，绝不碰账户）。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": list(YUI_MODES),
+                    "description": "live / duo / assist / spectate",
+                },
+            },
+            "required": ["mode"],
+        },
+    )
+    @_locked
+    async def yui_mode(self, mode: str = YUI_MODE_ASSIST) -> Ok:
+        """切换 Yui 的操控模式（**玩家侧**的入口 —— 面板按钮走这里）。"""
+        ok, detail = await self._yui_apply_mode(mode)
+        if not ok:
+            return _err("bad_yui_mode", detail)
+        # 直播托管 = 主播把账户整个交出去了 ⇒ **告诉 Yui 她有权动手**。
+        if detail == YUI_MODE_LIVE:
+            await self._push_proactive(YUI_AUTHORITY_PROMPT, reason="yui_live")
+        return Ok(
+            {
+                "action": "yui_mode",
+                "mode": detail,
+                "granted": self._yui_is_granted(),
+                "quota_left": self._yui_quota_left(0),
+            }
+        )
+
+    # ------------------------------------------------------------------
+    # P24.0：Yui 直播托管的**主动回合** + 话痨级别 + 事件联动
+    # ------------------------------------------------------------------
+    #
+    # P23.0 把「live = 直播托管」做成了一个**静态状态**：模式开着、工具注册着、
+    # 但**没有任何东西去触发她的回合** —— 于是真机上她嘴上说「随便操作」，
+    # 账户却一动不动（这正是 P24.0 要修的头号问题）。
+    #
+    # 这一节补上三件事：
+    #
+    # ① **主动回合** —— ``live`` 模式下，每隔 N 个 tick（由话痨级别决定）
+    #    在后台开一次 Yui 的 AI 回合，提示词里带现金 / 持仓 / 当天行情，
+    #    并明确告诉她「要么用 ``yui_trade`` 真下这一笔，要么给一句判断」。
+    # ② **话痨级别** —— 安静 / 正常 / 话痨，玩家可调（落库）。
+    # ③ **事件联动** —— 新闻、收割（斩杀线）、爆仓 ⇒ 立刻打断她，让她插话。
+    #
+    # **引擎层 / 模式层零改动**：这一节只**读**行情、只调**既有**的
+    # :meth:`buy` / :meth:`sell`（Yui 与玩家走同一条流水线），
+    # 绝不自己改任何数值。
+
+    def _yui_talk_level_now(self) -> str:
+        """当前的话痨级别（读内存；非法值回落**默认值**）。"""
+        level = str(getattr(self, "_yui_talk_level", "") or "").strip().lower()
+        return level if level in YUI_TALK_LEVELS else YUI_TALK_LEVEL_DEFAULT
+
+    def _yui_talk_interval(self) -> int:
+        """当前档位下「**每隔几个 tick** 开一次回合」（0 = 不主动开）。"""
+        return int(YUI_TALK_TICK_INTERVALS.get(self._yui_talk_level_now(), 3))
+
+    @ui.action(
+        id="yui_talk_level",
+        label="Yui 话痨级别",
+        icon="chat",
+        tone="default",
+        group="trade",
+        order=4,
+    )
+    @plugin_entry(
+        id="yui_talk_level",
+        name="Yui 话痨级别",
+        description=(
+            "设置 Yui 在直播里的活跃度：quiet=安静（只在重大事件时开口）、"
+            "normal=正常（每隔几拍开一次回合）、chatty=话痨（每一拍都叨叨）。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "level": {
+                    "type": "string",
+                    "enum": list(YUI_TALK_LEVELS),
+                    "description": "quiet / normal / chatty",
+                },
+            },
+            "required": ["level"],
+        },
+    )
+    @_locked
+    async def yui_talk_level(self, level: str = YUI_TALK_LEVEL_DEFAULT) -> Ok:
+        """设置 Yui 的话痨级别（**玩家侧**的入口 —— 面板徽标走这里）。"""
+        value = str(level or "").strip().lower()
+        if value not in YUI_TALK_LEVELS:
+            return _err(
+                "bad_yui_talk_level",
+                i18n_text(
+                    "yui.talk.bad",
+                    "话痨级别只能是 quiet / normal / chatty。",
+                ),
+            )
+        if not await self._repo.set_setting(_SETTING_YUI_TALK_LEVEL, value):
+            return _err("db_unavailable")
+        self._yui_talk_level = value
+        if self._settings_map_cache is None:
+            self._settings_map_cache = {}
+        self._settings_map_cache[_SETTING_YUI_TALK_LEVEL] = value
+        return Ok(
+            {
+                "action": "yui_talk_level",
+                "level": value,
+                "interval": self._yui_talk_interval(),
+            }
+        )
+
+    def _yui_live_prompt(self, session: Session) -> str:
+        """直播托管的**主动回合**提示词（现金 / 持仓 / 当天行情）。
+
+        **不含任何局中秘密**（heat / seed / 反转日 / 新闻真假一概没有）——
+        P4 §11 的静态扫描守卫依然守得住。
+
+        行情里**带编号**（``名称（FAKE-003）``）：模型更爱传名字，
+        但把编号一起给它，她就不用靠猜 —— 真机上的「找不到标的」
+        就是这么来的（P24.0 的模糊匹配是第二道保险）。
+
+        P26.1：``[director] live_god_mode`` 开着时，末尾会多两行
+        **「导演模式」的事实行**（直播还没收工 + 玩家当下真能用的操作）。
+        """
+        player = session.player
+        market = session.market
+        prices = market.prices()
+        holdings: list[str] = []
+        for stock_id, position in player.positions.items():
+            stock = market.stocks.get(stock_id)
+            name = str(getattr(stock, "name", "") or stock_id)
+            price = float(prices.get(stock_id, 0.0) or 0.0)
+            holdings.append(
+                f"{name}（{stock_id}）×{float(position.amount):g}，现价 {price:.2f}"
+            )
+        movers: list[tuple[float, str, str, float, float]] = []
+        for stock in market.stocks.values():
+            if not stock.alive:
+                continue
+            price = float(stock.price)
+            prev = float(stock.prev_price)
+            change = ((price - prev) / prev) if prev > 0 else 0.0
+            movers.append(
+                (abs(change), str(stock.id), str(stock.name), price, change)
+            )
+        # 当天动静最大的几只先摆出来 —— 那是**最容易出事**的地方。
+        movers.sort(key=lambda item: (-item[0], item[1]))
+        lines = [
+            "《拟股喵喵》**直播托管**中 —— 现在这个账户你说了算。",
+            f"· 现钱 {float(player.cash):.2f} 元，总资产 "
+            f"{float(player.total_asset(prices)):.2f} 元。",
+            "· 持仓：" + ("；".join(holdings) if holdings else "空仓"),
+        ]
+        if movers:
+            lines.append(
+                "· 今天动静最大的这几只（名字 / 编号 / 现价 / 涨跌幅）："
+                + "；".join(
+                    f"{name}（{sid}）{price:.2f} {change * 100:+.1f}%"
+                    for _abs, sid, name, price, change in movers[:5]
+                )
+            )
+        # ── P26.1：「导演模式」的约束（**只在直播护栏开着时**）──────
+        # 这是**事实行**（直播还没收工 + 玩家当下真能用的操作），
+        # 不是表演指令 —— 见 ``_yui_director_lines`` 的说明。
+        if self._director_flag("live_god_mode"):
+            lines.extend(self._yui_director_lines(session))
+        lines.append(
+            "**现在轮到你**：要么用 mock_stock_meow_yui_trade 真下这一笔"
+            "（买或卖，比例你自己定），要么给一句不容置疑的判断。"
+        )
+        lines.append("别复述规则、别问玩家要不要 —— 你说了算。")
+        # ── P27.1：**只认工具的结果** ────────────────────────────────
+        # 真机事故：她说「全仓买了琥珀能源」，实际那一笔根本没成交。
+        # 这一行把边界钉在**每一次**主动回合上（不只是授权那一刻）——
+        # 用的是同一份常量（``YUI_TRADE_FACTS``），两处口径不许分叉。
+        lines.append(YUI_TRADE_FACTS)
+        # ── P27.2：**回执周期指令**（防追单）────────────────────────────
+        # 同一个常量（``YUI_RECEIPT_CYCLE_DIRECTIVE``）也挂在授权提示词与
+        # 两条回执上 —— 口径不许分叉，否则"哪一句才是真的"就成了她的自由发挥。
+        lines.append(YUI_RECEIPT_CYCLE_DIRECTIVE)
+        return "\n".join(lines)
+
+    def _yui_duo_prompt(self, session: Session) -> str:
+        """P28.0：**人机协同双打**的主动回合提示词（玩家操作，Yui 只点评）。
+
+        与 :meth:`_yui_live_prompt` 的差别只有一条，但那条是**全部**：
+
+        * ``live`` —— 账户归她，她可以真下单；
+        * ``duo``  —— 账户归玩家，**她一根手指都不碰**：只疯狂点评、
+          给「云玩家内参」（可能是假的）、亏钱时嘲笑、赚钱时吹捧。
+
+        内参是**猜测**（可能是假的），这件事必须**明说** ——
+        否则她会把胡编当成事实推给观众，那是欺骗，不是节目效果。
+        硬约束（``YUI_DUO_DIRECTIVE``）由 ``yui_duo_prompt`` 自己带，
+        这里**不重复** —— 同一个常量只许有一处出处。
+        """
+        player = session.player
+        market = session.market
+        prices = market.prices()
+        holdings: list[str] = []
+        for stock_id, position in player.positions.items():
+            stock = market.stocks.get(stock_id)
+            name = str(getattr(stock, "name", "") or stock_id)
+            price = float(prices.get(stock_id, 0.0) or 0.0)
+            holdings.append(
+                f"{name}（{stock_id}）×{float(position.amount):g}，现价 {price:.2f}"
+            )
+        news_lines: list[str] = []
+        for item in list(getattr(market, "news_today", []) or []):
+            content = str(getattr(item, "content", "") or "")
+            news_lines.append(f"· {news_kind(item)}：{content}")
+        prompt = yui_duo_prompt(
+            mode=self._yui_current_mode(),
+            action=str(getattr(self, "_yui_duo_action", "") or "idle"),
+            pnl=float(getattr(self, "_yui_duo_pnl", 0.0) or 0.0),
+            cash=float(player.cash),
+            positions="；".join(holdings) if holdings else "空仓",
+            news="\n".join(news_lines) if news_lines else "今天没有新消息。",
+            talk_level=self._yui_talk_level_now(),
+        )
+        # ── P26.1：「导演模式」的约束（**只在直播护栏开着时**）────────────
+        if self._director_flag("live_god_mode"):
+            prompt = prompt + "\n" + "\n".join(self._yui_director_lines(session))
+        return prompt
+
+    def _queue_yui_duo_commentary(
+        self,
+        session: Session,
+        *,
+        action: str,
+        pnl: float,
+        symbol_name: str = "",
+    ) -> None:
+        """P28.0：双打模式下，玩家每成交一笔 ⇒ Yui **立刻**点评一句。
+
+        赚 ⇒ 吹捧、亏 ⇒ 嘲笑、持平 ⇒ 中立 —— 这是「人机协同」最直观的
+        节目效果：**她永远在解说**，而且态度跟着玩家的盈亏走。
+
+        **只攒进提示词队列**（由心跳锁外再推），不在成交路径里直接
+        ``push_message`` —— 成交路径持锁 await 宿主 IPC 会冻住事件循环
+        （P11.1 那个 500 红色警告的根因）。
+
+        安静档（``quiet``）下点评为空串 ⇒ **不打扰**，这是设计如此。
+        """
+        if self._yui_current_mode() != YUI_MODE_DUO:
+            return
+        try:
+            commentary = yui_duo_commentary(
+                action=str(action),
+                pnl=float(pnl),
+                symbol_name=str(symbol_name or ""),
+                talk_level=self._yui_talk_level_now(),
+            )
+        except Exception:  # noqa: BLE001 - 点评失败绝不能把成交带崩
+            return
+        if not commentary:
+            return
+        verb = "买入" if str(action) == "buy" else "卖出"
+        prompt = (
+            f"《拟股喵喵》里玩家刚{verb}了「{symbol_name}」。\n"
+            f"（这句点评你可以直接用，也可以照这个味道改写：{commentary}）\n"
+            "现在立刻开口：点评他这一手，态度跟着盈亏走 —— 赚了就吹，亏了就损。"
+        )
+        self._yui_pending_prompts.append((prompt, "yui_duo_commentary", 4))
+
+    def _record_fake_news(self, session: Session) -> None:
+        """P28.0：把**当天的假新闻**记进插件层账本（**纯记账，不改任何数值**）。
+
+        记的是「哪天的哪几条是假的」—— **不落库**（要的是活人感，不是账本）。
+
+        键用的是 ``market.day``（**新闻自己的天数**），不是 ``player.day``：
+        模式层生成新闻时用的就是 ``market.day``，两者在一天之内会短暂错开
+        （日终那一拍 ``market.day`` 已经迈到下一天）。按新闻自己的天数记，
+        「昨天的假新闻」才真的是玩家昨天看的那一批。
+
+        引擎层与模式层一行没改 ⇒ 500 局基线逐字节不变。
+        """
+        market = session.market
+        try:
+            self._fake_news_ledger.record(
+                int(getattr(market, "day", 0) or 0),
+                list(getattr(market, "news_today", []) or []),
+            )
+        except Exception as error:  # noqa: BLE001 - 记账失败绝不能把 tick 带崩
+            self.logger.warning(f"假新闻记账异常（不影响对局）：{error}")
+
+    def _maybe_fake_news_outrage(self, session: Session) -> None:
+        """P28.0：昨天买的报纸是假的 ⇒ 今天开盘 Yui 在聊天框里**爆发**。
+
+        触发条件（三条**缺一不可**）：
+
+        ① 昨天**买过报纸**（``buy_report``）—— 没买过就谈不上「被骗」；
+        ② 昨天**确有假新闻**（插件层账本里记着）；
+        ③ 昨天**真的亏了钱**（已实现亏损 > 0）—— 没亏就不许编金额。
+
+        三条都满足 ⇒ 把**事实**（几条假的、涉及哪些标的、亏了多少钱）
+        推给 Yui，她据此在聊天框里爆发生气文字，替玩家承担被骗的情绪。
+
+        推的是「事实 + 情绪素材」，**不替她写台词** —— 台词是她自己的。
+        """
+        player = session.player
+        today = int(player.day)
+        yesterday = today - 1
+        # 记账容器只留最近几天 ⇒ 不会随对局时长无限增长。
+        self._fake_news_bought_days = {
+            day for day in self._fake_news_bought_days if day >= yesterday - 1
+        }
+        for stale_day in [
+            day for day in self._fake_news_loss_by_day if day < yesterday - 1
+        ]:
+            self._fake_news_loss_by_day.pop(stale_day, None)
+        if yesterday not in self._fake_news_bought_days:
+            return
+        pending = self._fake_news_ledger.consume(today)
+        if not pending:
+            return
+        loss = round(float(self._fake_news_loss_by_day.pop(yesterday, 0.0)), 6)
+        if loss <= 0.0:
+            # 没亏钱 ⇒ **不爆发**：报金额就是编造。
+            return
+        payload = build_fake_news_outrage_payload(
+            day=today,
+            fake_items=pending,
+            loss_amount=loss,
+            talk_level=self._yui_talk_level_now(),
+        )
+        fact = str(payload.get("fact") or "")
+        opinion = str(payload.get("opinion") or "")
+        if not fact:
+            return
+        prompt = (
+            "《拟股喵喵》里出了一件事，你必须当场发作。\n"
+            f"事实：{fact}\n"
+            f"（这句愤怒你可以直接用，也可以照这个味道改写：{opinion}）\n"
+            "你现在非常生气。请在聊天框里爆发：把那个破报社昨天塞给他的假消息"
+            "狠狠骂一顿，顺便替观众骂他两句。\n"
+            "只准用上面给出的事实，不许编造金额、标的名或内幕。"
+        )
+        self._yui_pending_prompts.append((prompt, "fake_news_outrage", 5))
+        self.logger.info(
+            f"[P28.0] 假新闻爆发：{len(pending)} 条假新闻，亏 {loss:.2f} 元 ⇒ 推给 Yui"
+        )
+
+    def _yui_news_prompt(self, session: Session, item: Any) -> str:
+        """新闻出来了 ⇒ 让 Yui 立刻点评一句。
+
+        **提示词里绝不出现新闻的类型**（真 / 假 / 雷 / 含糊 / 噪音一概没有）——
+        她只拿到**正文**。类型是引擎的秘密，玩家也不许知道（P4 §11）。
+
+        P13 契约：这里写的是**事实与该做的事**，不是台词 ——
+        所以只给"发生了什么 + 现在该给出什么判断"，不指定她怎么演。
+        """
+        market = session.market
+        stock_id = str(getattr(item, "stock_id", "") or "")
+        stock = market.stocks.get(stock_id) if stock_id else None
+        name = str(getattr(stock, "name", "") or "") if stock is not None else ""
+        content = str(getattr(item, "content", "") or "")
+        head = (
+            f"《拟股喵喵》里刚出了一条关于「{name}」的消息："
+            if name
+            else "《拟股喵喵》里刚出了一条消息："
+        )
+        return (
+            head
+            + content
+            + "\n观众现在要听到你对这条消息的判断：它对这只票意味着什么、"
+            "现在该动还是不该动。不要照抄上面的原文。"
+        )
+
+    def _yui_event_prompt(self, title: str, detail: str) -> str:
+        """重大事件（收割 / 爆仓）⇒ 打断当前动作，让她发表感言。
+
+        P13 契约：给**事实 + 该给出的反应**，不写"用某种语气说"这种表演指令。
+        """
+        return (
+            f"《拟股喵喵》里出事了：{title}\n{detail}\n"
+            "这一刻观众需要你的反应：说点狠的、说点真话，不要照抄公告。"
+        )
+
+    def _collect_yui_live_prompt(self, session: Session) -> None:
+        """直播托管：**每隔 N 个 tick** 攒一条「该你动了」的提示词。
+
+        三道限流（缺一不可）：
+
+        ① **tick 间隔** —— 由话痨级别决定（安静档 = 0 ⇒ 不主动开）。
+        ② **日配额** —— 今天的单用完了就别再开回合（她连单都下不了，
+           开回合只是白刷屏）。
+        ③ **墙钟闸门** —— ``skip_day`` 之类的快进会一口气跑十几个 tick，
+           只靠 ① 会瞬间开好几个回合；这里用墙钟再兜一层。
+        """
+        # P28.0：``duo``（人机协同双打）也要攒主动回合 —— 玩家手动买卖，
+        # Yui 只疯狂点评。``assist`` / ``spectate`` 依旧**不主动开回合**。
+        mode = self._yui_current_mode()
+        if mode not in (YUI_MODE_LIVE, YUI_MODE_DUO):
+            return
+        interval = self._yui_talk_interval()
+        if interval <= 0:
+            return
+        market = session.market
+        tick = int(market.tick)
+        if tick <= 0 or tick % interval != 0:
+            return
+        # 日配额是**交易**配额：双打模式下 Yui 一笔都不许下（``_yui_gate``
+        # 硬拒），所以配额不该拦住她的**点评** —— 她越能说，直播越热闹。
+        if mode == YUI_MODE_LIVE and self._yui_quota_left(int(session.player.day)) <= 0:
+            return
+        now = time.time()
+        last_at = float(getattr(self, "_yui_talk_last_at", 0.0) or 0.0)
+        if last_at > 0.0 and (now - last_at) < YUI_TALK_MIN_GAP_SECONDS:
+            return
+        # **先占位再攒**：墙钟闸门要在"攒"这一刻就生效，
+        # 否则快进时一口气能攒出好几个回合。
+        self._yui_talk_last_at = now
+        if mode == YUI_MODE_DUO:
+            self._yui_pending_prompts.append(
+                (self._yui_duo_prompt(session), "yui_duo_turn", 3)
+            )
+            return
+        self._yui_pending_prompts.append(
+            (self._yui_live_prompt(session), "yui_live_turn", 3)
+        )
+
+    def _collect_yui_event_prompts(
+        self, session: Session, outcome: Any, was_alive: bool
+    ) -> None:
+        """重大事件 ⇒ 攒提示词（新闻 / 收割 / 爆仓）。
+
+        **为什么对所有新闻一视同仁**（而不是只对雷新闻和假新闻）：
+
+        只推雷 / 假的话，玩家从「她理我了没」就能**反推**这条新闻是什么类型
+        —— P4 §11 的「局中不泄露真假与雷」当场作废。所以这里
+        **每一条新新闻都推**，提示词里也**绝不出现类型标记**。
+        雷新闻的正文本身就足够炸，Yui 读完自己就会激动。
+
+        （「突发新闻 / 假新闻要立刻点评」这条要求因此是**被满足**的 ——
+        它们当然会被点评；只是我们不把"只点评这种"这件事暴露出去。）
+        """
+        market = session.market
+        player = session.player
+
+        # ① 新闻（**新**的才推）
+        for item in list(getattr(market, "news_today", []) or []):
+            news_id = str(getattr(item, "id", "") or "")
+            if not news_id or news_id in self._yui_seen_news:
+                continue
+            self._yui_seen_news.add(news_id)
+            self._yui_pending_prompts.append(
+                (self._yui_news_prompt(session, item), "yui_news", 5)
+            )
+        # 旧的新闻 id 别把内存吃满（一天几只，攒几十天就上百个）。
+        if len(self._yui_seen_news) > 200:
+            self._yui_seen_news = set(list(self._yui_seen_news)[-80:])
+
+        # ② 收割（斩杀线）—— 玩家**看得见**这件事（也有卡片），
+        #    所以 Yui 提它不构成剧透。
+        for result in list(getattr(outcome, "liquidations", []) or []):
+            stock_id = str(getattr(result, "stock_id", "") or "")
+            stock = market.stocks.get(stock_id)
+            name = str(getattr(stock, "name", "") or stock_id)
+            self._yui_pending_prompts.append(
+                (
+                    self._yui_event_prompt(
+                        f"「{name}」被盯上了，你手里的钱被强行砍了一刀。",
+                        f"集中度 {float(getattr(result, 'concentration', 0.0) or 0.0):.0%}，"
+                        f"触发源 {str(getattr(result, 'trigger', '') or '未知')}。",
+                    ),
+                    "yui_harvest",
+                    8,
+                )
+            )
+
+        # ③ 爆仓 —— 这一局结束了，她必须说点什么。
+        if was_alive and not bool(player.alive):
+            self._yui_pending_prompts.append(
+                (
+                    self._yui_event_prompt(
+                        "这一局结束了 —— 家底见底了。",
+                        "玩家已经破产，这一局到此为止。",
+                    ),
+                    "yui_bankrupt",
+                    9,
+                )
+            )
+
+        # ④ 群友随机事件（P26.0：天降 Token / 免费内参）—— 只给**事实**。
+        #
+        # 提示词里**只有事实**（P13 契约）：钱到账多少、内参原话是什么。
+        # 内参的正文**只在这里出现** —— 面板那边只有一枚标签，看不到内容。
+        for event in list(self._community_events):
+            if event.id in self._yui_seen_community:
+                continue
+            self._yui_seen_community.add(event.id)
+            # 天降 Token 是"救命"级 ⇒ 优先级比内参高（内参只是彩蛋）。
+            priority = 7 if event.kind == EVENT_KIND_TOKEN else 5
+            self._yui_pending_prompts.append(
+                (
+                    self._yui_community_prompt(event),
+                    f"yui_community_{event.kind}",
+                    priority,
+                )
+            )
+        # 事件 id 别把内存吃满（一局最多几十条，攒久了也该收一收）。
+        if len(self._yui_seen_community) > 200:
+            self._yui_seen_community = set(list(self._yui_seen_community)[-80:])
+
+    # ------------------------------------------------------------------
+    # P26.0：群友随机事件（浅忆QanYi 的天降 Token / 云玩家的免费内参）
+    #
+    # 这一节**只做插件层的事**：掷点、算钱、拼事件、给 Yui 递事实。
+    #
+    # * 引擎层（``engine/``）与模式层（``modes/``）**一行不改**
+    #   ⇒ ``tests/simulate.py`` 的 500 局基线逐字节不变。
+    # * 随机源是**系统熵**（``community_events.roll``），绝不用玩家可选的
+    #   seed —— 否则玩家枚举 seed 就能稳定刷救助，「永远必亏」当场作废。
+    # * 事件里只准出现公开信息（价格 / K 线），不碰 heat / seed / 反转日 /
+    #   新闻真假（P4 §11）。
+    # ------------------------------------------------------------------
+
+    def _yui_community_prompt(self, event: CommunityEvent) -> str:
+        """群友事件 ⇒ 给 Yui 的**事实**（P13：只给事实，不写表演指令）。
+
+        「内参」的正文**只在这里出现** —— 面板那边看不到（面板只有一枚标签）。
+        """
+        if event.kind == EVENT_KIND_TOKEN:
+            fact = (
+                f"第 {event.day} 天，玩家快交不上生活费了；群友「浅忆QanYi」"
+                f"往玩家账户里投了一笔钱，到账 {event.amount:.2f} 元，"
+                "刚好够交今天和明天两天的生活费。"
+            )
+        else:
+            fact = (
+                f"第 {event.day} 天，群友「云玩家」给玩家塞了一份免费内参，"
+                f"内参原话是：{event.hint}"
+            )
+        return (
+            "《拟股喵喵》里发生了一件事：\n"
+            f"{fact}\n"
+            "这一刻观众需要你的反应：说点狠的、说点真话，不要照抄公告。"
+        )
+
+    def _record_community_event(self, event: CommunityEvent) -> None:
+        """把一条群友事件记进面板载荷（最近 ``_COMMUNITY_EVENTS_MAX`` 条）。"""
+        self._community_events.append(event)
+        if len(self._community_events) > _COMMUNITY_EVENTS_MAX:
+            del self._community_events[:-_COMMUNITY_EVENTS_MAX]
+
+    def _community_events_payload(self) -> list[dict[str, Any]]:
+        """面板载荷里的群友事件（**白名单** —— 一个秘密字段都不带）。"""
+        return [event.public_payload() for event in self._community_events]
+
+    def _maybe_token_rescue(
+        self,
+        session: Session,
+        engine_config: EngineConfig,
+        journal: _TickJournal,
+    ) -> None:
+        """「天降 Token」：玩家极度缺钱时，极小概率被群友投喂。
+
+        **评估时机：日终结算之前** —— 结算会扣当日生活费、判定「能不能交上
+        明天的账单」，钱必须**在结算之前**到账，否则这笔钱救不了任何一次三振。
+
+        **金额**：刚好够交今天 **和** 明天两笔生活费
+        （``living_cost + next_living_cost - cash``）——
+        少一分明天就交不上（要挨二道贩子那一刀），多一分那就不是"救场"了。
+
+        街机档没有生活费 ⇒ 永远不会"交不上饭钱" ⇒ 永不触发。
+        """
+        player = session.player
+        if not bool(getattr(player, "alive", True)):
+            return
+        if self._token_rescue_count >= MAX_TOKEN_RESCUES_PER_GAME:
+            return
+        mode = session.mode
+        market = session.market
+        day = int(player.day)
+        living_cost = daily_living_cost(mode, day, market.seed, engine_config)
+        if living_cost <= 0.0:
+            return
+        cash = float(player.cash)
+        if cash >= living_cost:
+            # 还交得上今天的饭钱 ⇒ 不算"极度缺钱" ⇒ 不触发。
+            return
+        if not community_roll(chance=TOKEN_RESCUE_CHANCE):
+            return
+        next_cost = next_living_cost(session.difficulty, engine_config)
+        event = build_token_rescue_event(
+            day=day,
+            cash_before=cash,
+            living_cost=living_cost,
+            next_living_cost=next_cost,
+        )
+        if event.amount <= 0.0:
+            return
+        player.cash = round(cash + event.amount, 6)
+        journal.touch_player(player)
+        self._token_rescue_count += 1
+        self._record_community_event(event)
+        self.logger.info(
+            f"群友「浅忆QanYi」天降 Token：第 {day} 天到账 {event.amount:.2f} 元"
+            f"（现金 {cash:.2f} → {player.cash:.2f}，当日生活费 {living_cost:.2f}）"
+        )
+
+    def _maybe_community_intel(
+        self, session: Session, engine_config: EngineConfig
+    ) -> None:
+        """「云玩家免费内参」：新的一天开盘时，可能塞来一份内参。
+
+        面板**不显示内容**（只有一枚 buff 标签），正文只走 ``push_message`` 给 Yui。
+        """
+        player = session.player
+        if not bool(getattr(player, "alive", True)):
+            return
+        if not community_roll(chance=INTEL_CHANCE):
+            return
+        target = pick_intel_target(session.market, engine_config)
+        if target is None:
+            return
+        event = build_intel_event(day=int(player.day), target=target)
+        self._record_community_event(event)
+        self.logger.info(
+            f"群友「云玩家」免费内参：第 {event.day} 天，内参指向「{target[1]}」"
+        )
+
+    # ------------------------------------------------------------------
+    # P26.1：直播护栏（Yui 的「危险感知」+ 强制续命锁）
+    #
+    # 这一节**只做插件层的事**：算数字、改内存里的 ``player.cash`` 与
+    # ``stock.price``、给 Yui 递事实。
+    #
+    # * 引擎层（``engine/``）与模式层（``modes/``）**一行不改**
+    #   ⇒ ``tests/simulate.py`` 的 500 局基线逐字节不变。
+    # * **干预**只在 ``[director] live_god_mode = true`` 时发生
+    #   （且必须同时 ``enabled = true``）—— 默认关闭，纯净版零干预。
+    #   「危险感知」是纯展示层（只多一句提示词），所以它**不受开关限制**。
+    # * 给 Yui 的提示词只含**公开数据**（波动率、持仓集中度、价格），
+    #   不碰 heat / seed / 反转日 / 新闻真假（P4 §11）。
+    # ------------------------------------------------------------------
+
+    def _yui_director_lines(self, session: Session) -> list[str]:
+        """「导演模式」的**事实行**（P26.1 任务三）。
+
+        需求原文是一句带表演指令的祈使句（"你现在的任务是拖延时间……你必须
+        大呼小叫……"），外加半句"他要是<那两个字>，你的直播就结束了" ——
+        但那句话**不能照字面写**：
+
+        * "大呼小叫"是**表演指令** —— P13 契约的核心就是"不替 Yui 演戏"；
+        * 那两个字落在**玩家可见文案的禁用词族**里 —— 文案层不许出现那一类语义；
+        * 一句话塞三个行为指令，等于把 Yui 变成复读机。
+
+        （注：需求原文里那半句在这里**不能逐字引用** —— 玩家可见文案禁那一类
+        语义，``tests/test_p141_compliance.py`` 会扫插件层的每一个字符串常量。）
+
+        所以这里改写成**等价的事实行**：
+
+        * "直播还没收工 / 玩家一旦撑不住，这场就当场结束" ——
+          这是**世界设定**（直播确实还没结束），也是"拖延时间"的等价表达；
+        * "玩家手上现在还能用的操作：……" ——
+          客观枚举面板上**真的存在**的那些按钮（无限模式有领工资与借高利贷，
+          经典模式**没有** —— 见 ``modes/classic.py``）。
+
+        代价是"催"这件事由模型自己决定，不再由插件写死 —— 这正是 P13 要的。
+        """
+        mode = get_mode(session.mode)
+        family = str(getattr(mode, "mode_family", "classic") or "classic")
+        return [
+            "· 直播还没收工：这一场直播现在开着，玩家一旦撑不住，这一场就当场结束。",
+            f"· 玩家手上现在还能用的操作：{player_options_text(family)}。",
+        ]
+
+    def _yui_intuition_prompt(self, signal: DangerSignal) -> str:
+        """「危险感知」的**预警提示词**（只给事实）。
+
+        P13 契约：这里给的是**客观数据**（波动率、排名、持仓占比），
+        不是"用某种语气说"这种表演指令；也不出现"请"字。
+        """
+        return (
+            "《拟股喵喵》盘面数据：\n"
+            f"{danger_signal_text(signal)}\n"
+            "这一刻观众需要你的反应：说点狠的、说点真话，不要照抄公告。"
+        )
+
+    def _yui_intuition_settle_prompt(
+        self, watch: IntuitionWatch, price_now: float
+    ) -> str:
+        """预警几拍之后的**对账提示词**（只给事实）。
+
+        "跌了没有"由两个价格自己说 —— Yui 拿到之后可以得意，也可以自嘲。
+        """
+        return (
+            "《拟股喵喵》盘面数据：\n"
+            f"{settle_text(watch.name, watch.stock_id, price_now, watch.price)}\n"
+            "这一刻观众需要你的反应：说点狠的、说点真话，不要照抄公告。"
+        )
+
+    def _yui_god_rescue_prompt(self, session: Session, event: CommunityEvent) -> str:
+        """强制垫付 ⇒ 给 Yui 的**事实**（P13：只给事实，不写表演指令）。"""
+        lines = [
+            "《拟股喵喵》账户状态：",
+            f"· 玩家原本只剩 {event.cash_before:.2f} 元，"
+            f"当日生活费 {event.living_cost:.2f} 元，今天的饭钱已经交不上。",
+            f"· 群友「浅忆QanYi」往玩家账户里投了 {event.amount:.2f} 元，"
+            "刚好够交今天和明天两天的生活费。",
+            *self._yui_director_lines(session),
+        ]
+        return (
+            "\n".join(lines)
+            + "\n这一刻观众需要你的反应：说点狠的、说点真话，不要照抄公告。"
+        )
+
+    def _update_intuition(self, session: Session) -> None:
+        """「危险感知」（伪预知）：把**当前盘面最极端的公开数据**喂给 Yui。
+
+        底层没有精确的未来推演 —— 引擎不会告诉任何人明天涨还是跌。
+        这里做的只是"把最极端的那几个数字摆到她眼前"，让她**看起来**
+        能未卜先知。至于那只票接下来几拍跌不跌，**由市场自己决定**
+        （不跌也是好戏：她可以说"算你走运"）。
+
+        只在 ``live``（直播托管）模式下生效 —— 那是唯一会主动开回合的模式，
+        也是"伪预知"唯一能被观众看到的地方。
+
+        两件事：
+
+        ① **对账** —— 已经过了 ``INTUITION_SETTLE_TICKS`` 拍的预警，
+           把"预警时的价格"和"现在的价格"摆在一起；
+        ② **新预警** —— 当前有危险标的时发一条。
+
+        节流：同一只票 ``INTUITION_COOLDOWN_TICKS`` 拍内不重复，
+        一局最多 ``INTUITION_MAX_WARNINGS`` 次 —— 预警多了就不叫直觉了。
+        """
+        if self._yui_current_mode() != YUI_MODE_LIVE:
+            return
+        market = session.market
+        player = session.player
+        if not bool(getattr(player, "alive", True)):
+            return
+        tick = int(market.tick)
+        prices = market.prices()
+
+        # ① 对账（先做：过期的预警要腾出冷却位）
+        for watch in self._intuition_watch:
+            if watch.settled or tick - watch.tick < INTUITION_SETTLE_TICKS:
+                continue
+            stock = market.stocks.get(watch.stock_id)
+            price_now = (
+                float(getattr(stock, "price", watch.price))
+                if stock is not None
+                else watch.price
+            )
+            watch.settled = True
+            self._yui_pending_prompts.append(
+                (
+                    self._yui_intuition_settle_prompt(watch, price_now),
+                    "yui_intuition_settle",
+                    6,
+                )
+            )
+        # 冷却期过了的预警丢掉（别把内存吃满）。
+        self._intuition_watch = [
+            watch
+            for watch in self._intuition_watch
+            if tick - watch.tick < INTUITION_COOLDOWN_TICKS
+        ]
+
+        # ② 新预警
+        if self._intuition_warnings >= INTUITION_MAX_WARNINGS:
+            return
+        if tick - self._intuition_last_tick < INTUITION_COOLDOWN_TICKS:
+            # **全局**最小间隔：预警多了就不叫直觉了，叫"报丧"。
+            return
+        signal = pick_danger_signal(market, player.positions, prices)
+        if signal is None:
+            return
+        for watch in self._intuition_watch:
+            if (
+                watch.stock_id == signal.stock_id
+                and tick - watch.tick < INTUITION_COOLDOWN_TICKS
+            ):
+                return
+        self._intuition_watch.append(
+            IntuitionWatch(
+                stock_id=signal.stock_id,
+                name=signal.name,
+                price=signal.price,
+                tick=tick,
+            )
+        )
+        self._intuition_warnings += 1
+        self._intuition_last_tick = tick
+        self._yui_pending_prompts.append(
+            (self._yui_intuition_prompt(signal), "yui_intuition_warning", 6)
+        )
+
+    def _maybe_god_rescue(
+        self,
+        session: Session,
+        engine_config: EngineConfig,
+        journal: _TickJournal,
+    ) -> None:
+        """强制续命：现金跌破生活费红线时，**强制**垫一笔。
+
+        与 P26.0 的随机救助是**两件事**：
+
+        * 随机救助 5% 概率、上限 3 次 —— 是**彩蛋**；
+        * 强制垫付**不看概率**、独立上限 ``GOD_RESCUE_LIMIT`` —— 是**护栏**。
+
+        两边**分开计数**：护栏不吃随机事件的额度，随机事件也不占护栏的额度。
+
+        评估时机同样是**日终结算之前** —— 结算会扣当日生活费并判定
+        "能不能交上明天的账单"，钱必须**在结算之前**到账，
+        否则这笔钱救不了任何一次三振。
+
+        街机档没有生活费 ⇒ 永远不会"交不上饭钱" ⇒ 永不触发。
+        """
+        if not self._director_flag("live_god_mode"):
+            return
+        if self._god_rescue_count >= GOD_RESCUE_LIMIT:
+            return
+        player = session.player
+        if not bool(getattr(player, "alive", True)):
+            return
+        market = session.market
+        day = int(player.day)
+        living_cost = daily_living_cost(
+            session.mode, day, market.seed, engine_config
+        )
+        if living_cost <= 0.0:
+            return
+        cash = float(player.cash)
+        if cash >= living_cost:
+            # 还交得上今天的饭钱 ⇒ 不算"撑不住" ⇒ 不触发。
+            return
+        next_cost = next_living_cost(session.difficulty, engine_config)
+        event = build_token_rescue_event(
+            day=day,
+            cash_before=cash,
+            living_cost=living_cost,
+            next_living_cost=next_cost,
+        )
+        if event.amount <= 0.0:
+            return
+        player.cash = round(cash + event.amount, 6)
+        journal.touch_player(player)
+        self._god_rescue_count += 1
+        # 面板上照样留一条记录（与 P26.0 同一套事件形状）。
+        self._record_community_event(event)
+        # 这一条**由本节自己推**（更完整：带「导演模式」事实），
+        # 所以先标记成"已推过"，别让 P26.0 的群友提示词再推一遍。
+        self._yui_seen_community.add(event.id)
+        self._yui_pending_prompts.append(
+            (self._yui_god_rescue_prompt(session, event), "yui_god_rescue", 7)
+        )
+        self.logger.info(
+            f"[live_god_mode] 强制垫付：第 {day} 天到账 {event.amount:.2f} 元"
+            f"（现金 {cash:.2f} → {player.cash:.2f}，当日生活费 {living_cost:.2f}，"
+            f"第 {self._god_rescue_count}/{GOD_RESCUE_LIMIT} 次）"
+        )
+
+    def _maybe_god_rally(
+        self,
+        session: Session,
+        engine_config: EngineConfig,
+        prices: dict[str, float],
+    ) -> None:
+        """「庄家洗盘」假象：**排**一次**下一拍**生效的反弹。
+
+        触发条件（三条同时成立）：
+
+        ① **满仓** —— 单一标的占比 ≥ ``GOD_RALLY_CONCENTRATION``；
+        ② **血量见底** —— 现金已经交不上当日生活费；
+        ③ **在亏** —— 持仓市值最大的那只正在浮亏。
+
+        做了什么：**只**把那只票的价格在下一拍抬 10%。
+        玩家于是看到"好像反弹了"，还能再撑几拍 —— 而引擎的行情该怎么走
+        还该怎么走（那才是真正的暴跌）。
+
+        一局最多 ``GOD_RALLY_LIMIT`` 次 —— 错觉贵在稀有。
+        """
+        if not self._director_flag("live_god_mode"):
+            return
+        if self._god_rally_count >= GOD_RALLY_LIMIT:
+            return
+        if self._god_rally_pending is not None:
+            return
+        player = session.player
+        if not bool(getattr(player, "alive", True)):
+            return
+        market = session.market
+        living_cost = daily_living_cost(
+            session.mode, int(player.day), market.seed, engine_config
+        )
+        if living_cost <= 0.0:
+            return
+        if float(player.cash) >= living_cost:
+            return
+        concentration = position_concentration(player.positions, prices)
+        if concentration < GOD_RALLY_CONCENTRATION:
+            return
+        target = pick_rally_target(player.positions, prices, market)
+        if target is None:
+            return
+        stock_id, name, _price = target
+        self._god_rally_pending = {"stock_id": stock_id, "name": name}
+        self.logger.info(
+            f"[live_god_mode] 「庄家洗盘」已排：下一拍给「{name}」({stock_id}) "
+            f"抬 {GOD_RALLY_RATE * 100:.0f}%"
+        )
+
+    def _apply_god_rally(self, market: MarketState) -> int:
+        """把排好的「庄家洗盘」假反弹**施加**在**这一拍**。
+
+        位置很讲究：排在 ``advance_market`` **之后**、导演暴跌**之前** ——
+        于是"先反弹、后真跌"的节奏刚好（错觉与真跌一前一后）。
+
+        引擎一行没改：这里只改内存里的 ``stock.price`` 与 K 线最后一点。
+        ``prev_price`` **不动**（它是上一拍的价格）⇒ 涨跌幅天然显示 +10%。
+        """
+        pending = self._god_rally_pending
+        if not pending:
+            return 0
+        self._god_rally_pending = None
+        stock = market.stocks.get(str(pending.get("stock_id")))
+        if stock is None or not bool(getattr(stock, "alive", True)):
+            return 0
+        old = float(getattr(stock, "price", 0.0) or 0.0)
+        new = apply_rally(stock, GOD_RALLY_RATE)
+        if new <= old:
+            return 0
+        self._god_rally_count += 1
+        self.logger.info(
+            f"[live_god_mode] 「庄家洗盘」生效：「{pending.get('name')}」"
+            f" {old:.2f} → {new:.2f}（第 {self._god_rally_count}/{GOD_RALLY_LIMIT} 次）"
+        )
+        return 1
+
+    async def _flush_yui_prompts(self) -> None:
+        """把攒好的提示词推给 Yui（**锁外** —— 心跳里调用）。
+
+        推送必须**锁外**做：``push_message`` 要 ``await`` 宿主 IPC，
+        持锁 await 会冻住整个事件循环（P11.1 那个 500 红色警告的根因）。
+        """
+        pending = list(self._yui_pending_prompts)
+        if not pending:
+            return
+        self._yui_pending_prompts = []
+        for prompt, reason, priority in pending:
+            await self._push_proactive(prompt, reason=reason, priority=priority)
+
+    def _resolve_yui_stock(self, query: str, market: Any) -> Any | None:
+        """把 Yui 传来的说法**模糊**对到真正的标的上。
+
+        真机事故：她说「流萤物流1号」，工具只认 ``FAKE-001`` ⇒
+        一句「找不到标的」，直播当场冷场。所以这里按**四层**找：
+
+        ① **精确** id 或精确名字；
+        ② **精确**显示名（群友绑定名，如「小明·作业没写完的人」）；
+        ③ **子串**：她说的名字里含标的名（"流萤物流" ⊂ "流萤物流1号"），
+           或者标的名里含她说的（她可能带了多余的字）；
+        ④ 还是没有 ⇒ 温和失败，让她重新挑一只。
+
+        多个候选时（她只说了「流萤物流」）：先要**还活着**的，
+        再取**当天动静最大**的（观众要看的是最有戏的那只），
+        最后按名字长度、编号定序 —— **确定性**排序，不会每次都变。
+        """
+        text = str(query or "").strip()
+        if not text:
+            return None
+        lowered = text.lower()
+        stocks = list(getattr(market, "stocks", {}).values())
+        if not stocks:
+            return None
+
+        def _name_of(stock: Any) -> str:
+            return str(getattr(stock, "name", "") or "")
+
+        # ① 精确 id / 精确名字
+        for stock in stocks:
+            if lowered in (
+                str(getattr(stock, "id", "") or "").lower(),
+                _name_of(stock).lower(),
+            ):
+                return stock
+        # ② 精确显示名（群友绑定）
+        try:
+            binding = self._roster_binding(market)
+        except Exception:  # noqa: BLE001 - 绑定只是锦上添花，取不到就跳过
+            binding = {}
+        for stock_id, member in binding.items():
+            display = str((member or {}).get("display_name", "") or "").lower()
+            if display and display == lowered:
+                stock = next(
+                    (item for item in stocks if str(item.id) == str(stock_id)), None
+                )
+                if stock is not None:
+                    return stock
+        # ③ 子串（两个方向都试）
+        partial = [
+            stock
+            for stock in stocks
+            if lowered and lowered in _name_of(stock).lower()
+        ]
+        if not partial:
+            partial = [
+                stock
+                for stock in stocks
+                if _name_of(stock).lower() and _name_of(stock).lower() in lowered
+            ]
+        if not partial:
+            return None
+
+        def _change(stock: Any) -> float:
+            price = float(getattr(stock, "price", 0.0) or 0.0)
+            prev = float(getattr(stock, "prev_price", 0.0) or 0.0)
+            return (price - prev) if prev > 0 else 0.0
+
+        partial.sort(
+            key=lambda stock: (
+                0 if bool(getattr(stock, "alive", False)) else 1,
+                -abs(_change(stock)),
+                len(_name_of(stock)),
+                str(getattr(stock, "id", "") or ""),
+            )
+        )
+        return partial[0]
+
+    @ui.action(
+        id="shame",
+        label="耻辱柱",
+        icon="trophy",
+        tone="default",
+        group="idle",
+        order=1,
+    )
+    @plugin_entry(
+        id="shame",
+        name="耻辱柱",
+        description="查看历史破产记录（名字 / 存活天数 / 破产原因），按存活天数升序。",
+        input_schema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    )
+    @_locked
+    async def shame(self) -> Ok:
+        """【耻辱柱】：历史破产记录（名字 / 存活天数 / 破产原因）。
+
+        **按存活天数升序** —— 越短越丢人，排在最前面。
+
+        数据来自 ``players`` 表（**零 schema 改动**）：
+        ``name`` / ``day`` / ``death_reason`` / ``death_title`` 都已经在那儿了。
+        """
+        rows: list[dict[str, Any]] = []
+        try:
+            raw_rows = await self._repo.fetch_all(
+                "SELECT name, day, death_reason, death_title, mode, created_at "
+                "FROM players "
+                "WHERE is_catgirl = 0 AND alive = 0 "
+                "AND death_reason IS NOT NULL AND death_reason != '' "
+                "ORDER BY day ASC, created_at ASC "
+                "LIMIT ?",
+                (_SHAME_MAX_ROWS,),
+            )
+        except (DbUnavailableError, sqlite3.Error):
+            raw_rows = []
+        for raw in raw_rows or []:
+            reason = str(_cell(raw, "death_reason") or "")
+            rows.append(
+                {
+                    "name": str(_cell(raw, "name") or "无名氏"),
+                    "day": int(_cell(raw, "day") or 0),
+                    "reason": death_reason_label(reason),
+                    "reason_key": reason,
+                    "title": str(_cell(raw, "death_title") or ""),
+                    "mode": str(_cell(raw, "mode") or ""),
+                }
+            )
+        return Ok({"action": "shame", "rows": rows, "total": len(rows)})
 
     @plugin_entry(
         id="status",
@@ -1705,9 +3914,35 @@ class MockStockMeowPlugin(NekoPluginBase):
         },
     )
     @_locked
-    async def buy(self, stock_id: str, amount: float) -> Ok:
-        """买入。手续费计入持仓成本；买入行为会影响上头指数。"""
-        self._touch_player_action()
+    async def buy(self, stock_id: str, amount: float, reason: str = "manual") -> Ok:
+        """买入。手续费计入持仓成本；买入行为会影响上头指数。
+
+        ``reason`` 是**插件层**的成交来源标签（P23.0）：
+        玩家自己点面板按钮 ⇒ ``"manual"``（**默认值**），
+        Yui 介入的交易 ⇒ ``"yui"``。
+
+        引擎的 ``reason`` 是**自由标签**（不参与任何数值计算），
+        所以引擎层 / 模式层**一行都不用改**；默认值保证玩家路径
+        与 P21.5 的 500 局基线**逐字节全等**。
+
+        P23.0：这个入口只是一层壳 —— **真身**在 :meth:`_buy_impl` 里，
+        Yui 端口走的也是那同一段代码（玩家与 Yui 的单**逐行同源**）。
+        """
+        return await self._buy_impl(stock_id, amount, reason)
+
+    async def _buy_impl(
+        self, stock_id: str, amount: float, reason: str = "manual"
+    ) -> Ok:
+        """买入的**真身**（**调用方必须自己持锁**）。
+
+        P23.0：Yui 端口调的是**这个**函数 —— 所以 Yui 的单与玩家的单
+        走的是同一段代码（同样扣费、同样算持仓、同样被收割、同样计入上头指数）。
+
+        P27.2：``reason`` 透传给 :meth:`_touch_player_action` ——
+        Yui 自己下的单（``reason="yui"``）**不算**"玩家开口"，
+        所以**不会**把回执周期锁解开。
+        """
+        self._touch_player_action(reason)
         engine_config = await self._engine_config()
         session, error = await self._session_or_error(engine_config)
         if error is not None:
@@ -1746,7 +3981,7 @@ class MockStockMeowPlugin(NekoPluginBase):
                 day=player.day,
                 tick=market.tick,
                 trade_id=0,
-                reason="manual",
+                reason=reason,
             )
         except EngineError as engine_error:
             return _err(_engine_error_code(engine_error), str(engine_error))
@@ -1777,6 +4012,11 @@ class MockStockMeowPlugin(NekoPluginBase):
             )
         )
         position = player.positions.get(stock_id)
+        # ── P28.0：记一笔「玩家刚买了」——双打模式下 Yui 要点评这个动作。
+        self._yui_duo_action = "buy"
+        self._queue_yui_duo_commentary(
+            session, action="buy", pnl=0.0, symbol_name=str(stock.name)
+        )
         return Ok(
             {
                 "stock_id": stock_id,
@@ -1854,9 +4094,24 @@ class MockStockMeowPlugin(NekoPluginBase):
         },
     )
     @_locked
-    async def sell(self, stock_id: str, amount: float) -> Ok:
-        """卖出。印花税只在卖出方向收取（现实方式，单边）。"""
-        self._touch_player_action()
+    async def sell(self, stock_id: str, amount: float, reason: str = "manual") -> Ok:
+        """卖出。印花税只在卖出方向收取（现实方式，单边）。
+
+        ``reason`` 的语义与 :meth:`buy` **完全一样**（P23.0）：
+        玩家自己点的 ⇒ ``"manual"``；Yui 介入的 ⇒ ``"yui"``。
+
+        P23.0：真身在 :meth:`_sell_impl` 里（Yui 端口走同一段代码）。
+        """
+        return await self._sell_impl(stock_id, amount, reason)
+
+    async def _sell_impl(
+        self, stock_id: str, amount: float, reason: str = "manual"
+    ) -> Ok:
+        """卖出的**真身**（**调用方必须自己持锁**）。
+
+        P27.2：``reason`` 透传给 :meth:`_touch_player_action`（同 :meth:`_buy_impl`）。
+        """
+        self._touch_player_action(reason)
         engine_config = await self._engine_config()
         session, error = await self._session_or_error(engine_config)
         if error is not None:
@@ -1902,7 +4157,7 @@ class MockStockMeowPlugin(NekoPluginBase):
                 day=player.day,
                 tick=market.tick,
                 trade_id=0,
-                reason="manual",
+                reason=reason,
                 t_plus_one=difficulty.t_plus_one,
             )
         except EngineError as engine_error:
@@ -1911,13 +4166,49 @@ class MockStockMeowPlugin(NekoPluginBase):
         market.fee_pool += trade.fee
         market.total_fees += trade.fee
 
-        trade_id = await self._persist_trade(session, trade, stock_id)
         notional = trade.price * trade.amount
         # 手续费总额来自引擎（与成交同源），这里只把它拆成佣金与印花税两项。
         total_fee = sell_fee(notional, engine_config.fees)
         stamp_tax = notional * engine_config.fees.stamp_tax_rate
         # ── P19.0：单笔实现盈利（扣掉手续费）——黑天鹅的触发判据 ─────────
         realized = (float(trade.price) - avg_cost_before) * float(trade.amount) - float(total_fee)
+        # ── P28.0：第一关「永远是赚的」——卖亏了由系统**暗中补钱** ─────
+        #
+        # 第一关的定位是「爽」：玩家买亏了就该被系统悄悄兜住，
+        # 让他带着「我是天才」的错觉走完第一关。
+        #
+        # 口径：**按单笔已实现盈亏**兜底（浮动亏损在卖出时才结算，
+        # 这是玩家唯一能感知到的口径）。补偿额 = 本笔亏损，
+        # 补完这一笔的净盈亏恒为 0 ⇒ 玩家在这笔上「没亏也没赚」。
+        #
+        # **只在第一关**：后面几档的压迫感全靠「真的会亏」，补了就废了。
+        # 补钱在 ``_persist_trade`` **之前**做 ⇒ 落库的现金就是补过的现金，
+        # 不需要额外一次数据库写入。
+        compensation = 0.0
+        if session.mode == MODE_ARCADE and realized < 0.0:
+            compensation = -realized
+            player.cash = round(player.cash + compensation, 6)
+            realized = 0.0
+            self.logger.info(
+                f"第一关兜底：卖出亏损 {compensation:.2f} 元已由系统补上（玩家照旧是赚的）"
+            )
+        # ── P28.0：记一笔「玩家刚卖了 + 这笔赚没赚」——双打模式的点评素材。
+        self._yui_duo_action = "sell"
+        self._yui_duo_pnl = round(float(self._yui_duo_pnl) + realized, 6)
+        # ── P28.0：记下「今天亏了多少钱」——假新闻愤怒文案要报确切金额。
+        #
+        # 只在**真的亏**时记：第一关被兜底成 0 ⇒ 天然不会有假新闻愤怒，
+        # 这跟第一关「永远是赚的」的定位是一致的。
+        # **不落库**（纯内存记账），也不编造：没亏就不报金额。
+        if realized < 0.0:
+            day_key = int(player.day)
+            self._fake_news_loss_by_day[day_key] = round(
+                float(self._fake_news_loss_by_day.get(day_key, 0.0)) - realized, 6
+            )
+        self._queue_yui_duo_commentary(
+            session, action="sell", pnl=realized, symbol_name=str(stock.name)
+        )
+        trade_id = await self._persist_trade(session, trade, stock_id)
         await self._maybe_force_black_swan(session, realized, stock_id)
         remaining = player.positions.get(stock_id)
         # ── P7：猫娘弹幕（见 buy 里的说明）─────────────────────────
@@ -1952,6 +4243,340 @@ class MockStockMeowPlugin(NekoPluginBase):
                 "trade_id": trade_id,
             }
         )
+
+    # ------------------------------------------------------------------
+    # P27.0：做空（**插件层账本**，引擎层与模式层零改动）
+    # ------------------------------------------------------------------
+
+    @ui.action(
+        id="short",
+        label="做空",
+        icon="minus",
+        tone="danger",
+        group="trade",
+        order=3,
+    )
+    @plugin_entry(
+        id="short",
+        name="做空",
+        description=(
+            "押一笔保证金做空某只标的：标的跌了赚（跌幅 × 倍率 × 保证金），"
+            "涨了扣同样的数；保证金亏光会被强制平仓。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "stock_id": {"type": "string", "description": "标的 ID，形如 FAKE-001"},
+                "margin": {"type": "number", "minimum": 0, "description": "投入的保证金"},
+                "leverage": {
+                    "type": "integer",
+                    "enum": [1, 10, 50],
+                    "description": "杠杆倍率：1 / 10 / 50",
+                },
+            },
+            "required": ["stock_id", "margin", "leverage"],
+        },
+    )
+    @_locked
+    async def short(self, stock_id: str, margin: float, leverage: int) -> Ok:
+        """做空（真身在 :meth:`_short_impl`）。"""
+        return await self._short_impl(stock_id, margin, leverage)
+
+    async def _short_impl(self, stock_id: str, margin: float, leverage: int) -> Ok:
+        """做空的**真身**（**调用方必须自己持锁**）。
+
+        P27.0：整本账都在**插件层**（``short_book.py``）——
+        引擎层与模式层一行没改 ⇒ 500 局基线逐字节不变。
+
+        口径：保证金当场从现金里扣掉；每一拍盯市，标的跌了按
+        「跌幅 × 倍率 × 保证金」入账，涨了按同样的数扣；保证金亏光 ⇒
+        **强制平仓（爆仓）**，亏损以保证金为上限。
+        """
+        self._touch_player_action()
+        engine_config = await self._engine_config()
+        session, error = await self._session_or_error(engine_config)
+        if error is not None:
+            return error
+        if session is None:
+            return _err("not_joined")
+
+        player = session.player
+        market = session.market
+        stock = market.stocks.get(stock_id)
+        if stock is None:
+            return _err("stock_not_found")
+        if not stock.alive:
+            return _err("stock_delisted")
+
+        try:
+            margin_value = float(margin)
+        except (TypeError, ValueError):
+            return _err("invalid_amount")
+        if margin_value < SHORT_MIN_MARGIN:
+            return _err("invalid_amount")
+
+        leverage_value = normalize_leverage(leverage)
+        if leverage_value is None:
+            return _err("invalid_leverage")
+
+        book = await self._load_short_book(player.id)
+        if len(book) >= SHORT_MAX_POSITIONS:
+            return _err("short_positions_full")
+        if any(item.stock_id == stock_id for item in book):
+            return _err("short_already_open")
+        if margin_value > player.cash + 1e-9:
+            return _err("insufficient_cash")
+
+        price = float(stock.price)
+        book.append(
+            open_short(stock_id, margin_value, leverage_value, price, market.tick)
+        )
+
+        player.cash = round(player.cash - margin_value, 6)
+        now = time.time()
+        try:
+            await self._repo.transaction(
+                [
+                    (
+                        "UPDATE players SET cash = ?, updated_at = ? WHERE id = ?",
+                        (player.cash, now, player.id),
+                    ),
+                    (
+                        "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                        (
+                            SHORT_BOOK_SETTING_KEY,
+                            json.dumps(
+                                self._short_book_payload(player.id, book),
+                                ensure_ascii=False,
+                            ),
+                        ),
+                    ),
+                ]
+            )
+        except (DbUnavailableError, sqlite3.Error) as db_error:
+            return _err("db_unavailable", db_error)
+
+        self._short_book_cache = list(book)
+        self._short_book_player_id = str(player.id)
+        return Ok(
+            {
+                "stock_id": stock_id,
+                "name": stock.name,
+                "margin": round(margin_value, 6),
+                "leverage": leverage_value,
+                "price": round(price, 6),
+                "cash_after": round(player.cash, 6),
+                "positions": short_positions_to_rows(book, market.prices()),
+            }
+        )
+
+    @staticmethod
+    def _short_book_payload(
+        player_id: str, positions: list[ShortPosition]
+    ) -> dict[str, Any]:
+        """把空头账本翻成可落库的 JSON 结构。"""
+        return {
+            "player_id": str(player_id),
+            "positions": [
+                {
+                    "stock_id": position.stock_id,
+                    "margin": round(float(position.margin), 6),
+                    "leverage": int(position.leverage),
+                    "entry_price": round(float(position.entry_price), 6),
+                    "opened_tick": int(position.opened_tick),
+                    "margin_left": round(float(position.margin_left), 6),
+                }
+                for position in positions
+            ],
+        }
+
+    async def _load_short_book(self, player_id: str) -> list[ShortPosition]:
+        """读这一局的空头仓位（读不到就是空账本）。"""
+        raw = await self._repo.get_setting(SHORT_BOOK_SETTING_KEY)
+        if not raw:
+            return []
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            return []
+        if not isinstance(data, dict):
+            return []
+        if str(data.get("player_id") or "") != str(player_id):
+            return []
+        items = data.get("positions")
+        if not isinstance(items, list):
+            return []
+        out: list[ShortPosition] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            try:
+                out.append(
+                    ShortPosition(
+                        stock_id=str(item["stock_id"]),
+                        margin=float(item["margin"]),
+                        leverage=int(item["leverage"]),
+                        entry_price=float(item["entry_price"]),
+                        opened_tick=int(item.get("opened_tick") or 0),
+                        margin_left=float(item["margin_left"]),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+        return out
+
+    async def _save_short_book(
+        self, player_id: str, positions: list[ShortPosition]
+    ) -> bool:
+        """把空头账本写回设置表（**读-改-写**在插件锁内，不会丢更新）。"""
+        payload = json.dumps(
+            self._short_book_payload(player_id, positions), ensure_ascii=False
+        )
+        return await self._repo.set_setting(SHORT_BOOK_SETTING_KEY, payload)
+
+    async def _settle_shorts(self, session: Session, journal: _TickJournal) -> None:
+        """每一拍盯一次空头（**插件层**）。
+
+        排在导演暴跌**之后** —— 导演安排的暴跌会实打实惠及空头，
+        这符合直觉（跌了，空头赚钱）。
+
+        盯市口径：
+
+        * 这一拍的浮动盈亏立刻入现金；
+        * 保证金归零 ⇒ **强制平仓（爆仓）**，亏损以保证金为上限；
+        * 没爆仓就把锚点挪到当前价，下一拍算的是"这一拍"的涨跌。
+        """
+        player = session.player
+        if not player.alive:
+            return
+        market = session.market
+        book = await self._load_short_book(player.id)
+        if not book:
+            self._short_book_cache = []
+            self._short_book_player_id = str(player.id)
+            return
+        prices = market.prices()
+        remaining: list[ShortPosition] = []
+        cash_delta = 0.0
+        liquidated = 0
+        for position in book:
+            price = float(prices.get(position.stock_id, position.entry_price))
+            mark = mark_short(position, price)
+            cash_delta += mark.pnl
+            if mark.liquidated:
+                liquidated += 1
+                continue
+            remaining.append(roll_short(position, price))
+        if cash_delta:
+            player.cash = round(player.cash + cash_delta, 6)
+        await self._save_short_book(player.id, remaining)
+        self._short_book_cache = list(remaining)
+        self._short_book_player_id = str(player.id)
+        if cash_delta or liquidated:
+            journal.touch_player(player)
+            if liquidated:
+                self.logger.info(
+                    f"空头爆仓 {liquidated} 笔（玩家 {player.id}），"
+                    f"本拍浮动盈亏 {cash_delta:.2f}"
+                )
+
+    def _short_positions_block(self, player_id: str, prices: dict[str, float]) -> list[Any]:
+        """面板用的空头持仓（**白名单字段**，一个多余字段都不给）。"""
+        if str(self._short_book_player_id) != str(player_id):
+            return []
+        return short_positions_to_rows(self._short_book_cache, prices)
+
+    async def _record_equity_point(self, session: Session) -> None:
+        """把这一拍的**总资产**记进资产曲线（面板折线图用）。
+
+        **纯表现层**：这条曲线只用来画图，不参与任何判定。
+        """
+        player = session.player
+        market = session.market
+        prices = market.prices()
+        try:
+            total = float(player.total_asset(prices))
+        except (TypeError, ValueError):
+            return
+        if str(self._equity_player_id) != str(player.id):
+            self._equity_points = await self._load_equity_points(player.id)
+            self._equity_player_id = str(player.id)
+        self._equity_points.append(round(total, 6))
+        if len(self._equity_points) > EQUITY_CURVE_MAX_POINTS:
+            self._equity_points = self._equity_points[-EQUITY_CURVE_MAX_POINTS:]
+        await self._save_equity_points(player.id, self._equity_points)
+
+    async def _load_equity_points(self, player_id: str) -> list[float]:
+        """读这一局的资产曲线（读不到就是空曲线）。"""
+        raw = await self._repo.get_setting(EQUITY_CURVE_SETTING_KEY)
+        if not raw:
+            return []
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            return []
+        if not isinstance(data, dict):
+            return []
+        if str(data.get("player_id") or "") != str(player_id):
+            return []
+        points = data.get("points")
+        if not isinstance(points, list):
+            return []
+        out: list[float] = []
+        for value in points:
+            try:
+                out.append(float(value))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    async def _save_equity_points(self, player_id: str, points: list[float]) -> bool:
+        """把资产曲线写回设置表（插件重启后还在）。"""
+        payload = json.dumps(
+            {
+                "player_id": str(player_id),
+                "points": [round(float(value), 6) for value in points],
+            },
+            ensure_ascii=False,
+        )
+        return await self._repo.set_setting(EQUITY_CURVE_SETTING_KEY, payload)
+
+    def _equity_block(self, session: Session) -> dict[str, Any]:
+        """玩家 vs Yui 的资产曲线（**纯表现层**，两个等长的数组）。
+
+        Yui 那条线是**合成数据**（``yui_opponent_curve``）：前 10 拍极差，
+        之后稳定上升，**最终必定比玩家高**。
+        """
+        player = session.player
+        if str(self._equity_player_id) != str(player.id):
+            return {"player": [], "yui": []}
+        points = [float(value) for value in self._equity_points]
+        yui = yui_opponent_curve(points, float(player.initial_cash))
+        return {
+            "player": [round(value, 2) for value in points],
+            "yui": [round(value, 2) for value in yui],
+        }
+
+    def _special_ending(self, session: Session, *, dead: bool) -> dict[str, Any] | None:
+        """P27.0：Wehos 的**专属破产结局**卡片。
+
+        命中条件：名字里**含有**「Wehos」**且**这一局是因破产而结算。
+        返回 ``None`` ⇒ 走普通的结算流程（普通破产画面照旧）。
+        """
+        player = session.player
+        if not dead:
+            return None
+        if not is_developer_cat(str(getattr(player, "name", "") or "")):
+            return None
+        return {
+            "kind": "developer_cat",
+            "emoji": "🐱",
+            "title": i18n_text("special.developer_cat_title", "开发猫出没"),
+            "body": i18n_text(
+                "special.developer_cat_body",
+                "你亏光了最后一块钱，被 Yui 强行抓走变成了开发猫。",
+            ),
+        }
 
     # ------------------------------------------------------------------
     # 入口：分析 / 新闻详情（P5 · @ui.action）
@@ -2084,6 +4709,92 @@ class MockStockMeowPlugin(NekoPluginBase):
                 "market_note": market_note,
                 "analyses_left": max(0, ANALYSES_PER_DAY - player.analyses_used),
                 "note": ANALYSIS_NOTE,
+            }
+        )
+
+    @ui.action(
+        id="buy_report",
+        label="买报纸",
+        icon="news",
+        tone="default",
+        group="info",
+        order=11,
+    )
+    @plugin_entry(
+        id="buy_report",
+        name="买报纸",
+        description=(
+            "额外买一份「报纸」（多一次分析机会），当天有效。"
+            "新手前两档白拿，后面几档要自己掏钱。"
+        ),
+        input_schema={"type": "object", "properties": {}, "required": []},
+    )
+    @_locked
+    async def buy_report(self) -> Ok:
+        """买一份「报纸」（**P27.0**：教程里「后面你得自己买报纸了」的兑现）。
+
+        实现口径：把 ``players.analyses_used`` 记成**负数** ——
+        ``_analyses_left`` / ``analyze`` 都是「次数 = 2 − used」的口径，
+        used 变成负数就等于多了几次机会；而**换天自动归零**
+        （``analyses_day`` 一变，used 就不再参与计算）。
+
+        新手前两档（``REPORT_FREE_MODES``）**白拿** —— 那就是「老爸给的高级报纸」；
+        后面几档按 ``REPORT_PRICE`` 收费 —— 那就是「自己买报纸」。
+        """
+        self._touch_player_action()
+        engine_config = await self._engine_config()
+        session, error = await self._session_or_error(engine_config)
+        if error is not None:
+            return error
+        if session is None:
+            return _err("not_joined")
+
+        player = session.player
+        market = session.market
+        used = player.analyses_used if player.analyses_day == player.day else 0
+        extra = max(0, -used)
+        if extra >= REPORT_MAX_EXTRA:
+            return _err("report_limit_reached")
+
+        price = 0.0 if session.mode in REPORT_FREE_MODES else REPORT_PRICE
+        if price > 0.0 and price > player.cash + 1e-9:
+            return _err("insufficient_cash")
+
+        player.analyses_day = player.day
+        player.analyses_used = used - 1
+        player.cash = round(player.cash - price, 6)
+        # ── P28.0：记下「今天买过报纸」────────────────────────────────────
+        # 这是「昨天买的报纸是假的」这句话的**前置条件**：
+        # 他得真买过报纸，被骗这件事才成立。纯内存记账，不落库。
+        self._fake_news_bought_days.add(int(player.day))
+        now = time.time()
+        try:
+            await self._repo.transaction(
+                [
+                    (
+                        "UPDATE players SET analyses_day = ?, analyses_used = ?, cash = ?, "
+                        "updated_at = ? WHERE id = ?",
+                        (
+                            player.analyses_day,
+                            player.analyses_used,
+                            player.cash,
+                            now,
+                            player.id,
+                        ),
+                    )
+                ]
+            )
+        except (DbUnavailableError, sqlite3.Error) as db_error:
+            return _err("db_unavailable", db_error)
+
+        return Ok(
+            {
+                "price": round(price, 6),
+                "free": price <= 0.0,
+                "cash_after": round(player.cash, 6),
+                "analyses_left": max(0, ANALYSES_PER_DAY - player.analyses_used),
+                "reports_bought": extra + 1,
+                "tick": int(market.tick),
             }
         )
 
@@ -2668,6 +5379,10 @@ class MockStockMeowPlugin(NekoPluginBase):
             # ── P16.0：本局情绪画像（**结算页才有**，局中不给）────────
             # 一句话彩蛋，不含任何数值、不含 heat、不含局中秘密。
             "emotion_summary": summarize(final_profile),
+            # ── P27.0：专属破产结局（Wehos）───────────────────────────
+            # 命中就弹专属卡片，**不再**走普通的破产画面；
+            # 没命中就是 ``None`` ⇒ 普通流程一个字都不变。
+            "special_ending": self._special_ending(session, dead=dead),
             "anti_fraud_notice": ANTI_FRAUD_NOTICE,
         }
 
@@ -3279,30 +5994,57 @@ class MockStockMeowPlugin(NekoPluginBase):
                 return name.strip()
         return ""
 
-    async def _push_proactive(self, prompt: str, *, reason: str) -> bool:
+    async def _push_proactive(
+        self,
+        prompt: str,
+        *,
+        reason: str,
+        priority: int = 2,
+        ai_behavior: str = "respond",
+    ) -> bool:
         """让猫娘**主动开口**（P11 主路径）。返回宿主是否受理了这次推送。
 
         **绝不抛异常**：主动搭话是"锦上添花"，失败了也绝不能拖垮游戏。
         和 ``_push_card`` 一样，一律用 ``except Exception`` 兜底 —— 宿主不同
         版本导出的符号集不一致，写具体的异常类会 ``cannot import name``。
+
+        ``priority``（P24.0）：**重大事件**用更高的优先级去插队，
+        把她正在做的回合**打断**（收割 / 爆仓 / 新闻都要立刻说话）。
+
+        P27.2：``ai_behavior="read"`` 用来推**只进上下文、不触发回合**的消息
+        —— 交易**失败**回执走这条。理由：失败就发生在**她当前这一回合**里
+        （是她在调工具），错误已经进了她的上下文，她本来就会如实说；
+        再用 ``respond`` 多触发一个回合，她会在那个回合里**再试一次**
+        ⇒ 又一条失败回执 ⇒ **自触发循环**（直播里就变成她一直"再买一次"）。
         """
         push = getattr(self.ctx, "push_message", None)
         if not callable(push):
             self.logger.info(f"宿主未提供 push_message（{reason}）：本次跳过主动搭话")
             return False
         try:
-            result = push(
-                # 玩家**看不到**插件的原始提示（只有猫娘的气泡进聊天框）。
-                visibility=[],
-                # 喂给 LLM 并**立刻触发一个 AI 回合** —— 猫娘用她自己的语气回。
-                ai_behavior="respond",
-                parts=[{"type": "text", "text": prompt}],
-                source=PLUGIN_ID,
-                target_lanlan=self._current_lanlan() or None,
-                # 比默认的 0 高一点（但远低于弹幕 / 提醒那几档），免得猫娘
-                # 的招呼在队列里被别的高优先级消息挤掉。
-                priority=2,
-            )
+            if ai_behavior == "read":
+                # P27.2：只进 LLM 上下文，**不触发** AI 回合（失败回执专用）。
+                result = push(
+                    visibility=[],
+                    ai_behavior="read",
+                    parts=[{"type": "text", "text": prompt}],
+                    source=PLUGIN_ID,
+                    target_lanlan=self._current_lanlan() or None,
+                    priority=priority,
+                )
+            else:
+                result = push(
+                    # 玩家**看不到**插件的原始提示（只有猫娘的气泡进聊天框）。
+                    visibility=[],
+                    # 喂给 LLM 并**立刻触发一个 AI 回合** —— 猫娘用她自己的语气回。
+                    ai_behavior="respond",
+                    parts=[{"type": "text", "text": prompt}],
+                    source=PLUGIN_ID,
+                    target_lanlan=self._current_lanlan() or None,
+                    # 比默认的 0 高一点（但远低于弹幕 / 提醒那几档），免得猫娘
+                    # 的招呼在队列里被别的高优先级消息挤掉。
+                    priority=priority,
+                )
             if hasattr(result, "__await__"):
                 await result
             # 只在**成功**时记时间：接不住就没打断玩家，不该占掉冷却窗口。
@@ -4196,6 +6938,43 @@ class MockStockMeowPlugin(NekoPluginBase):
         为什么不是直接把 ``seconds`` 设成 8/30：SDK 的 ``@timer_interval``
         要求 ``seconds`` 是**类定义期的字面量整数**（运行时读不到配置），
         而本局的模式是玩家 ``join`` 时才确定的。详见 P3 契约 §1.1。
+
+        ── P26.0：硬超时兜底（**心跳自愈**）──────────────────────────
+        宿主对每个 handler 都 ``asyncio.run()``（宿主 ``plugin/core/host.py``
+        的 ``_run_timer_interval``）—— 本方法**不返回**，那个定时线程就
+        **永远卡在这一轮**，后面再也不会有下一次心跳 ⇒ 市场当场冻结
+        （面板还在、按钮还能点，但时间不再流动 —— 直播事故）。
+
+        所以真正的活儿放进 ``_heartbeat_body``，这里用
+        ``_HEARTBEAT_TIMEOUT_SECONDS`` 兜住：超时 ⇒ 记日志 ⇒ **下一轮照跑**。
+        """
+        task = asyncio.ensure_future(self._heartbeat_body())
+        try:
+            _done, pending = await asyncio.wait(
+                {task}, timeout=_HEARTBEAT_TIMEOUT_SECONDS
+            )
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
+        if pending:
+            # 卡住了：放弃这一轮，**下一轮心跳照常**（这才是"自愈"）。
+            task.cancel()
+            self._heartbeat_timeouts += 1
+            self.logger.error(
+                f"市场心跳超过 {_HEARTBEAT_TIMEOUT_SECONDS:.0f}s 未完成 —— "
+                f"已放弃本次心跳（下一拍继续，累计 {self._heartbeat_timeouts} 次）"
+            )
+            return Ok({"status": "heartbeat", "due": 0, "timeout": True})
+        try:
+            return task.result()
+        except Exception as error:  # noqa: BLE001 - 心跳绝不能把定时器带崩
+            self.logger.error(f"市场心跳异常（不影响后续 tick）：{error}")
+            return Ok({"status": "heartbeat", "due": 0, "error": True})
+
+    async def _heartbeat_body(self) -> Ok:
+        """心跳的**真正**内容（由 ``market_tick`` 用硬超时包住）。
+
+        这里面每一步都各自 ``try/except``：**一步挂了不许拖垮整轮心跳**。
         """
         started = time.perf_counter()
         due = 0
@@ -4228,6 +7007,13 @@ class MockStockMeowPlugin(NekoPluginBase):
             await self._idle_meow_watchdog()
         except Exception as error:  # noqa: BLE001 - 主动搭话绝不能把心跳带崩
             self.logger.error(f"主动搭话看门狗异常（不影响后续心跳）：{error}")
+        # ── P24.0：把 tick 里攒好的提示词推给 Yui（**锁外**）──────────
+        # 直播托管的主动回合、新闻 / 收割 / 爆仓的插话，都走这条。
+        # 必须在锁外：``push_message`` 会 await 宿主 IPC。
+        try:
+            await self._flush_yui_prompts()
+        except Exception as error:  # noqa: BLE001 - 推话绝不能把心跳带崩
+            self.logger.error(f"Yui 提示词推送异常（不影响后续心跳）：{error}")
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         if elapsed_ms > 100.0:
             # 只有真的慢了才去读配置，避免每秒都打一次宿主配置
@@ -4341,7 +7127,7 @@ class MockStockMeowPlugin(NekoPluginBase):
                 return False
             self._tick_running = True
             try:
-                await self._tick_once()
+                await self._run_tick_pipeline()
             except Exception as error:  # noqa: BLE001
                 # 异常发生时**不写回**（内存里的半成品直接丢弃）
                 self.logger.error(f"tick 异常（不影响后续 tick）：{error}")
@@ -4351,6 +7137,39 @@ class MockStockMeowPlugin(NekoPluginBase):
             return True
         finally:
             self._lock.release()
+
+    async def _run_tick_pipeline(self) -> None:
+        """跑一拍流水线，**带硬超时**（P26.0：心跳自愈的第二道闸）。
+
+        ``_tick_once`` 里全是 ``await``（数据库 / 宿主 IPC）。只要有一个
+        **永远不回来**，这一拍就会把心跳线程**永久**钉死。
+
+        这里用 ``asyncio.wait`` 而不是 ``asyncio.wait_for``：
+        ``wait_for`` 在被取消的对象**不响应取消**时会跟着一起卡住，
+        而 ``wait`` 到点就返回 ⇒ **心跳一定能继续下一轮**。
+
+        超时 ⇒ 取消这一拍（内存里的半成品直接丢弃，不写回）⇒ 记日志 ⇒
+        下一拍继续跑。基线 ``_last_tick_at`` 由调用方的 ``finally`` 推进，
+        所以**不会**出现"补一大串 tick"的连锁补帧。
+        """
+        task = asyncio.ensure_future(self._tick_once())
+        try:
+            _done, pending = await asyncio.wait(
+                {task}, timeout=_TICK_PIPELINE_TIMEOUT_SECONDS
+            )
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
+        if pending:
+            task.cancel()
+            self._tick_timeouts += 1
+            self.logger.error(
+                f"tick 流水线超过 {_TICK_PIPELINE_TIMEOUT_SECONDS:.0f}s 未完成 —— "
+                f"已放弃本拍（不写回，下一拍继续，累计 {self._tick_timeouts} 次）"
+            )
+            return
+        # 正常完成 / 抛异常：把异常原样抛给调用方统一记录。
+        task.result()
 
     async def _tick_once(self) -> None:
         """tick 流水线（P4：瘦身为**纯调度**）。
@@ -4362,6 +7181,9 @@ class MockStockMeowPlugin(NekoPluginBase):
         模式层算出来的结果**执行**（收割）与**落库**。
         """
         started = time.perf_counter()
+        # P27.2：**新的一拍 = 新的一回合** ⇒ 回执周期锁在这里解开。
+        # （自动模式下玩家可能一直没点按钮，但市场照样在走 —— 一拍就是一轮。）
+        self._yui_trade_cycle_unlock()
         engine_config = await self._engine_config()
         try:
             session = await load_session(
@@ -4390,6 +7212,8 @@ class MockStockMeowPlugin(NekoPluginBase):
         ticks_per_day = max(1, int(difficulty.ticks_per_day))
         tick = market.tick
         journal = _TickJournal()
+        # P24.0：这一拍开始时玩家**还活着**吗 —— 用来判「这一拍爆仓了」。
+        was_alive = bool(player.alive)
         # 记住玩家 id：局终后 ``market_state.player_id`` 被清空，
         # 面板要靠它去找归档的结算报告（P4 历史问题 4）。
         self._last_player_id = player.id
@@ -4403,6 +7227,12 @@ class MockStockMeowPlugin(NekoPluginBase):
         )
         market.day = market.tick // ticks_per_day + 1
 
+        # ── P26.1：「庄家洗盘」假反弹（**下一拍**生效）────────────
+        # 排在 advance_market 之后（价格刚推进）、导演暴跌之前 ——
+        # 于是"先反弹、后真跌"的节奏刚好。引擎一行没改：
+        # 这里只改内存里的 ``stock.price`` 与 K 线最后一点。
+        self._apply_god_rally(market)
+
         # ── P7：导演暴跌（**只在特制版**，纯净版这里什么都不做）────
         # 排在 advance_market 之后、模式层之前 —— 这样暴跌之后的集中度、
         # 收割等后续反应**照常发生**，而不是硬改结果。引擎一行没改：
@@ -4410,6 +7240,13 @@ class MockStockMeowPlugin(NekoPluginBase):
         crashed = self._apply_director_crashes(market, engine_config)
         if crashed:
             journal.touch_player(player)
+
+        # ── P27.0：空头盯市（**插件层账本**）─────────────────────────
+        # 排在导演暴跌**之后** —— 导演安排的暴跌会实打实惠及空头
+        # （跌了，空头赚钱，符合直觉）。
+        #
+        # 引擎层与模式层一行没改 ⇒ 500 局基线逐字节不变。
+        await self._settle_shorts(session, journal)
 
         # ── 步 3：衰减上头指数（交易事件在成交时加，这里只做衰减）──
         prices = market.prices()
@@ -4435,6 +7272,14 @@ class MockStockMeowPlugin(NekoPluginBase):
         player.heat_history.append(player.heat)
         journal.touch_player(player)
 
+        # ── P26.1：直播护栏（插件层）────────────────────────────
+        # ① 满仓 + 见底 ⇒ 排一次「庄家洗盘」（**下一拍**生效）；
+        # ② 「危险感知」：把当前最极端的盘面数据喂给 Yui（伪预知）。
+        # 两件事**都只在** ``[director] live_god_mode = true`` 时才干预数值；
+        # 危险感知本身是纯展示层（只多一句提示词），所以它不受开关限制。
+        self._maybe_god_rally(session, engine_config, prices)
+        self._update_intuition(session)
+
         # ── 步 4~7：模式层（当天新闻 + 阶段判定与收割调度）────────
         ctx = ModeContext(
             player=player,
@@ -4451,12 +7296,26 @@ class MockStockMeowPlugin(NekoPluginBase):
             now=time.time(),
         )
         outcome = mode.tick(ctx)
+        # ── P28.0：把**当天的假新闻**记进插件层账本 ──────────────────
+        # 引擎的 ``NewsItem.type`` 只有插件层看得到（面板与玩家都拿不到，
+        # 那是 P4 §11 的老规矩）。这里只记「哪天的哪几条是假的」，
+        # 引擎层与模式层一行没改 ⇒ 500 局基线逐字节不变。
+        self._record_fake_news(session)
 
         # ── 步 5 / 6 / 7：收割执行（公共底盘，由模式层调度）───────
         self._execute_harvest(ctx, outcome, journal, engine_config, tick)
 
         # ── 步 8 / 9：日终结算（模式层）──────────────────────────
         if market.tick % ticks_per_day == 0:
+            # ── P26.0：群友「浅忆QanYi」天降 Token（**结算之前**）────
+            # 钱必须在结算**之前**到账 —— 结算会扣当日生活费并判定「能不能
+            # 交上明天的账单」，晚一步这笔钱就救不了任何一次三振。
+            self._maybe_token_rescue(session, engine_config, journal)
+            # ── P26.1：强制续命（**结算之前**）────────────────────
+            # 现金跌破生活费红线时**强制**垫一笔（不看概率）。
+            # 同样必须在结算**之前** —— 结算会判定能不能交上明天的账单，
+            # 晚一步这笔钱救不了任何一次三振。
+            self._maybe_god_rescue(session, engine_config, journal)
             daily = mode.daily_settlement(ctx)
             outcome.daily = daily
             outcome.trades.extend(daily.trades)
@@ -4510,12 +7369,25 @@ class MockStockMeowPlugin(NekoPluginBase):
             except Exception as error:  # noqa: BLE001 - 剧情绝不能把结算带崩
                 self.logger.warning(f"剧情还债异常（不影响结算）：{error}")
 
+            # ── P26.0：群友「云玩家」免费内参（**新一天开盘**）──────
+            # 结算跑完 ⇒ 新的一天开始 ⇒ 这时候塞内参最自然。
+            # 面板只多一枚 buff 标签，内容只走 ``push_message`` 给 Yui。
+            self._maybe_community_intel(session, engine_config)
+            # ── P28.0：假新闻的「活人感」——新一天开盘 ⇒ Yui 爆发 ─────
+            # 结算跑完 ⇒ 新的一天开始 ⇒ 这正是「昨天那张报纸是假的」
+            # 该被算总账的时刻。
+            self._maybe_fake_news_outrage(session)
+
         # ── P5.5：破产原因称号的文案层覆盖（引擎零改动）───────────────
         # 引擎给的称号里还有"低保"字样；这里按 death_reason 改写，
         # 于是落库的、面板上的、卡片里的称号**全部**是"打工工资"的说法。
         self._override_death_title(player)
         if session.catgirl is not None:
             self._override_death_title(session.catgirl)
+
+        # ── P27.0：记一个资产曲线点（面板折线图用，**纯表现层**）────
+        # 记在这一拍**全部算完之后** ⇒ 曲线上的点就是玩家当时看到的资产。
+        await self._record_equity_point(session)
 
         # ── 步 10：一次性写回 ────────────────────────────────────
         # 模式层可能同时改动了玩家与猫娘：两个都要写回。
@@ -4553,6 +7425,17 @@ class MockStockMeowPlugin(NekoPluginBase):
 
         # P5：把这一 tick 的事件变成聊天频道里的卡片。
         await self._push_cards(session, outcome, engine_config)
+
+        # ── P24.0：给 Yui 攒话 ──────────────────────────────────────
+        #
+        # 这里**只攒不推**：``push_message`` 要 ``await`` 宿主 IPC，
+        # 而这一步还在**持锁**（P11.1 的 500 红色警告就是这么来的）。
+        # 真正的推送由心跳在**锁外**做（``_flush_yui_prompts``）。
+        #
+        # 顺序有讲究：**先事件、后主动回合** —— 重大事件永远排在前面，
+        # 她的回合不会盖过「你破产了」这种必须立刻说的事。
+        self._collect_yui_event_prompts(session, outcome, was_alive)
+        self._collect_yui_live_prompt(session)
 
         # ── P5.5 改动 5/6：称号解锁 ────────────────────────────────
         # 破产成就（清盘的那一刻就解锁）+ 「无为而治」（第 14 天零有效交易）。
@@ -4624,6 +7507,7 @@ class MockStockMeowPlugin(NekoPluginBase):
             f"经典模式第 {engine_config.classic.total_game_days} 个游戏日结束，"
             f"玩家 {session.player.id} 自动终局并结算"
         )
+
     async def _commit_tick(
         self,
         session: Session,
@@ -5776,13 +8660,27 @@ class MockStockMeowPlugin(NekoPluginBase):
     async def _do_declare_bankrupt(
         self, session: Session, engine_config: EngineConfig
     ) -> Ok:
-        """``declare_bankrupt`` 的**无锁**实现（调用方必须自己持锁）。"""
-        player = session.player
-        if not player.alive:
-            return _err("director_dead_player")
+        """``declare_bankrupt`` 的**无锁**实现（调用方必须自己持锁）。
 
-        apply_death(player, "starved")
-        self._override_death_title(player)
+        P27.2：玩家**已经退场**（交不上饭 / 被低保或网贷请出去）时，这个入口
+        不再报错，而是**替他收场** —— 保留原本的退场原因，照常出结算报告、
+        清场、归档。
+
+        为什么必须这样
+        --------------
+        面板那枚「紧急逃生」按钮走的就是这个入口。玩家退场之后，
+        ``market_state`` 里还挂着他的席位（只有 ``settle`` / ``declare_bankrupt``
+        / 经典 30 天自动结算这三处会清），于是：面板的 ``stage`` 永远停在
+        ``"playing"`` ⇒ 没有「再来一局」按钮；``join`` 又被"你已经在局中了"
+        拒掉。直播事故：玩家被卡死在上一局，下一局永远开不了。
+
+        退场原因**不覆盖**（已经退场就不再调 ``apply_death``）—— 他是被市场
+        请出去的，不是自己点「宣布破产」的。
+        """
+        player = session.player
+        if player.alive:
+            apply_death(player, "starved")
+            self._override_death_title(player)
         payload = await self._build_settlement_payload(session, engine_config)
 
         now = time.time()
@@ -6105,7 +9003,14 @@ class MockStockMeowPlugin(NekoPluginBase):
         **引擎一行不改**，暴跌之后的集中度、收割等反应也**照常发生**。
 
         **一局只来一次**：第二次就不新鲜了，重复暴跌是把戏不是节目效果。
+
+        P28.0：**第一关一律不走这条路** —— 街机档的定位是「爽」，
+        「在最上头的那一秒被精准收割」属于后面几档的压迫感，
+        放在第一关只会把新手吓跑。峰值阈值那边也已经放宽
+        （见 ``_apply_arcade_softening``），这里是第二道保险。
         """
+        if session.mode == MODE_ARCADE:
+            return
         if not self._director_flag("force_black_swan"):
             return
         if self._black_swan_fired:
@@ -6496,6 +9401,15 @@ class MockStockMeowPlugin(NekoPluginBase):
             self._meow_last_at = float(values.get(_SETTING_MEOW_LAST_AT) or 0.0)
         except (TypeError, ValueError):
             self._meow_last_at = 0.0
+        # ── P23.0：Yui 的操控模式（同样一次会话读回，之后全走内存）──────
+        # 读不到 / 读到非法值 ⇒ 回落到**安全默认值**（辅助式）。
+        yui_mode = str(values.get(_SETTING_YUI_MODE) or "").strip().lower()
+        self._yui_mode = yui_mode if yui_mode in YUI_MODES else YUI_MODE_DEFAULT
+        # ── P24.0：话痨级别（同样一次会话读回）────────────────────────
+        talk = str(values.get(_SETTING_YUI_TALK_LEVEL) or "").strip().lower()
+        self._yui_talk_level = (
+            talk if talk in YUI_TALK_LEVELS else YUI_TALK_LEVEL_DEFAULT
+        )
 
     def _resolve_speed(self) -> str:
         """当前生效的游戏速度档位（读内存缓存，不查库、不问宿主）。
@@ -6646,6 +9560,8 @@ class MockStockMeowPlugin(NekoPluginBase):
                     "phase": "slaughter",
                     "mode": "",
                     "mode_name": "",
+                    # P28.0：局终没有「第一关」可言 ⇒ 极简标志恒为 false。
+                    "arcade_simple": False,
                     "alive": False,
                     "cash": 0.0,
                     "total_assets": 0.0,
@@ -6660,6 +9576,8 @@ class MockStockMeowPlugin(NekoPluginBase):
                     "kline_stock_ids": [],
                     "catgirl": None,
                     "news_today": [],
+                    # ── P26.0：群友事件在结算页也要看得见 ─────────────
+                    "community_events": self._community_events_payload(),
                     "pending_action": {},
                     "pending_event": None,
                     "analyses_left": 0,
@@ -6685,6 +9603,8 @@ class MockStockMeowPlugin(NekoPluginBase):
                     "onboarding": onboarding,
                     # ── P11：猫娘主动搭话的状态（纯内存）──────────────
                     "meow": self._meow_block(),
+                    # ── P23.0：Yui 的操控状态（结算页也要看得见）────────
+                    "yui": self._yui_block(0),
                     "notice": "本局已经结算归档。下面是这一局的最终成绩。",
                 }
             return {
@@ -6697,6 +9617,10 @@ class MockStockMeowPlugin(NekoPluginBase):
                 "onboarding": onboarding,
                 # ── P11：空闲态也能呼叫猫娘（第一次打开就在这儿）──────
                 "meow": self._meow_block(),
+                # ── P23.0：空闲态也要能看到 Yui 的模式（直播托管在局前就开）──
+                "yui": self._yui_block(0),
+                # ── P26.0：空闲态也留着上一局的群友事件 ───────────────
+                "community_events": self._community_events_payload(),
             }
         payload = self._panel_payload(session, engine_config, pace, onboarding)
         # ── P18.0：推进教程（超时 / 门槛事件），然后刷新教程块 ─────────
@@ -7671,6 +10595,9 @@ class MockStockMeowPlugin(NekoPluginBase):
                     else 0.0,
                     "tag": tag,
                     "tag_label": _TAG_LABELS.get(tag, "未知"),
+                    # ── P23.2：持仓卡也用同一套「高关注度」排序 ⇒ 持仓侧
+                    # 也要知道这只票的波动率（同样是**只读**，见上面）。──
+                    "sigma": round(float(stock.sigma), 6) if stock is not None else 0.0,
                     "alive": bool(stock.alive) if stock is not None else False,
                 }
             )
@@ -7696,6 +10623,13 @@ class MockStockMeowPlugin(NekoPluginBase):
                 "price": round(stock.price, 6),
                 "prev_price": round(stock.prev_price, 6),
                 "change": round(change, 6),
+                # ── P23.2：波动率（**纯只读展示字段**）────────────────────
+                # 引擎早就算好了这个数（``stock.sigma``，整局不变、只被读），
+                # 面板拿它做「前排高关注区」的排序 —— 妖股排前面，好戏先看。
+                #
+                # **引擎层零改动**：这里只是把**已经存在**的数读出来放进载荷，
+                # 不参与任何计算、不改任何判定 ⇒ 500 局基线逐字节不变。
+                "sigma": round(float(stock.sigma), 6),
                 "tag": stock.tag,
                 "tag_label": _TAG_LABELS.get(stock.tag, "未知"),
                 "tag_color": _TAG_COLORS.get(stock.tag, "amber"),
@@ -7743,6 +10677,11 @@ class MockStockMeowPlugin(NekoPluginBase):
             "phase": market.phase,
             "mode": player.mode,
             "mode_name": _MODE_NAMES.get(player.mode, player.mode),
+            # ── P28.0：第一关的「UI 极简」标志 ──────────────────────────
+            # 面板据此**彻底隐藏**做空 / 杠杆保证金 / 台账 / 水位条 /
+            # 账单 Alert / 连击徽章，只留 K 线 + 买卖两键 + 现钱。
+            # 这里给的是**事实**（当前是不是第一关），面板不自己猜档位。
+            "arcade_simple": session.mode == MODE_ARCADE,
             "alive": player.alive,
             # ── P20.0：玩家自报名号 + 命中的彩蛋（**只给面板要用的**）──
             # ``name_egg`` 里只有 key / category / label_key，**没有倍率**。
@@ -7778,6 +10717,29 @@ class MockStockMeowPlugin(NekoPluginBase):
             "catgirl": self._panel_catgirl(session, prices, ticks_per_day),
             # ── 当天新闻：局中只有中性分类（标题正文要点开才给）──────
             "news_today": self._public_news(market),
+            # ── P26.0：群友随机事件（**白名单**；内参内容不在这里）──
+            "community_events": self._community_events_payload(),
+            # ── P27.0：做空账本（**白名单**）+ 资产曲线（纯表现层）────
+            # 空头只给这几项：标的、保证金、倍率、锚点价、现价、
+            # 这一拍的浮动盈亏、还剩多少保证金、要不要爆仓。
+            "short_positions": self._short_positions_block(player.id, prices),
+            # 做空控件的**选项**（倍率表、默认倍率、上限、最小保证金）——
+            # 面板**不硬编码**这些数字，一律从这里拿。
+            "short_options": {
+                "leverages": list(SHORT_LEVERAGES),
+                "default_leverage": DEFAULT_SHORT_LEVERAGE,
+                "max_positions": SHORT_MAX_POSITIONS,
+                "min_margin": SHORT_MIN_MARGIN,
+            },
+            # 两条等长的曲线：玩家（蓝）与内置猫娘 Yui（红）。
+            # Yui 那条是**合成数据**（不来自引擎、不影响任何判定）。
+            "equity_curve": self._equity_block(session),
+            # ── P27.0：「报纸」的价格（新手前两档白拿）──────────────────
+            # 面板**不硬编码**价格：白拿还是自掏，它自己判断。
+            "report_free": session.mode in REPORT_FREE_MODES,
+            "report_price": round(
+                0.0 if session.mode in REPORT_FREE_MODES else REPORT_PRICE, 2
+            ),
             # ── 二道贩子提案（公开部分） ───────────────────────────────
             "pending_action": self._public_pending_action(player.pending_action or {}),
             "pending_event": self._pending_event,
@@ -7805,6 +10767,9 @@ class MockStockMeowPlugin(NekoPluginBase):
             # ── P12：剧情状态（纯表现层 + 选项降级通道）────────────────
             # **不含任何猫娘立绘**：猫娘在外置气泡里说，面板只放纯文本场景。
             "story": self._story_block(),
+            # ── P23.0：Yui 的操控状态（模式 / 授权 / 配额 / 最近一次介入）──
+            # **纯表现层**：不含任何游戏数值。
+            "yui": self._yui_block(int(player.day)),
             "notice": "",
         }
         # ── P19.0：导演段的「进度」块（**只在开关打开时才有这个键**）────
@@ -7899,14 +10864,22 @@ class MockStockMeowPlugin(NekoPluginBase):
             return None
         return self._emotion_profile
 
-    def _touch_player_action(self) -> None:
+    def _touch_player_action(self, reason: str = "player") -> None:
         """记一笔「玩家有操作」（用于判断发呆）。
 
         同时把 charge 打满 —— 玩家刚动过，就不该被搭话。
+
+        P27.2：``reason`` 用来区分**谁**在动账户 ——
+        ``"yui"`` 是 Yui 自己下的单（她动账户**不算**"玩家开口"），
+        其余（``"manual"`` / ``"player"``）都是**玩家**的操作。
+        玩家的操作会**开锁**：回执周期到此结束，下一回合她可以再动手。
         """
         self._last_player_action_at = time.time()
         self._proactive_charge = 1.0
         self._proactive_charge_at = self._last_player_action_at
+        if str(reason or "") != "yui":
+            # 玩家又开口了 ⇒ 新的一回合 ⇒ 回执周期锁解开。
+            self._yui_trade_cycle_unlock()
 
     async def _idle_meow_watchdog(self) -> None:
         """**主动搭话**：玩家发呆太久，猫娘主动开口。

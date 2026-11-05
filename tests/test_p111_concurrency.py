@@ -600,5 +600,5 @@ def test_panel_uses_only_dictionary_keys() -> None:
 
 def test_version_is_0_9_5() -> None:
     """版本号 = 0.10.5。"""
-    assert 'version = "0.10.5"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.10.5"' in _init_text()
+    assert 'version = "0.12.0-live-ultimate"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.12.0-live-ultimate"' in _init_text()

@@ -143,10 +143,11 @@ def test_the_holdings_block_keeps_a_single_expression_in_the_ternary_branch() ->
     结构顺序必须是::
 
         ) : (
-          <Stack …>            ← 包裹层（0.10.5 补回来的）
+          <ScrollArea …>        ← 包裹层（0.10.5 是 <Stack>，P23.2 换成
+                                  宿主原生 ScrollArea —— 持仓列表要能自己滚）
             <Columns …>…</Columns>
             {hiddenPositionCount > 0 ? … : null}
-          </Stack>
+          </ScrollArea>
         )}
     """
     source = _panel_source()
@@ -159,11 +160,11 @@ def test_the_holdings_block_keeps_a_single_expression_in_the_ternary_branch() ->
         return snippet.index(marker, start)
 
     else_branch = _pos(") : (")
-    wrapper_open = _pos("<Stack", else_branch)
+    wrapper_open = _pos("<ScrollArea", else_branch)
     columns_open = _pos("<Columns fluid minWidth={196}")
     columns_close = _pos("</Columns>")
     more_text = _pos("{hiddenPositionCount > 0 ?")
-    wrapper_close = _pos("</Stack>")
+    wrapper_close = _pos("</ScrollArea>")
     assert else_branch < wrapper_open < columns_open < columns_close < more_text < wrapper_close, (
-        "持仓区块的 else 分支必须是一个 <Stack> 包裹层，里面才放 Columns + 提示文案"
+        "持仓区块的 else 分支必须是一个 <ScrollArea> 包裹层，里面才放 Columns + 提示文案"
     )

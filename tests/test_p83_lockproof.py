@@ -330,9 +330,13 @@ def test_watchdog_is_wired_into_the_heartbeat() -> None:
     """看门狗必须挂在 1 秒心跳上（前端冻住时的唯一指望）。"""
     source = _plugin_source()
     assert "async def _loan_prompt_watchdog(" in source
-    heartbeat = source.split("async def market_tick(", 1)[-1]
-    heartbeat = heartbeat.split("\n    async def ", 1)[0]
-    assert "_loan_prompt_watchdog()" in heartbeat, "心跳必须调用看门狗"
+    # P26.0：心跳拆成了「外壳 ``market_tick`` + 真身 ``_heartbeat_body``」。
+    shell = source.split("async def market_tick(", 1)[-1]
+    shell = shell.split("\n    async def ", 1)[0]
+    assert "_heartbeat_body()" in shell, "心跳外壳没有调用真身"
+    body = source.split("async def _heartbeat_body(", 1)[-1]
+    body = body.split("\n    async def ", 1)[0]
+    assert "_loan_prompt_watchdog()" in shell + body, "心跳必须调用看门狗"
 
 
 def test_declare_bankrupt_does_not_nest_the_plugin_lock() -> None:
@@ -392,7 +396,7 @@ def test_panel_i18n_keys_all_exist() -> None:
 
 def test_version_is_bumped() -> None:
     raw = _PLUGIN_TOML.read_text(encoding="utf-8")
-    assert 'version = "0.10.5"' in raw
+    assert 'version = "0.12.0-live-ultimate"' in raw
 
 
 def test_engine_and_mode_layers_are_still_untouched() -> None:

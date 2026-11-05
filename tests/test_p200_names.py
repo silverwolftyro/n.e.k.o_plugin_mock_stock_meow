@@ -582,7 +582,9 @@ def test_the_panel_has_a_name_input_and_passes_it_to_join() -> None:
 def test_the_panel_input_is_defensive() -> None:
     """面板侧先做一遍防呆（后端还会再洗一遍 —— 面板永远不可信）。"""
     code = _panel_code()
-    assert ".slice(0, 12)" in code
+    # P23.2：行情列表不再截到 12 只（改成**全量 + 卡内滚动**，
+    # 顺序按波动率重排），但**防御性上限**仍然在 —— 载荷不可信。
+    assert ".slice(0, 60)" in code
     assert "replace(/[\\r\\n\\t]/g" in code
 
 

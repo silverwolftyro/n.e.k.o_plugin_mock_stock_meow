@@ -228,9 +228,13 @@ def test_llm_tools_self_heal_after_main_server_restart() -> None:
     assert "_LLM_TOOL_REREGISTER_SECONDS" in source, "必须有重注册周期常量"
     assert "async def _reregister_llm_tools_if_due" in source, "必须有重注册方法"
     # 必须挂在心跳上（否则插件活着的时候永远不重发）。
-    heartbeat = source.split("async def market_tick(", 1)[-1]
-    heartbeat = heartbeat.split("\n    async def ", 1)[0]
-    assert "_reregister_llm_tools_if_due()" in heartbeat, "重注册必须挂在心跳上"
+    # P26.0：心跳拆成了「外壳 ``market_tick`` + 真身 ``_heartbeat_body``」。
+    shell = source.split("async def market_tick(", 1)[-1]
+    shell = shell.split("\n    async def ", 1)[0]
+    assert "_heartbeat_body()" in shell, "心跳外壳没有调用真身"
+    body = source.split("async def _heartbeat_body(", 1)[-1]
+    body = body.split("\n    async def ", 1)[0]
+    assert "_reregister_llm_tools_if_due()" in shell + body, "重注册必须挂在心跳上"
 
 
 def test_llm_join_really_starts_a_game(plugin) -> None:
@@ -244,13 +248,24 @@ def test_llm_join_really_starts_a_game(plugin) -> None:
     assert payload.get("stage") == "playing"
 
 
-def test_llm_join_reports_a_friendly_error_when_already_joined(plugin) -> None:
-    """已经在局中 → 返回**工具级错误**（``is_error``），而不是抛异常。"""
+def test_llm_join_guides_instead_of_failing_when_already_joined(plugin) -> None:
+    """已经在局中 → **温和引导**，不是工具级错误（P23.1 真机事故）。
+
+    真机上猫娘说「开局失败了喵」、系统却回「已经在局里啦」——
+    两句自相矛盾，玩家以为插件坏了。
+
+    P23.1 改成：``is_error`` 为假，并明确告诉猫娘
+    「玩家已经在局中，你可以用 yui_trade 帮他操作，或者等他破产」。
+    """
     _run(plugin.llm_join(mode="classic_arcade"))
     result = _run(plugin.llm_join(mode="classic_arcade"))
-    assert result["is_error"] is True
-    assert result["output"]["ok"] is False
-    assert result["error"]
+    assert result["is_error"] is False
+    assert result["output"]["ok"] is True
+    assert result["output"]["already_in_game"] is True
+    assert result["output"]["message"]
+    # 真的没有开出第二局。
+    payload = _run(plugin.market_context())
+    assert payload.get("stage") == "playing"
 
 
 def test_llm_status_reports_idle_then_playing(plugin) -> None:
@@ -307,7 +322,7 @@ def test_panel_i18n_keys_all_exist() -> None:
 
 def test_version_is_bumped() -> None:
     raw = _PLUGIN_TOML.read_text(encoding="utf-8")
-    assert 'version = "0.10.5"' in raw
+    assert 'version = "0.12.0-live-ultimate"' in raw
 
 
 def test_engine_and_mode_layers_are_still_untouched() -> None:

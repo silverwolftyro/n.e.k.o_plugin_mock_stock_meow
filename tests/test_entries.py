@@ -195,7 +195,16 @@ def test_buy_updates_cash_and_position(plugin) -> None:
 
 
 def test_sell_updates_cash_and_position(plugin) -> None:
-    """卖出：现金增加、持仓减少、卖出费含印花税。"""
+    """卖出：现金增加、持仓减少、卖出费含印花税。
+
+    P28.0：第一关（``classic_arcade``）有「卖亏了由系统**暗中补钱**」的兜底 ——
+    本例买完立刻按原价卖出 ⇒ 净亏 = 两笔手续费 ⇒ 系统原样补回 ⇒
+    现钱回到出发时的水平（玩家在第一关**永远不会亏**）。
+
+    手续费口径本身（``fee`` / ``sell_fee`` / ``stamp_tax``）**不受兜底影响**；
+    「没有兜底时现金照扣手续费」那条口径由
+    ``tests/test_p280_arcade.py::test_non_arcade_keeps_raw_fee_math`` 守着。
+    """
     joined = _value(run(plugin.join(seed=2025)))
     market = _value(run(plugin.market()))
     stock = _cheapest_stock(market)
@@ -210,9 +219,8 @@ def test_sell_updates_cash_and_position(plugin) -> None:
     assert sold["sell_fee"] == pytest.approx(round(notional * 0.005, 6), abs=1e-9)
     assert sold["stamp_tax"] == pytest.approx(round(notional * 0.001, 6), abs=1e-9)
     # 买入 + 卖出两笔手续费都从现钱里扣掉；本金在买卖之间进出相抵。
-    assert sold["cash_after"] == pytest.approx(
-        joined["initial_cash"] - notional * 0.003 - expected_fee, abs=1e-6
-    )
+    # 第一关的兜底把这笔净亏补回 ⇒ 现钱与出发时持平（**不亏**）。
+    assert sold["cash_after"] == pytest.approx(joined["initial_cash"], abs=1e-6)
     assert sold["position"] is None
 
 

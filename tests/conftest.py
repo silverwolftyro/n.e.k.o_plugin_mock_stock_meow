@@ -221,3 +221,29 @@ def plugin(ctx: FakeCtx) -> Any:
     result = run(instance.on_startup())
     assert result.is_ok()
     return instance
+
+
+@pytest.fixture(autouse=True)
+def _community_events_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """默认把**群友随机事件**关掉（掷点钉成「必不中」）。
+
+    为什么要有这一道
+    --------------
+    P26.0 的「天降 Token」是 5% 概率的**真随机**彩蛋（``random.SystemRandom`` ——
+    故意不播种：玩家能自己挑 seed，就不能靠 seed 操纵彩蛋）。代价是**任何**
+    依赖日终结算的测试都有约 5% 的概率被它打乱：玩家一旦有了钱就交得起
+    生活费 ⇒ 不会走「交不起 ⇒ 强制卖出 ⇒ 撤销窗口」那条主线。
+
+    实测（``test_daily.py`` 连跑 12 次）**挂了 1 次** —— 今晚发包前必须钉死。
+
+    怎么钉
+    ------
+    在插件包里把 ``community_roll`` 这个**绑定**换成「必不中」。生产环境
+    仍然是系统熵（这里只改测试进程里的名字）。需要触发事件的测试
+    （``test_p260_livestream_guard.py``）在**测试体里**自己
+    ``monkeypatch.setattr`` 覆盖 —— 测试体永远在夹具之后跑 ⇒ 覆盖一定生效。
+    """
+    import importlib
+
+    module = importlib.import_module("plugins.mock_stock_meow")
+    monkeypatch.setattr(module, "community_roll", lambda *, chance: False)

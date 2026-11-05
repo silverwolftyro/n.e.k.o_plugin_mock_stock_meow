@@ -376,7 +376,7 @@ def test_the_version_is_bumped_to_0_10_1() -> None:
     """版本号 = 0.10.5。"""
     from plugins.mock_stock_meow import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.10.5"
+    assert PLUGIN_VERSION == "0.12.0-live-ultimate"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.10.5"' in toml
+    assert 'version = "0.12.0-live-ultimate"' in toml
 

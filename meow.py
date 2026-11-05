@@ -38,6 +38,8 @@ P11 的全部内容都是"给猫娘的话"，与 ``engine/`` / ``modes/`` 完全
 
 from __future__ import annotations
 
+from . import duo_persona
+
 #: 玩家称呼占位符（宿主按 session 展开 ``master_name``）。
 MASTER = "{MASTER_NAME}"
 
@@ -98,6 +100,290 @@ NAG_PROMPT = (
     "刚才直接按了「推进一拍 / 跳过本日」，一笔都没买。\n"
     "请主动催一下，用你自己的语气：挂机呢？倒是买点啊，早破产晚破产都是破产。"
 )
+
+#: P23.0：**「Prompt 放开」** —— 告诉 Yui 她**有权亲手操作**这个账户。
+#:
+#: 这是 P23.0 里唯一一处"给 Yui 授权"的提示词，触发时机有两个：
+#:
+#: * 辅助模式下玩家**明示**授权（``mock_stock_meow_yui_grant``）；
+#: * 主播在面板上打开**直播托管**（``yui_mode`` → ``live``）。
+#:
+#: **写的是事实与权限，不是台词**（P13 契约）：她怎么说、说多狠、要不要嘚瑟，
+#: 那是她的事 —— 我们只负责把"她现在有权动手"这条**客观事实**交给她。
+#:
+#: 同样**不含任何局中情报**（heat / seed / 反转日 / 新闻真假一概没有），
+#: 所以 P4 §11 的静态扫描守卫依然守得住。
+#:
+#: P27.1：**交易幻觉**的硬约束（真机事故：玩家说「深蓝科技」，
+#: Yui 却说「已经全仓买了琥珀能源」，随后又说「买成了不存在的股票」）。
+#:
+#: 根因不是她"记错了"，而是**她可以在没有成交结果的情况下自说自话** ——
+#: 提示词只给了她"有权动手"，没给她"**只有工具说了算**"这条边界。
+#:
+#: 这段话**只讲规则与事实**（能不能这么说），不规定她怎么演（P13 契约）。
+YUI_TRADE_FACTS = (
+    "**绝对不允许**在没调用 mock_stock_meow_yui_trade、"
+    "或者调用了却**没拿到成交结果**的情况下，"
+    "说自己买了或者卖了任何东西。"
+    "工具报错时（标的找不到、钱不够、没货可卖、今天次数用完），"
+    "就照工具给出的那条原因实说，"
+    "**严禁**编造「买到了哪只票」「买了几股」「花了多少钱」"
+    "这种根本没发生过的事。"
+)
+
+#: P27.2：**回执周期指令** —— 成交回执推出来之后，这一回合**只许汇报**。
+#:
+#: 真机复盘（P27.1 上线后的观察）：**回执会多触发一个 AI 回合**，
+#: 而模型在这个回合里可能顺手再下一单 —— 于是变成「她替玩家追单」，
+#: 玩家根本没同意的那一单已经成交了。
+#:
+#: 所以这一层必须把话说死（工具层还有一道**回执周期锁**兜底，
+#: 见 ``__init__.py`` 的 ``_yui_trade_cycle_*``）：
+#: 「本回合只允许做汇报，严禁再调用任何交易工具，直到玩家下一次主动和你说话。」
+#:
+#: 这段话**只讲规则**（不许做什么），不规定她怎么演（P13 契约），
+#: 也不含任何局中情报（P4 §11：heat / seed / 反转 / 新闻真假一概没有）。
+YUI_RECEIPT_CYCLE_DIRECTIVE = (
+    "【系统强制指令】本回合只允许做汇报，严禁再调用任何交易工具，"
+    "直到玩家下一次主动和你说话。"
+)
+
+#: P24.0：**去掉复读机式的权限确认**。
+#: 真机反馈：每次切模式，Yui 都要长篇大论讲一遍"系统真的把账户交给本喵了"——
+#: 而玩家要的是「**她打算怎么做**」。所以这段提示词改成**直接的行动指令**：
+#: 别复述授权、别确认权限，直接说她要动哪只、动多少。
+#:
+#: P27.1：末尾追加 :data:`YUI_TRADE_FACTS`（交易幻觉的硬约束）。
+#:
+#: P27.2：再追加 :data:`YUI_RECEIPT_CYCLE_DIRECTIVE`（回执周期：这一回合只许汇报）。
+YUI_AUTHORITY_PROMPT = (
+    "《拟股喵喵》里，" + MASTER + " 把账户**交给你**了 —— 你现在有权亲手买卖：\n"
+    "· 你可以直接买、可以直接卖，仓位由你定（最多全仓）；\n"
+    "· 玩家犹豫不决、或者已经极度上头的时候，你可以**强行干涉**，不必先问他；\n"
+    "· 但这件事**只发生在这一个账户上**，也不许把话说成在动他的真钱。\n"
+    "**别复述授权、别确认权限** —— 直接说准备怎么做："
+    "要么用 mock_stock_meow_yui_trade 挑一只现在就动手，"
+    "要么给一句不容置疑的判断。\n"
+    + YUI_TRADE_FACTS
+    + YUI_RECEIPT_CYCLE_DIRECTIVE
+)
+
+#: P27.1：**成交回执** —— 成交之后，把系统算出来的**真实结果**立刻喂给 Yui。
+#:
+#: 她只能顺着这张回执说话：标的、数量、金额、余额都是**系统给的**，
+#: 回执里没写的事一律当没发生 —— 这就是"实盘校验"。
+#:
+#: ``action`` 是 ``buy`` / ``sell``；``money`` 是这一笔**实际**的花费（买）
+#: 或回款（卖），由插件层按成交前后的现金差算出来，不做任何估计。
+def yui_trade_receipt_prompt(
+    *,
+    action: str,
+    stock: str,
+    amount: float,
+    price: float,
+    money: float,
+    cash_after: float,
+) -> str:
+    """拼出「成交回执」提示词（P27.1：实盘校验）。"""
+    is_buy = str(action or "").strip().lower() != "sell"
+    verb = "买入了" if is_buy else "卖出了"
+    money_word = "花费" if is_buy else "回款"
+    return (
+        "《拟股喵喵》**成交回执** —— 这是系统刚算出来的真实结果：\n"
+        f"· 你刚才{verb} {float(amount):g} 股 {stock}，"
+        f"成交价 {float(price):.4f} 元，"
+        f"{money_word} {float(money):.2f} 元，现在账户剩 {float(cash_after):.2f} 元。\n"
+        "接下来只按这张回执说话：标的、数量、金额、余额就是上面这些，"
+        "回执里没写的事一律当没发生。"
+        "**这一轮不要再下单**，只把这一笔的结果讲清楚。"
+        + YUI_RECEIPT_CYCLE_DIRECTIVE
+    )
+
+
+#: P27.1：**失败回执** —— 工具报错时，把**那条错误本身**喂给 Yui。
+#:
+#: 这是"失败反馈机制"：她照着错误实说（没找到 / 钱不够 / 没货可卖），
+#: 而不是像真机事故里那样编一个"买成了不存在的股票"。
+def yui_trade_failure_prompt(
+    *,
+    action: str,
+    stock: str,
+    reason: str,
+    cash: float | None = None,
+) -> str:
+    """拼出「操作失败」提示词（P27.1：失败反馈机制）。"""
+    side = "买入" if str(action or "").strip().lower() != "sell" else "卖出"
+    lines = [
+        "《拟股喵喵》**操作失败** —— 这是系统刚返回的真实结果：",
+        f"· 你刚才那笔 {side} 操作**没有成交**，原因是：{reason}",
+    ]
+    if cash is not None:
+        lines.append(f"· 账户现状：现金 {float(cash):.2f} 元，持仓没有任何变化。")
+    lines.append(
+        "接下来只按这条说明说话：这一笔没成交，账户没动。"
+        "**严禁**编造买到了哪只票、买了几股、花了多少钱。"
+        "**这一轮不要再下单**，先把没成交这件事讲清楚。"
+    )
+    # P27.2：失败回执**同样**带上回执周期指令 —— 失败之后也不许"再试一张"。
+    lines.append(YUI_RECEIPT_CYCLE_DIRECTIVE)
+    return "\n".join(lines)
+
+
+# ----------------------------------------------------------------------
+# P28.0：**人机协同双打**（duo）—— 人格与硬约束
+# ----------------------------------------------------------------------
+#
+# 第四档模式的语义：**玩家自己买卖，Yui 只在旁边叨叨**。
+#
+# 与前三档的差别（这一段是钉死的口径）
+# ------------------------------------
+# * ``live``   —— Yui 全权代打（她自动买卖）；
+# * ``assist`` —— 辅助式（玩家**明示授权**之后她才可以动手）；
+# * ``spectate``—— 纯看戏（只评论，绝不碰账户）；
+# * ``duo``    —— **人机协同双打**：玩家自己手动买卖，
+#   Yui **连授权窗口都不许申请**，只点评、只给「云玩家内参」，
+#   亏钱时大声嘲笑、赚钱时疯狂吹捧。
+
+
+#: P28.0：**双打模式的硬约束** —— 玩家自己动手，Yui **只**点评、只给内参。
+#:
+#: 为什么要这一条
+#: --------------
+#: 前三档里 Yui 至少有"**能动手**"的时候（live 全权代打、assist 授权后可动手）。
+#: ``duo`` 档把这条路**彻底堵死**：玩家自己买卖，Yui 连**授权窗口**都不许申请 ——
+#: 申请了授权，她就有可能在下一个回合顺手动手（和 P27.2「追单」是同一个事故，
+#: 只是换了个入口）。
+#:
+#: 所以这一段比 :data:`YUI_RECEIPT_CYCLE_DIRECTIVE` **更狠**：
+#: 回执周期只是"这一回合不许下"，duo 是"**整个模式都不许下**"，
+#: 而且**点名**禁掉两个工具（授权工具也禁 —— 授权是动手的前置条件）。
+#:
+#: 同样**只讲规则**（不许做什么），不规定她怎么演（P13 契约），
+#: 也不含任何局中情报（P4 §11：heat / seed / 反转日 / 新闻真假一概没有）。
+YUI_DUO_DIRECTIVE = (
+    "【系统强制指令】现在是「人机协同双打」：账户由玩家自己操作，"
+    "你只负责点评、只负责给「云玩家内参」。\n"
+    "**严禁调用 mock_stock_meow_yui_trade**；"
+    "**严禁调用 mock_stock_meow_yui_grant**（连授权窗口都不许申请）。\n"
+    "**即使玩家口头让你下单、让你代买、让你全仓，也不许动手** —— "
+    "一律用嘴说，不许碰账户。\n"
+    "不许说自己已经成交、不许说你买到了哪只票、不许说你花了多少钱。\n"
+    "不许把自己升级到「直播托管 / 全权代打」那一档"
+    "（不许调用 mock_stock_meow_yui_mode 切到 live）。\n"
+    "这一回合你唯一能做的事：**点评玩家这一手 + 给一条猜测式的内参**。"
+)
+
+#: P28.0：**双打人格** —— 疯狂点评 + 云玩家内参 + 输了嘲笑 / 赢了吹捧。
+#:
+#: 人格与 :data:`YUI_DUO_DIRECTIVE` 是**两件事**：
+#: 指令管"不许做什么"，人格管"该是什么味道"。
+#:
+#: 规矩本身放在 :mod:`duo_persona` 的 ``DUO_TONE_RULES`` 里
+#: ⇒ 提示词与素材生成**同一套口径**，不会各说各话。
+YUI_DUO_PERSONA = (
+    "【双打人格】你现在是玩家旁边的「云玩家搭子」—— "
+    "玩家自己买卖，你只负责在旁边叨叨：\n"
+    + "\n".join(f"· {rule}" for rule in duo_persona.DUO_TONE_RULES)
+    + "\n· 这一回合的输出顺序：**先点评他这一手，再给一条猜测式的内参**。"
+)
+
+
+def _duo_talk_level(talk_level: str) -> str:
+    """话痨级别规整成三档之一（非法值回落 ``normal``）。"""
+    value = str(talk_level or "").strip().lower()
+    return value if value in duo_persona.DUO_TALK_LEVELS else "normal"
+
+
+def _duo_action_text(action: str) -> str:
+    """玩家这一手的中文说法（只认动作，不带任何数值）。"""
+    text = str(action or "").strip().lower()
+    if text in ("sell", "卖出", "s", "sell_all"):
+        return "卖出"
+    if text in ("buy", "买入", "b", "buy_all"):
+        return "买入"
+    return str(action or "").strip() or "（未知操作）"
+
+
+def yui_duo_prompt(
+    *,
+    mode: str,
+    action: str,
+    pnl: float,
+    cash: float,
+    positions: str,
+    news: str,
+    talk_level: str = "normal",
+    extra: str = "",
+) -> str:
+    """拼出「人机协同双打」的提示词（P28.0：duo 档）。
+
+    **纯函数、无 IO**：所有事实（模式 / 动作 / 盈亏 / 现金 / 持仓 / 消息）
+    都由调用方喂进来；这一层只负责把**事实 + 硬约束 + 人格 + 素材**拼成一段。
+
+    * ``pnl > 0`` ⇒ **吹捧** + 内参；
+    * ``pnl < 0`` ⇒ **嘲笑** + 内参；
+    * ``pnl == 0`` ⇒ **中立点评** + 内参。
+
+    ``talk_level``：``quiet`` **不吐素材**（只留指令与事实）、
+    ``normal`` 吐点评 + 内参、``chatty`` 比 normal **多一句**。
+    """
+    level = _duo_talk_level(talk_level)
+    profit = float(pnl)
+    mode_text = str(mode or "").strip() or "duo"
+    holdings = str(positions or "").strip() or "空仓"
+    headline = str(news or "").strip() or "（暂时没有）"
+    lines = [
+        "《拟股喵喵》**人机协同双打**（duo）—— 账户是 " + MASTER
+        + " 自己在操作，你只负责在旁边叨叨、点评、给内参。",
+        f"· Yui 当前模式：{mode_text}。",
+        f"· 玩家刚刚的动作：{_duo_action_text(action)}。",
+        f"· 账户现金 {float(cash):.2f} 元。",
+        f"· 持仓：{holdings}。",
+        f"· 当前盈亏：{profit:+.2f} 元。",
+        f"· 相关消息：{headline}",
+    ]
+    if profit > 0.0:
+        lines.append("他这一波在**赚钱** ⇒ **疯狂吹捧**，然后给一条内参。")
+    elif profit < 0.0:
+        lines.append("他这一波在**亏钱** ⇒ **大声嘲笑**（嘴毒但不脏），然后给一条内参。")
+    else:
+        lines.append("他这一波**没赚没亏** ⇒ **中立点评**，然后给一条内参。")
+    if extra:
+        lines.append(str(extra))
+    lines.append(YUI_DUO_DIRECTIVE)
+    lines.append(YUI_DUO_PERSONA)
+    if level != "quiet":
+        commentary = duo_persona.build_duo_commentary(
+            action=action,
+            pnl=profit,
+            talk_level=level,
+        )
+        tip = duo_persona.build_duo_tip(talk_level=level)
+        if commentary:
+            lines.append(f"（这句点评你可以直接用，也可以照这个味道改写：{commentary}）")
+        if tip:
+            lines.append(f"（这句内参你可以直接用，也可以照这个味道改写：{tip}）")
+    return "\n".join(lines)
+
+
+def yui_duo_commentary(
+    *,
+    action: str,
+    pnl: float,
+    symbol_name: str = "",
+    talk_level: str = "normal",
+) -> str:
+    """双打模式的**一条短点评**（薄封装 ``duo_persona.build_duo_commentary``）。
+
+    赚 ⇒ 吹捧、亏 ⇒ 嘲笑、持平 ⇒ 中立；安静档返回**空串**。
+    """
+    return duo_persona.build_duo_commentary(
+        action=action,
+        pnl=float(pnl),
+        symbol_name=symbol_name,
+        talk_level=talk_level,
+    )
+
 
 #: 【呼叫猫娘】的预设提示词（按话题）。
 #:

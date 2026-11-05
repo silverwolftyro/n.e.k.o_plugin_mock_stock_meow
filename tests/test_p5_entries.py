@@ -26,7 +26,8 @@ _SOURCE = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
 
 #: P5 契约 §3.2 的 7 个 + P5.5 改动 6 的 ``skip_day`` + P6 档 2 的 ``kline`` = 9 个，
 #: 再加 P7 的 4 个、P7.4 的 1 个、P10 的 4 个 = 17 个，再加 P11 的 2 个 = 19 个，
-#: 再加 P12 的 ``story_choice`` = 20 个，再加 P18.0 的 3 个教程动作 = 23 个。
+#: 再加 P12 的 ``story_choice`` = 20 个，再加 P18.0 的 3 个教程动作 = 23 个，
+#: 再加 P23.0 的 ``yui_mode`` + ``shame`` = 25 个，再加 P24.0 的 ``yui_talk_level`` = 26 个。
 EXPECTED_ACTIONS = (
     "buy",
     "sell",
@@ -58,6 +59,14 @@ EXPECTED_ACTIONS = (
     "tutorial_begin",
     "tutorial_advance",
     "tutorial_skip",
+    # ── P23.0：Yui 的操控模式 + 耻辱柱 ───────────────────────────
+    "yui_mode",
+    "shame",
+    # ── P24.0：Yui 的话痨级别（三档：安静 / 正常 / 话痨）──────────
+    "yui_talk_level",
+    # ── P27.0：极简做空 + 买报纸（教程里「后面自己买报纸」的兑现）──
+    "short",
+    "buy_report",
 )
 
 #: 局中**不能出现的方向词**（细节 5）。

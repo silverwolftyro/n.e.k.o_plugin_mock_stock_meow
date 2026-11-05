@@ -59,6 +59,12 @@ DEFAULT_PLAYER_NAME = "无名韭菜"
 #: 太长会撑爆排版（也会让提示词注入的载荷更长）。
 MAX_NAME_LENGTH = 6
 
+#: P27.0：专属破产结局的关键词（**包含**匹配，不是精确匹配）。
+#:
+#: 玩家的名字里只要含有这个片段就算命中 —— 群友的 ID 常常是
+#: ``Wehos`` / ``WehosQA`` / ``WehosCat`` 这种带后缀的。
+DEVELOPER_CAT_KEYWORD = "wehos"
+
 #: 分类。
 CATEGORY_SELF_DEPRECATING = "self_deprecating"
 CATEGORY_HUBRIS = "hubris"
@@ -320,6 +326,19 @@ def match_egg(raw: str) -> EasterEgg | None:
             if normalized == normalize_name(alias):
                 return egg
     return None
+
+
+def is_developer_cat(raw: str) -> bool:
+    """名字里是否**含有**「Wehos」（P27.0 的专属破产结局）。
+
+    与 :func:`match_egg` 的**精确**匹配不同 —— 这里按用户口径
+    「名字是 Wehos（**或包含**）」来判定：群友的 ID 常常是
+    ``Wehos`` / ``Wehos_QA`` / ``WehosCat`` 这种带后缀的。
+    """
+    normalized = normalize_name(raw)
+    if not normalized:
+        return False
+    return DEVELOPER_CAT_KEYWORD in normalized
 
 
 def apply_cash_multiplier(base_cash: float, egg: EasterEgg | None) -> float:

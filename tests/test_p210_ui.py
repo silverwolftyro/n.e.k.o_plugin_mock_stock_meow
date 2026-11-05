@@ -135,7 +135,8 @@ def test_every_conditional_block_is_actually_gated() -> None:
     for gate in (
         "showCombo ? h(ComboBadge",
         "showGauge",
-        "showBillAlert ? (",
+        # P23.2：账单只留**交不起**的那版 ⇒ 闸门多了一层 bill_gap 判断。
+        "showBillAlert &&",
         "showConcentration &&",
         "showPlanLedger ? (",
         "showFamilyBadge ?",
@@ -174,13 +175,20 @@ def test_the_beginner_tier_gets_the_gauge_back() -> None:
 
 
 def test_a_hidden_widget_must_stay_visible_for_the_tutorial() -> None:
-    """**教程点到哪，那块就必须看得见**。
+    """**教程点到哪，那块就必须看得见**（**街机档除外**）。
 
-    街机档默认不显示水位条，而它的教程第 4 步正是「看水位」
+    入门档默认不显示水位条，而它的教程第 4 步正是「看水位」
     （锚点 ``gauge``）—— 不处理的话，教程圈的就是空气。
+
+    P28.0：街机档**连教程例外都不给**（``!arcadeSimple``）——
+    街机档只留 K 线 / 两键 / 现钱，水位条永远不许回来；
+    它的教程后两步本来就改指顶部概览。**其它档位的例外语义必须保留。**
     """
     code = _panel_code()
-    assert "const tutorialNeeds = (anchor: string): boolean => tutorialAnchor === anchor" in code
+    assert (
+        "const tutorialNeeds = (anchor: string): boolean => "
+        "!arcadeSimple && tutorialAnchor === anchor" in code
+    )
     assert 'tutorialNeeds("gauge")' in code
 
 
@@ -197,7 +205,11 @@ def test_every_tutorial_anchor_has_a_visible_target() -> None:
         "gauge": "rrm-anchor-gauge",
         "status_bar": "rrm-anchor-status-bar",
         "loan_button": "rrm-anchor-loan-button",
+        # P28.0：街机档后两步统一改指顶部概览（总资产 / 盈亏 / 现钱）。
+        "overview": "rrm-anchor-overview",
     }
+    # P28.0：街机档屏幕上只留这三样能圈的锚点。
+    arcade_visible = {"market_grid", "trade_console", "overview"}
     for tier, steps in TIER_STEPS.items():
         level = _UI_LEVELS.get(tier, "full")
         for step in steps:
@@ -206,6 +218,9 @@ def test_every_tutorial_anchor_has_a_visible_target() -> None:
             # 街机档唯一会被藏起来的、又被教程点到的，就是水位条。
             if level == "minimal" and step.anchor == "gauge":
                 assert 'tutorialNeeds("gauge")' in code
+            # P28.0：街机档的教程**不许**指向任何被砍掉的东西。
+            if level == "minimal":
+                assert step.anchor in arcade_visible, f"{tier}/{step.key} 指向了隐藏锚点"
 
 
 # ══════════════════════════════════════════════════════════════════════

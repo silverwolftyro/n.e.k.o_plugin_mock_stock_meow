@@ -348,7 +348,11 @@ def test_the_story_push_never_holds_the_lock_while_awaiting() -> None:
 
 def test_the_story_runs_in_the_heartbeat_outside_the_lock() -> None:
     """剧情判定挂在心跳的 ``_run_ticks`` **之后**（那时锁已经还回来了）。"""
-    body = _method_body(_init_text(), "market_tick")
+    # P26.0：心跳真身搬进了 ``_heartbeat_body``（外壳只负责硬超时兜底）。
+    text = _init_text()
+    shell = _method_body(text, "market_tick")
+    assert "_heartbeat_body()" in shell, "心跳外壳没有调用真身"
+    body = _method_body(text, "_heartbeat_body")
     ticks = body.index("_run_ticks(")
     story = body.index("_story_tick()")
     assert story > ticks, "剧情判定必须在 _run_ticks 之后（锁外）"
@@ -451,7 +455,12 @@ def test_the_trade_buttons_go_through_the_global_lock() -> None:
     assert 'callAction("buy"' in code, "买入必须走 callAction"
     assert 'callAction("sell"' in code, "卖出必须走 callAction"
     # 交易区里不许再直接用 ActionButton
-    trade_zone = code[code.index("panel.trade_execute_buy") - 4000 : code.index("panel.trade_execute_buy")]
+    # P23.2：窗口从**下单卡本身**开始算（直播看板布局里，
+    # 上面的「每日动作卡」里是有 ActionButton 的 —— 那是日常动作，
+    # 不在这条断言的射程内）。
+    trade_zone = code[
+        code.index('<Card className="rrm-anchor-trade-console"') : code.index("panel.trade_execute_buy")
+    ]
     assert "ActionButton" not in trade_zone, "交易区的按钮不该再用 ActionButton"
 
 
@@ -648,5 +657,5 @@ def test_the_panel_uses_no_bare_chinese_literals() -> None:
 
 
 def test_the_version_is_bumped() -> None:
-    assert 'version = "0.10.5"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.10.5"' in _init_text()
+    assert 'version = "0.12.0-live-ultimate"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.12.0-live-ultimate"' in _init_text()

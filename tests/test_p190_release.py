@@ -116,16 +116,32 @@ def test_the_beginner_level_has_a_four_step_lesson() -> None:
 
 
 def test_the_beginner_lesson_reuses_the_arcade_flow() -> None:
-    """前 3 步与街机档**同一套文案与锚点**（操作教学与档位无关）。"""
+    """前 2 步与街机档**同一套文案与锚点**（操作教学与档位无关）。
+
+    P28.0：共享范围收窄到**前 2 步**（看盘 / 下单）。
+    后两步**必须各自专属** —— 街机档把持仓台账与资金水位条都砍了，
+    抄入门档的「看看你手里有什么 / 看水位」就是**教了一个不存在的东西**。
+    """
     from plugins.mock_stock_meow.tutorial import TIER_STEPS
 
     arcade = TIER_STEPS["classic_arcade"]
     beginner = TIER_STEPS["classic_beginner"]
-    for index in range(3):
+    for index in range(2):
         assert beginner[index].anchor == arcade[index].anchor, index
         assert beginner[index].title_key == arcade[index].title_key, index
         assert beginner[index].body_key == arcade[index].body_key, index
         assert beginner[index].auto_advance == arcade[index].auto_advance, index
+    # 后两步：街机档有自己的（砍减口径的）文案，入门档有自己的（生存口径的）。
+    for index in (2, 3):
+        assert beginner[index].title_key != arcade[index].title_key, index
+        assert beginner[index].body_key != arcade[index].body_key, index
+    assert arcade[2].title_key == "tutorial.arcade.simple_overview.title"
+    assert arcade[3].title_key == "tutorial.arcade.simple_cash.title"
+    assert beginner[2].title_key == "tutorial.arcade.position.title"
+    assert beginner[3].title_key == "tutorial.beginner.gauge.title"
+    # 街机档后两步都指顶部概览（那里才有总资产 / 盈亏 / 现钱）。
+    assert arcade[2].anchor == "overview"
+    assert arcade[3].anchor == "overview"
 
 
 def test_the_beginner_gauge_step_never_says_there_is_no_living_cost() -> None:
@@ -278,6 +294,12 @@ def test_the_hidden_switches_need_the_director_to_be_on(plugin: Any, ctx: Any) -
 
 # ══════════════════════════════════════════════════════════════════════
 # ⑤ 黑天鹅（force_black_swan）
+#
+# P28.0：**第一关（classic_arcade）一律不走这条路** —— 街机档的
+# 定位是「爽」，「在最上头的那一秒被精准收割」属于后面几档的
+# 压迫感，放在第一关只会把新手吓跑。所以这一节的用例一律用
+# **入门档**（classic_beginner）跑：黑天鹅仍然存在，但只服务于
+# 「开始学生存」之后的那几关。
 # ══════════════════════════════════════════════════════════════════════
 
 
@@ -286,7 +308,7 @@ def test_the_black_swan_fires_when_a_single_trade_sets_a_new_record(
 ) -> None:
     """单笔盈利刷新本局纪录 ⇒ 全仓暴跌排进队列。"""
     _set_business_config(plugin, ctx, {"director": {"enabled": True, "force_black_swan": True}})
-    run(plugin.join(mode="classic_arcade", seed=7301))
+    run(plugin.join(mode="classic_beginner", seed=7301))
     session = _session(plugin)
     run(plugin._maybe_force_black_swan(session, 50.0, "FAKE-001"))
     queued = _crashes(plugin)
@@ -297,7 +319,7 @@ def test_the_black_swan_fires_when_a_single_trade_sets_a_new_record(
 def test_the_black_swan_covers_the_whole_position(plugin: Any, ctx: Any) -> None:
     """**全仓**暴跌：手里还攥着的每一只都要排上。"""
     _set_business_config(plugin, ctx, {"director": {"enabled": True, "force_black_swan": True}})
-    run(plugin.join(mode="classic_arcade", seed=7302))
+    run(plugin.join(mode="classic_beginner", seed=7302))
     session = _session(plugin)
     run(plugin.buy("FAKE-001", 1.0))
     run(plugin.buy("FAKE-002", 1.0))
@@ -316,7 +338,7 @@ def test_the_black_swan_covers_the_whole_position(plugin: Any, ctx: Any) -> None
 def test_the_black_swan_only_fires_once_per_game(plugin: Any, ctx: Any) -> None:
     """一局只来一次（重复暴跌是把戏，不是节目效果）。"""
     _set_business_config(plugin, ctx, {"director": {"enabled": True, "force_black_swan": True}})
-    run(plugin.join(mode="classic_arcade", seed=7303))
+    run(plugin.join(mode="classic_beginner", seed=7303))
     session = _session(plugin)
     run(plugin._maybe_force_black_swan(session, 50.0, "FAKE-001"))
     first = len(plugin._director_queue)
@@ -329,7 +351,7 @@ def test_the_black_swan_ignores_a_trade_that_is_not_a_new_record(
 ) -> None:
     """没刷新纪录的盈利**不触发**（否则每笔都崩，没法播）。"""
     _set_business_config(plugin, ctx, {"director": {"enabled": True, "force_black_swan": True}})
-    run(plugin.join(mode="classic_arcade", seed=7304))
+    run(plugin.join(mode="classic_beginner", seed=7304))
     session = _session(plugin)
     run(plugin._maybe_force_black_swan(session, 50.0, "FAKE-001"))
     plugin._director_queue.clear()
@@ -340,7 +362,7 @@ def test_the_black_swan_ignores_a_trade_that_is_not_a_new_record(
 def test_the_black_swan_ignores_losses(plugin: Any, ctx: Any) -> None:
     """亏钱的卖出**不触发**（最上头的是赚，不是亏）。"""
     _set_business_config(plugin, ctx, {"director": {"enabled": True, "force_black_swan": True}})
-    run(plugin.join(mode="classic_arcade", seed=7305))
+    run(plugin.join(mode="classic_beginner", seed=7305))
     session = _session(plugin)
     run(plugin._maybe_force_black_swan(session, -100.0, "FAKE-001"))
     assert not _crashes(plugin)
@@ -349,7 +371,7 @@ def test_the_black_swan_ignores_losses(plugin: Any, ctx: Any) -> None:
 def test_the_black_swan_is_silent_when_the_switch_is_off(plugin: Any, ctx: Any) -> None:
     """开关关闭 ⇒ 一条暴跌都不排。"""
     _set_business_config(plugin, ctx, {"director": {"enabled": True}})
-    run(plugin.join(mode="classic_arcade", seed=7306))
+    run(plugin.join(mode="classic_beginner", seed=7306))
     session = _session(plugin)
     run(plugin._maybe_force_black_swan(session, 500.0, "FAKE-001"))
     assert not _crashes(plugin)
@@ -362,12 +384,12 @@ def test_a_new_game_resets_the_black_swan_record(plugin: Any, ctx: Any) -> None:
     ``already_joined`` 是 P5 契约里的错误码）。
     """
     _set_business_config(plugin, ctx, {"director": {"enabled": True, "force_black_swan": True}})
-    run(plugin.join(mode="classic_arcade", seed=7307))
+    run(plugin.join(mode="classic_beginner", seed=7307))
     session = _session(plugin)
     run(plugin._maybe_force_black_swan(session, 50.0, "FAKE-001"))
     assert plugin._black_swan_fired is True
     run(plugin.settle())
-    run(plugin.join(mode="classic_arcade", seed=7308))
+    run(plugin.join(mode="classic_beginner", seed=7308))
     assert plugin._black_swan_fired is False
     assert plugin._black_swan_peak == 0.0
 
@@ -528,6 +550,6 @@ def test_the_version_is_bumped_to_0_10_2() -> None:
     """版本号 = 0.10.5。"""
     from plugins.mock_stock_meow import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.10.5"
+    assert PLUGIN_VERSION == "0.12.0-live-ultimate"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.10.5"' in toml
+    assert 'version = "0.12.0-live-ultimate"' in toml

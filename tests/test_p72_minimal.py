@@ -177,7 +177,8 @@ def test_change_numbers_are_colored() -> None:
     """涨跌必须**红绿分明**。
 
     P7.2 时代的规格是「超大号数字」（``fontSize: "26px"``）；P9.0 按设计图
-    改成了**胶囊徽标** —— 规格变了，但「涨绿跌红」这条不变式**必须还在**：
+    改成了**胶囊徽标**；P23.0 把「涨绿跌红」翻成**「涨红跌绿」**（中文炒股直觉）
+    —— 规格变了两次，但「涨跌必须两套颜色」这条不变式**必须还在**：
     颜色一律走 ``changeColor``，并且胶囊底色分涨 / 跌两套。
     """
     code = _panel_code()
@@ -185,10 +186,13 @@ def test_change_numbers_are_colored() -> None:
     assert "var(--success)" in code
     assert "var(--danger)" in code
     css = _panel_css()
-    assert ".rrm-root .rrm-change-up" in css, "涨要用薄荷绿胶囊"
-    assert ".rrm-root .rrm-change-down" in css, "跌要用珊瑚粉胶囊"
-    assert "#17916f" in css, "涨色要跟着设计图走"
-    assert "#d6486a" in css, "跌色要跟着设计图走"
+    assert ".rrm-root .rrm-change-up" in css, "涨要有自己的胶囊样式"
+    assert ".rrm-root .rrm-change-down" in css, "跌要有自己的胶囊样式"
+    # P23.0：红涨绿跌 —— 涨的胶囊是红字红底，跌的是绿字绿底。
+    assert "background: #fde9ed" in css, "涨胶囊要用红底"
+    assert "color: #d6486a" in css, "涨胶囊要用红字"
+    assert "background: #e7f8f0" in css, "跌胶囊要用绿底"
+    assert "color: #17916f" in css, "跌胶囊要用绿字"
 
 
 def test_sparkline_is_present_and_safe() -> None:

@@ -160,7 +160,11 @@ def test_the_cash_number_turns_red_in_crisis() -> None:
     code = _panel_code()
     # P21.0：字号从写死的 30px 改成 clamp()（全屏时跟着面板变大），
     # 所以这里按「现钱那张卡」的范围取。
-    block = _function_source(code, "label={cashLabel}", "label={assetsLabel}")
+    #
+    # P27.1：三大数字搬进了**顶部概览**，而且总资产排在现钱**前面**
+    # （总资产是主角，现钱是配角）⇒ 取源码的范围跟着换了，
+    # 但守卫盯的不变式不变：现钱数字认危机态，且危机态是红色。
+    block = _function_source(code, "label={cashLabel}", "shake={cashShake}")
     assert "cashCrisis" in block, "现金数字必须认危机态"
     assert "var(--danger)" in block, "危机态的现金数字必须是红色"
 
@@ -424,6 +428,6 @@ def test_the_new_i18n_keys_exist() -> None:
 
 def test_the_version_is_0_9_8() -> None:
     """版本号 = 0.10.5。"""
-    assert 'version = "0.10.5"' in _TOML.read_text(encoding="utf-8")
+    assert 'version = "0.12.0-live-ultimate"' in _TOML.read_text(encoding="utf-8")
     init = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.10.5"' in init
+    assert 'PLUGIN_VERSION = "0.12.0-live-ultimate"' in init

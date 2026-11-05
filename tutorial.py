@@ -117,7 +117,8 @@ TIER_META: dict[str, dict[str, str]] = {
 
 #: 各档位的**步骤序列**。
 #:
-#: * 街机 4 步：看盘 → 下单 → 看持仓 → 看水位；
+#: * 街机 4 步：看盘 → 下单 → 看总览 → 看现钱
+#:   （P28.0：街机档没有持仓台账也没有资金水位条 ⇒ 后两步统一改指顶部概览）；
 #: * 入门 4 步：复用街机的流程（文案同源），但第 4 步换成**入门档自己的**
 #:   水位文案 —— 街机那步「这一关没有生活费要交」在入门档是**假话**；
 #: * 命运挑战（进阶 / 地狱）3 步：水位是命线 → 别把身家压一只 → 风险声明；
@@ -127,11 +128,14 @@ TIER_STEPS: dict[str, tuple[TutorialStep, ...]] = {
         TutorialStep(
             key="arcade_read_market",
             anchor="market_grid",
-            title_key="tutorial.arcade.market.title",
-            body_key="tutorial.arcade.market.body",
+            title_key="tutorial.team.market.title",
+            body_key="tutorial.team.market.body",
             fact=(
                 "玩家刚进这一局。这一关没有生活费，规则就三件事：看盘、买、卖。"
                 "面板上这些方块是今天能买的标的，绿色是涨、红色是跌。"
+                "开局玩家手上有家里给的团队和一份高级报纸：团队帮他盯着盘面，"
+                "报纸上的情报也已经买好 —— 这两样让他在头几天赢；"
+                "但报纸不会自己续，往后每一份都得他自己掏钱买。"
             ),
         ),
         TutorialStep(
@@ -147,22 +151,24 @@ TIER_STEPS: dict[str, tuple[TutorialStep, ...]] = {
         ),
         TutorialStep(
             key="arcade_watch_position",
-            anchor="position_grid",
-            title_key="tutorial.arcade.position.title",
-            body_key="tutorial.arcade.position.body",
+            anchor="overview",
+            title_key="tutorial.arcade.simple_overview.title",
+            body_key="tutorial.arcade.simple_overview.body",
             fact=(
                 "玩家刚完成（或正要完成）第一笔成交。"
-                "这一栏是他手里攥着的东西，红绿表示赚还是亏。"
+                "这一关的持仓台账被砍掉了 —— 上面那排大字就是全部："
+                "现在总共有多少、赚了还是亏了。"
             ),
         ),
         TutorialStep(
             key="arcade_watch_gauge",
-            anchor="gauge",
-            title_key="tutorial.arcade.gauge.title",
-            body_key="tutorial.arcade.gauge.body",
+            anchor="overview",
+            title_key="tutorial.arcade.simple_cash.title",
+            body_key="tutorial.arcade.simple_cash.body",
             fact=(
                 "玩家要知道钱包里还剩多少钱。"
-                "这一关没有生活费要交，所以那条红线基本不会咬人 —— 先习惯它在那儿。"
+                "这一关没有生活费要交，也没有那条红线 —— "
+                "现钱就写在那排字里，花完了再赚回来就是了。"
             ),
         ),
     ),
@@ -177,11 +183,14 @@ TIER_STEPS: dict[str, tuple[TutorialStep, ...]] = {
         TutorialStep(
             key="beginner_read_market",
             anchor="market_grid",
-            title_key="tutorial.arcade.market.title",
-            body_key="tutorial.arcade.market.body",
+            title_key="tutorial.team.market.title",
+            body_key="tutorial.team.market.body",
             fact=(
                 "玩家刚进这一局。这一关和街机一样：看盘、下单、卖出。"
                 "面板上这些方块是今天能买的标的，绿色是涨、红色是跌。"
+                "开局玩家手上有家里给的团队和一份高级报纸：团队帮他盯着盘面，"
+                "报纸上的情报也已经买好 —— 这两样让他在头几天赢；"
+                "但报纸不会自己续，往后每一份都得他自己掏钱买。"
             ),
         ),
         TutorialStep(

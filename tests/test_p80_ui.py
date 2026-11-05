@@ -4,11 +4,12 @@
 
 1. **身份**：内部 ID 改成 ``mock_stock_meow``，中文名《拟股喵喵》，
    界面上不许再出现早期版本沿用下来的旧字眼；
-2. **主题**：宿主 CSS 变量在 ``.rrm-root`` 上被重新定义成浅色系，
-   涨是薄荷绿、跌是珊瑚粉；
+2. **主题**：宿主 CSS 变量在 ``.rrm-root`` 上被重新定义成浅色系；
+   P23.0 起涨跌是**红涨绿跌**（中文炒股直觉），并拆出 ``--up`` / ``--down``
+   一组**只表示价格方向**的变量（危险色 ``--danger`` 是另一套语义）；
 3. **布局**：行情换成**方块卡片网格**、操作台换成**并排胶囊大按钮**、
    家道三档的资金文案；
-4. **素材**���``ui/assets/`` 里有群友头像与梗图，面板用**内联 data URI** 渲染；
+4. **素材**：``ui/assets/`` 里有群友头像与梗图，面板用**内联 data URI** 渲染；
 5. **崩溃防线**：零 ``position`` / ``filter`` / ``opacity`` / ``z-index``，
    渐变只准纵向，卡片与布局容器之间没有 div 包裹层；
 6. **不变量**：引擎层与模式层逐字节零改动，轮询与失败重连仍在。
@@ -173,11 +174,67 @@ def test_cards_use_the_frosted_treatment() -> None:
     assert "border: 1px solid rgba(255, 255, 255, 0.6)" in css
 
 
-def test_trend_colors_are_mint_and_coral() -> None:
-    """涨 = 薄荷绿，跌 = 珊瑚粉（canvas 里画不出 CSS 变量，只能写死）。"""
+def test_trend_colors_are_coral_up_and_mint_down() -> None:
+    """涨 = 珊瑚粉（**红**），跌 = 薄荷绿（**绿**）—— P23.0 翻成中文炒股直觉。
+
+    canvas 里画不出 CSS 变量，只能写死 —— 与 RRM_CSS 的 ``--up`` / ``--down``
+    必须同步（见 :func:`test_trend_constants_match_css_variables`）。
+
+    P23.0 之前是「涨绿跌红」（欧美 / 加密配色），用户拍板全局翻面。
+    """
     source = _panel_text()
-    assert 'const TREND_UP = "#35BFA0"' in source
-    assert 'const TREND_DOWN = "#F2677F"' in source
+    assert 'const TREND_UP = "#F2677F"' in source
+    assert 'const TREND_DOWN = "#35BFA0"' in source
+
+
+def test_trend_constants_match_css_variables() -> None:
+    """canvas 里写死的两个色值，必须与 CSS 变量 ``--up`` / ``--down`` 一致。
+
+    P8.0 的注释就写了「两边必须同步改」—— 这条测试把那句话变成**可执行的守卫**：
+    以后谁只改一边，CI 当场红。
+
+    （0.8.0 的教训：canvas 认字面色值、CSS 认变量，两边不同步就会出现
+    「K 线是绿的、数字是红的」这种精神分裂画面。）
+    """
+    css = _panel_css()
+    source = _panel_text()
+    up = re.search(r'const TREND_UP = "(#[0-9A-Fa-f]{6})"', source)
+    down = re.search(r'const TREND_DOWN = "(#[0-9A-Fa-f]{6})"', source)
+    assert up and down, "TREND_UP / TREND_DOWN 必须仍是写死的十六进制"
+    css_up = re.search(r"--up:\s*(#[0-9A-Fa-f]{6})\s*;", css)
+    css_down = re.search(r"--down:\s*(#[0-9A-Fa-f]{6})\s*;", css)
+    assert css_up and css_down, "RRM_CSS 必须定义 --up / --down"
+    assert up.group(1).lower() == css_up.group(1).lower(), (
+        f"TREND_UP({up.group(1)}) 与 --up({css_up.group(1)}) 不同步"
+    )
+    assert down.group(1).lower() == css_down.group(1).lower(), (
+        f"TREND_DOWN({down.group(1)}) 与 --down({css_down.group(1)}) 不同步"
+    )
+
+
+def test_up_is_red_and_down_is_green() -> None:
+    """**红涨绿跌**（P23.0 拍板）—— 涨跌两色不得再被翻回去。
+
+    断言的是**语义**（红的那个是涨），不是具体色值 ——
+    具体色值以后还能微调，但「红=涨」这件事不能悄悄改掉。
+    """
+    css = _panel_css()
+    up = re.search(r"--up:\s*(#[0-9A-Fa-f]{6})\s*;", css)
+    down = re.search(r"--down:\s*(#[0-9A-Fa-f]{6})\s*;", css)
+    assert up and down
+
+    def rgb(value: str) -> tuple[int, int, int]:
+        hex6 = value.lstrip("#")
+        return (
+            int(hex6[0:2], 16),
+            int(hex6[2:4], 16),
+            int(hex6[4:6], 16),
+        )
+
+    r, g, b = rgb(up.group(1))
+    assert r > g and r > b, f"--up 必须是红系：{up.group(1)}"
+    r, g, b = rgb(down.group(1))
+    assert g > r and g > b, f"--down 必须是绿系：{down.group(1)}"
 
 
 def test_background_gradient_is_vertical_only() -> None:
@@ -244,20 +301,20 @@ def test_capsule_buttons_have_the_row_to_themselves() -> None:
 
 
 def test_capsule_buttons_split_the_row_evenly() -> None:
-    """两个大按钮**各占一半宽**。
+    """三个大按钮**各占三分之一宽**（P27.1：掏钱买 / 割肉卖 / 做空）。
 
     真机教训（0.9.0 二轮）：改用 `Inline` + `flex: 1 1 0` 还是不均分 ——
     `ActionButton` 会把按钮包进 ``<div class="neko-action-control">``，
     而那个壳在宿主里是 ``inline-grid``（收缩到内容宽），
     ``flex`` 落不到真正的 flex 子项上 ⇒ 梭哈变窄条、割肉占满整行。
 
-    修法：用 **`Grid cols={2}``**（网格列天生等分），并把那个壳改成
+    修法：用 **`Grid cols={3}``**（网格列天生等分），并把那个壳改成
     ``grid`` + 里面的按钮 ``width: 100%``。
     """
     code = _panel_code()
     rows = re.findall(r"<(?:Inline|Grid)\b.*?</(?:Inline|Grid)>", code, re.S)
     row = [chunk for chunk in rows if "rrm-pill-buy" in chunk][0]
-    assert "<Grid cols={2}" in row, "两个大按钮必须用两列网格（cols={2}）才等分"
+    assert "<Grid cols={3}" in row, "三个大按钮必须用三列网格（cols={3}）才等分"
 
     css = _panel_css()
     assert ".rrm-root .neko-action-control {" in css, "必须处理 ActionButton 的外壳"

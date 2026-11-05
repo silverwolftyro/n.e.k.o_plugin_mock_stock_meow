@@ -135,38 +135,54 @@ def test_badges_are_light_blue_tags() -> None:
 
 
 def test_trade_buttons_use_the_design_gradients() -> None:
-    """梭哈 / 割肉按钮必须是设计图那两条横向渐变。"""
+    """梭哈 / 割肉按钮必须是那两条横向渐变。
+
+    P23.0：**红涨绿跌**全局统一之后，这一对按钮也翻成了
+    「买 = 赌徒红 / 卖 = 薄荷绿」—— 跟中文炒股界面里最扎手的
+    「买红卖绿」同源，也正是这一版要的「赌徒感」。
+    """
     css = _panel_css()
     buy = _block(css, ".rrm-root .neko-button.rrm-pill-buy {")
-    assert "linear-gradient(90deg, #a4e5ff 0%, #7bbcff 100%)" in buy
-    assert "color: #16305c" in buy, "梭哈按钮文字要用深蓝"
+    assert "linear-gradient(90deg, #ff9db0 0%, #e8455f 100%)" in buy
+    assert "color: #ffffff" in buy, "梭哈按钮文字要用白字（红底上才够扎眼）"
     sell = _block(css, ".rrm-root .neko-button.rrm-pill-sell {")
-    assert "linear-gradient(90deg, #ffc5d3 0%, #ff96b2 100%)" in sell
-    assert "color: #8a1e3c" in sell, "割肉按钮文字要用深红"
+    assert "linear-gradient(90deg, #7fe3c8 0%, #23a887 100%)" in sell
+    assert "color: #04352a" in sell, "割肉按钮文字要用深绿（绿底上才够清楚）"
 
 
 def test_trade_buttons_are_tall_and_round() -> None:
-    """按钮高度 ≥56px、圆角 28px、字号 18px 加粗。
+    """按钮**够大够圆**：高度 ≥56px、圆角 ≥26px、字号 ≥18px 加粗。
 
     P21.0：三个值都改成 **clamp()**（下限不变，上限随全屏放大）——
     这里守的是「**下限不许退**」。
+
+    P23.0：下限整体抬了一档（56 → 76 / 28 → 34 / 18 → 24）——
+    那一版叫「极简纯爽」，屏幕上最该有的就是这两个按钮。
+
+    P23.2：又**收回去**一档（76 → 56 / 34 → 26 / 24 → 18）——
+    直播看板的右栏只有 40% 宽，巨号按钮会把**滑块和预览数字**挤没。
+    现在守的是「紧凑档的下限不许再退」。
     """
     css = _panel_css()
     block = _block(css, ".rrm-root .neko-button.rrm-pill {")
     assert "height: clamp(56px" in block
-    assert "border-radius: clamp(28px" in block
+    assert "border-radius: clamp(26px" in block
     assert "font-size: clamp(18px" in block
     assert "font-weight: 800" in block
     assert "white-space: nowrap" in block, "中文不许竖排"
 
 
 def test_trade_buttons_keep_the_compact_row() -> None:
-    """P8.1 的紧凑并排（各 48%、间距 8）不许被这次重构弄丢。"""
+    """紧凑并排（等宽、间距 8、整排居中）不许被重构弄丢。
+
+    P27.1：底部操作台从「买 / 卖两键」变成「掏钱买 / 割肉卖 / 做空三键」
+    ⇒ 等宽三列。不变式仍是「整排居中 + 间距收紧」。
+    """
     code = _panel_code()
     css = _panel_css()
     assert "<Grid cols={2} gap={8}" in code
     block = _block(css, ".rrm-root .neko-grid.rrm-trade-row {")
-    assert "repeat(2, minmax(0, 48%))" in block
+    assert "repeat(3, minmax(0, 1fr))" in block, "三键必须等宽三列"
     assert "justify-content: center" in block
 
 
@@ -202,13 +218,17 @@ def test_stock_tiles_are_two_layer_glassy_cards() -> None:
     assert "rgba(255, 255, 255, 0.88)" in block
 
 
-def test_change_pills_are_green_and_pink() -> None:
-    """涨跌胶囊：涨 = 薄荷绿，跌 = 珊瑚粉（设计图那一档）。"""
+def test_change_pills_are_red_up_and_green_down() -> None:
+    """涨跌胶囊：**涨 = 红底红字，跌 = 绿底绿底**（P23.0 翻成中文炒股直觉）。
+
+    P23.0 之前是「涨绿跌红」（欧美 / 加密配色）。这里钉死的是**语义**
+    （红的那套是涨），不是具体色值。
+    """
     css = _panel_css()
-    assert "background: #e7f8f0" in css
-    assert "color: #17916f" in css
-    assert "background: #fde9ed" in css
-    assert "color: #d6486a" in css
+    assert "background: #fde9ed" in css, "涨胶囊要是红底"
+    assert "color: #d6486a" in css, "涨胶囊要是红字"
+    assert "background: #e7f8f0" in css, "跌胶囊要是绿底"
+    assert "color: #17916f" in css, "跌胶囊要是绿字"
 
 
 def test_sparkline_has_a_gradient_area() -> None:
@@ -264,10 +284,15 @@ def test_settlement_uses_a_css_wallet() -> None:
 
 
 def test_card_gaps_are_wider() -> None:
-    """卡片之间的间距调到 16px（别挤在一起）。"""
+    """卡片之间的间距（**紧凑档 8px** —— P23.2 直播看板布局）。
+
+    P9.0 时是 16px（设计图说「别挤在一起」）；
+    P23.2 改成直播看板布局 —— 间距压到 8px，把像素让给核心数据，
+    而且**页面本身必须一屏装下**（不许出现纵向滚动条）。
+    """
     code = _panel_code()
-    assert "gap={16}" in code, "主 Stack 的间距必须是 16"
-    assert "minWidth={228} gap={16}" in code
+    assert "gap={8}" in code, "主 Stack 的间距必须是 8（直播紧凑布局）"
+    assert "minWidth={228} gap={8}" in code
 
 
 def test_new_strings_are_in_the_dictionary() -> None:
@@ -318,6 +343,6 @@ def test_assets_are_still_inline_data_uris() -> None:
 
 def test_version_is_0_9_5() -> None:
     """版本号 = 0.10.5。"""
-    assert 'version = "0.10.5"' in _TOML.read_text(encoding="utf-8")
+    assert 'version = "0.12.0-live-ultimate"' in _TOML.read_text(encoding="utf-8")
     init = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.10.5"' in init
+    assert 'PLUGIN_VERSION = "0.12.0-live-ultimate"' in init

@@ -84,6 +84,19 @@ STORY_OPENING_ASK = "请结合当前的情景，自然地给予玩家回应。"
 #: 处境缺失时的兜底（老数据文件可能还没写 ``situation``）。
 STORY_FALLBACK_SITUATION = "玩家正在《拟股喵喵》里进行一局模拟交易，账户数据由系统实时结算。"
 
+#: P23.0：剧情提示词里的**授权段**（只在 Yui 真的有权动手时才出现）。
+#:
+#: 这一段是**客观事实**（不是表演指令）：她现在能不能下指令、能不能自己动手。
+#: **不含任何表演指令** —— 怎么说仍然是她的事（P13 契约）。
+#:
+#: 为什么要有它：任务书写的是「当玩家呼叫 Yui **或者触发特定剧情时**，
+#: Yui 可以帮你买或卖」。剧情这一路原本只有"处境 + 数据"，
+#: 猫娘看完根本不知道自己有那支笔 —— 这一行就是那支笔的授权书。
+STORY_AUTHORITY_LINE = (
+    "你现在有权替玩家操作这个账户（最多全仓）；"
+    "玩家犹豫不决或者已经上头的时候，你可以直接动手。"
+)
+
 
 # ----------------------------------------------------------------------
 # 加载
@@ -361,6 +374,9 @@ def chapter_prompt(chapter: dict[str, Any], snapshot: dict[str, Any]) -> str:
         _facts_line(snapshot),
         STORY_OPENING_ASK,
     ]
+    # P23.0：Yui 真的有权动手时，才把这件事写进提示词（**客观事实**）。
+    if bool(snapshot.get("yui_may_act")):
+        lines.insert(-1, STORY_AUTHORITY_LINE)
     return _substitute("\n".join(lines), snapshot)
 
 
