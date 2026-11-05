@@ -554,5 +554,5 @@ def test_no_dangerous_inline_styles() -> None:
 
 def test_version_is_0_9_5() -> None:
     """版本号 = 0.10.5。"""
-    assert 'version = "0.12.0-live-ultimate"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.12.0-live-ultimate"' in _init_text()
+    assert 'version = "0.13.4-final-safety"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.13.4-final-safety"' in _init_text()

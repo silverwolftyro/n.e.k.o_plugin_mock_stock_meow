@@ -43,6 +43,31 @@ YUI_OPPONENT_LEAD_RATE: float = 0.02
 #: Yui 对手曲线：最终至少要比玩家高出这么多（绝对值）。
 YUI_OPPONENT_LEAD_FLOOR: float = 1.0
 
+#: Yui 对手曲线：波动段的**锯齿幅度**（相对起点资产的百分比，一拍的最大偏移）。
+YUI_OPPONENT_VOLATILITY: float = 0.018
+
+#: Yui 对手曲线：伪随机游走的**固定种子**。
+YUI_OPPONENT_WALK_SEED: int = 20240711
+
+
+def _yui_walk_jitter(seed: int, index: int) -> float:
+    """确定性伪随机数（落在 ``-1 ~ 1``）。
+
+    为什么不用 ``random``：这条曲线**每一拍都会重算一遍**（面板每次刷新
+    都要重新取载荷），用真随机会让折线图自己乱抖 —— 玩家看到的就成了
+    「Yui 的资产在跳」，而不是「Yui 的资产有波动」。
+    同一个 ``(seed, index)`` 永远算出同一个值 ⇒ 曲线**形状稳定**，
+    只有「又长了一拍」这种真实变化才会改变它。
+    """
+    mask = 0xFFFFFFFFFFFFFFFF
+    value = (seed * 6364136223846793005 + (index + 1) * 1442695040888963407) & mask
+    value ^= value >> 33
+    value = (value * 0xFF51AFD7ED558CCD) & mask
+    value ^= value >> 33
+    value = (value * 0xC4CEB9FE1A85EC53) & mask
+    value ^= value >> 33
+    return (value / mask) * 2.0 - 1.0
+
 
 @dataclass(frozen=True)
 class ShortPosition:
@@ -198,8 +223,17 @@ def yui_opponent_curve(
     口径（用户口径的直译）：
 
     * **前 10 拍极差** —— 几乎不赚，甚至每一拍往下走一点；
-    * **10 拍之后稳定上升**；
+    * **10 拍之后波动上行** —— 有涨有跌（**锯齿**），但**总体**往上走；
     * **最终必定比玩家高** —— 末点一定严格高于玩家的末值。
+
+    **P31.0：这条线现在有「心跳」。**
+    以前它是「前 10 拍一条直线往下 + 之后一条斜线爬升」—— 画得太干净，
+    一眼看着就假。现在进入上升段之后**每一拍都有随机涨跌幅**（锯齿状），
+    像真的行情那样一跳一跳的。
+
+    锯齿怎么做到"既能抖又不跑偏"：先把每一拍的随机偏移算出来，
+    再把它们的**均值削掉** —— 抖动还在，整体趋势仍然精确地落在目标线上
+    （末点严格高于玩家）。
 
     这条曲线是**纯表现层**的合成数据（不来自引擎、不影响任何判定），
     它的作用只是给玩家一个"有人在赢我"的对照。
@@ -234,12 +268,25 @@ def yui_opponent_curve(
         return curve
 
     start_value = curve[-1]
-    step = (target - start_value) / rise
+    # ① 基准斜率：从 start_value 均匀走到 target。
+    base_step = (target - start_value) / rise
+    # 玩家崩了也可能出现「target 比 start_value 还低」⇒ 至少保证整体向上
+    # （和旧口径一致：玩家崩了，Yui 依然在赢）。
     minimum_step = base * YUI_OPPONENT_MIN_GAIN_RATE
-    if step < minimum_step:
-        step = minimum_step
+    if base_step < minimum_step:
+        base_step = minimum_step
+    # ② 锯齿扰动：每一拍一个「涨一点 / 跌一点」的随机偏移。
+    amplitude = abs(base) * YUI_OPPONENT_VOLATILITY
+    jitter = [
+        _yui_walk_jitter(YUI_OPPONENT_WALK_SEED, index) * amplitude
+        for index in range(rise)
+    ]
+    # ③ 把扰动的均值削掉 ⇒ 末点仍然**精确**落在目标线上（不被锯齿带偏）。
+    mean = sum(jitter) / rise
+    value = start_value
     for index in range(rise):
-        curve.append(start_value + step * (index + 1))
+        value += base_step + (jitter[index] - mean)
+        curve.append(value)
 
     # 保底：末点必须**严格**高于玩家的末值。
     if curve[-1] <= player_final:

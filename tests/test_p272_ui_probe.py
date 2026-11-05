@@ -328,9 +328,11 @@ def test_the_three_trade_keys_fit_on_one_line_at_1080p() -> None:
 
     口径
     ----
-    * 视口宽 1920（标准 1080P 横向）；三键所在的操作台是**整条压在下沿的
-      全宽卡片** ⇒ 可用宽 = 视口 − 根内边距 − 卡片正文内边距 − 两个 gap。
-    * 字号 ``clamp(18px, 1.7vw, 28px)`` ⇒ 1920px 视口下取上限 28px。
+    * 视口宽 1920（标准 1080P 横向）。
+    * P30.0：三键不再压在**整条下沿的全宽卡片**里，而是搬进了
+      **右侧 30% 窄列**的操作卡 ⇒ 可用宽 = 视口 × 30% − 根内边距
+      − 卡片正文内边距 − 两个 gap。
+    * 字号 ``clamp(18px, 1.15vw, 24px)`` ⇒ 1920px 视口下取 22.08px。
     * 单键需要的宽 = 字数 × (字号 + 字距) + 左右内边距。
     * 副标题那行小字在**按钮外面**（``.rrm-pill-captions``）⇒ 不占按钮的宽。
     """
@@ -348,18 +350,19 @@ def test_the_three_trade_keys_fit_on_one_line_at_1080p() -> None:
     root_padding = 10.0  # .rrm-root.rrm-live-page { padding: 8px 10px }
     card_padding = 14.0  # .neko-card-body { padding: 12px 14px 14px }
     gap = 8.0
-    content = viewport - 2 * root_padding - 2 * card_padding
+    share = 0.30  # P30.0：右列占 30%
+    content = viewport * share - 2 * root_padding - 2 * card_padding
     column = (content - 2 * gap) / 3
 
     assert need <= column, (
         f"1080P 下三键放不下：需要 {need:.0f}px，列宽只有 {column:.0f}px"
     )
-    # 至少留一倍富余 —— 真机上的字体度量比这里粗。
-    assert column >= need * 2, f"1080P 下三键余量太小（{column:.0f}px vs {need:.0f}px）"
+    # 窄列里还留得下一倍半富余 —— 真机上的字体度量比这里粗。
+    assert column >= need * 1.5, f"1080P 下三键余量太小（{column:.0f}px vs {need:.0f}px）"
 
     # 极限：多窄的宿主面板才会开始挤？算出来写进报告里。
-    min_width = need * 3 + 2 * gap + 2 * root_padding + 2 * card_padding
-    assert min_width < 640, f"最小可用宽度 {min_width:.0f}px 太大了"
+    min_width = (need * 3 + 2 * gap + 2 * root_padding + 2 * card_padding) / share
+    assert min_width < viewport, f"最小可用宽度 {min_width:.0f}px 太大了"
 
     # 副标题那行小字在按钮外面。
     assert 'className="rrm-pill-captions"' in code

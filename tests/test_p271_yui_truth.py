@@ -476,12 +476,12 @@ def test_the_failure_prompt_marks_the_trade_as_not_filled() -> None:
 
 
 def test_the_release_version_is_pinned() -> None:
-    """版本号钉死在 ``0.12.0-live-ultimate``（直播最终版）。"""
+    """版本号钉死在 ``0.13.4-final-safety``（直播最终版）。"""
     root = Path(__file__).resolve().parents[1]
     toml = (root / "plugin.toml").read_bytes().decode("utf-8")
     init = (root / "__init__.py").read_bytes().decode("utf-8")
-    assert 'version = "0.12.0-live-ultimate"' in toml
-    assert 'PLUGIN_VERSION = "0.12.0-live-ultimate"' in init
+    assert 'version = "0.13.4-final-safety"' in toml
+    assert 'PLUGIN_VERSION = "0.13.4-final-safety"' in init
 
 
 def test_the_engine_and_mode_layers_are_untouched() -> None:

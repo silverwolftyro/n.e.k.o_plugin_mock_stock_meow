@@ -8,9 +8,9 @@
 2. **改动 5 · 称号与图鉴**：``{epitaph} {身份呼应句}``；``achievements`` 独立表
    能插入/解锁；载荷里已解锁与未解锁分开；**「无为而治」的 hint 是唯一带
    「活」字的**。
-3. **改动 6 · skip_day**：无限模式可用、经典模式拒绝、每天一次、跳过时照常走
-   日终结算、``ticks_played`` 推进到日终边界；第 14 天零有效交易 → 解锁
-   「无为而治」。
+3. **改动 6 · skip_day**：**全档位可用**（P31.0 拆掉了模式闸门）、每天一次、
+   跳过时照常走日终结算、``ticks_played`` 推进到日终边界；第 14 天零有效交易
+   ⇒ 解锁「无为而治」。
 4. **改动 7 · 称号图鉴 UI**：面板第 12 区块，已解锁/未解锁分开，折叠持久化。
 """
 
@@ -307,10 +307,24 @@ def test_context_payload_has_achievements_after_settlement(plugin) -> None:
 # ---------------------------------------------------------------- ③ 改动 6
 
 
-def test_skip_day_is_rejected_in_classic_mode(plugin) -> None:
-    """经典模式 → ``skip_day_classic_forbidden``。"""
+def test_skip_day_is_allowed_in_the_arcade_tier(plugin) -> None:
+    """P31.0：**街机档也能跳过本日**（模式闸门已经拆掉）。
+
+    以前只有无尽模式放行（经典档是教学关，不给跳）—— 但直播时主播在
+    街机档同样想快进。现在一律放行。
+    """
     run(plugin.join(mode="classic_arcade", seed=7020))
-    assert _error_code(run(plugin.skip_day())) == "skip_day_classic_forbidden"
+    payload = _value(run(plugin.skip_day()))
+    assert payload["action"] == "skip_day"
+    assert payload["day"] == 2
+
+
+def test_skip_day_is_allowed_in_the_beginner_tier(plugin) -> None:
+    """P31.0：入门档同样放行。"""
+    run(plugin.join(mode="classic_beginner", seed=7024))
+    payload = _value(run(plugin.skip_day()))
+    assert payload["action"] == "skip_day"
+    assert payload["day"] == 2
 
 
 def test_skip_day_advances_to_the_day_boundary(plugin) -> None:

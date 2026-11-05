@@ -417,6 +417,9 @@ def test_push_proactive_sends_respond_and_empty_visibility(plugin: Any) -> None:
     """实跑：``_push_proactive`` 真的按 v2 双轴发出去。"""
     recorder = _Recorder()
     _bind_push(plugin, recorder)
+    # P33.0：广播闸门默认是关的（没开局 ⇒ 不许播报）。
+    # 这条测的是**推送机制本身**，所以手动把闸门打开。
+    plugin._is_game_active = True
 
     assert run(plugin._push_proactive("提示词", reason="test")) is True
     assert len(recorder.calls) == 1
@@ -499,6 +502,8 @@ def test_nag_fires_on_day1_with_zero_trades(plugin: Any) -> None:
     """第 1 天零成交 → 唠叨一次。"""
     recorder = _Recorder()
     _bind_push(plugin, recorder)
+    # P33.0：这条测的是「唠叨逻辑」⇒ 先把广播闸门打开。
+    plugin._is_game_active = True
 
     result = run(plugin._maybe_meow_nag(_FakeSession(_FakePlayer(day=1, trade_count=0))))
     assert result is not None
@@ -640,5 +645,5 @@ def test_panel_uses_only_dictionary_keys() -> None:
 
 def test_version_is_0_9_5() -> None:
     """版本号 = 0.10.5。"""
-    assert 'version = "0.12.0-live-ultimate"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.12.0-live-ultimate"' in _init_text()
+    assert 'version = "0.13.4-final-safety"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.13.4-final-safety"' in _init_text()

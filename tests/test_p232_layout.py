@@ -5,8 +5,8 @@
 
 所以这里钉死的是**结构契约**，不是像素：
 
-1. **左右分栏** —— 宿主 ``Split``，``ratio="3fr 2fr"``（= 60/40）。
-   宿主 ``Grid`` / ``Columns`` 只能等宽，做不到 60/40；
+1. **左右分栏** —— 宿主 ``Split``，``ratio="7fr 3fr"``（= 70/30）。
+   宿主 ``Grid`` / ``Columns`` 只能等宽，做不到 70/30；
    ``Split`` 把 ``ratio`` 原样写进 ``--split-template`` ⇒ 原生比例。
 2. **锁死一屏** —— 局中根容器 ``height: 100vh`` + ``overflow: hidden``，
    而且**每一级**子容器都要 ``min-height: 0``
@@ -80,14 +80,18 @@ def _live_page_code() -> str:
 
 
 def test_the_live_page_is_split_into_two_columns() -> None:
-    """局中页用宿主 ``Split`` 分成左右两列，比例 3:2（= 60/40）。"""
+    """局中页用宿主 ``Split`` 分成左右两列，比例 7:3（= 70/30）。
+
+    P30.0：从 60/40 改成 **70/30** —— 左列让巨幅 K 线当主角，
+    右列只留「动手用的」：操作卡 / 持仓 / 每日动作 / 聊天框。
+    """
     code = _panel_code()
     assert "<Split" in code, "局中页没有用宿主的 Split"
-    assert 'ratio="3fr 2fr"' in code, "左右分栏比例必须是 3fr 2fr（60/40）"
+    assert 'ratio="7fr 3fr"' in code, "左右分栏比例必须是 7fr 3fr（70/30）"
     assert 'className="rrm-live-board"' in code, "分栏容器必须有 rrm-live-board"
     # 两列各是一个 Stack（宿主组件），类名统一，便于 CSS 收口。
     assert code.count('className="rrm-live-col"') == 2, "必须有且只有左右两列"
-    # 宿主 Grid / Columns 是等宽的，做不到 60/40 —— 不许拿它们冒充分栏。
+    # 宿主 Grid / Columns 是等宽的，做不到 70/30 —— 不许拿它们冒充分栏。
     assert 'className="rrm-live-col"' in code
 
 

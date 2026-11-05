@@ -657,5 +657,5 @@ def test_the_panel_uses_no_bare_chinese_literals() -> None:
 
 
 def test_the_version_is_bumped() -> None:
-    assert 'version = "0.12.0-live-ultimate"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.12.0-live-ultimate"' in _init_text()
+    assert 'version = "0.13.4-final-safety"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.13.4-final-safety"' in _init_text()

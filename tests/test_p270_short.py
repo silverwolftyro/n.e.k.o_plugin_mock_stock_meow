@@ -421,7 +421,12 @@ def test_the_panel_has_a_short_button_next_to_the_buy_one() -> None:
 
 
 def test_yui_loses_for_the_first_ten_ticks_and_then_climbs() -> None:
-    """前 10 拍极差（每拍往下走），10 拍之后稳定上升。"""
+    """前 10 拍极差（每拍往下走），10 拍之后**波动**上行。
+
+    P31.0：上升段不再是一条直线 —— 每一拍都有涨有跌（**锯齿**），
+    像真的行情那样一跳一跳的；但**整体**仍然往上走，
+    末点依旧严格高于玩家。
+    """
     book = _short_book()
     player = [100.0] * 30
     yui = book.yui_opponent_curve(player, 100.0)
@@ -429,8 +434,11 @@ def test_yui_loses_for_the_first_ten_ticks_and_then_climbs() -> None:
     flat = book.YUI_OPPONENT_FLAT_TICKS
     for index in range(1, flat):
         assert yui[index] < yui[index - 1], f"第 {index} 拍不该往上走"
-    for index in range(flat + 1, len(yui)):
-        assert yui[index] > yui[index - 1], f"第 {index} 拍该稳定上升"
+    ups = sum(1 for index in range(flat + 1, len(yui)) if yui[index] > yui[index - 1])
+    downs = sum(1 for index in range(flat + 1, len(yui)) if yui[index] < yui[index - 1])
+    assert ups > 0, "上升段总得往上走"
+    assert downs > 0, "上升段必须有下跌（锯齿）—— 不能是一条平滑直线"
+    assert yui[-1] > yui[flat], "整体趋势仍然向上"
 
 
 def test_yui_always_ends_above_the_player() -> None:

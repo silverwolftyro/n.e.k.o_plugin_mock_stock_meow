@@ -634,5 +634,15 @@
   "taunt.cash_kill.egg_steady": "{name}躺着就能赢，也会出局？那这市场比你想的还不讲理。",
   "taunt.cash_kill.egg_self": "{name}这名字起得倒是诚实 —— 只是诚实救不了账户。",
   "panel.name_input_hint2": "名字太嚣张，容易触发特殊彩蛋。",
-  "panel.ghost_hint": "不会玩可以点上面的【呼叫猫娘】。"
+  "panel.ghost_hint": "不会玩可以点上面的【呼叫猫娘】。",
+  "panel.more_stocks_short": "还有 {count} 只在后面候着。",
+  "panel.paw_hint": "戳这里",
+  "panel.live_chat_title": "猫娘点评",
+  "settlement.survived_praise": "你居然撑了 {days} 天？有点东西。",
+  "settlement.survived_praise_more": "账还没见底，节奏也没乱 —— 这一局你走得很稳。",
+  "settlement.survived_footer": "模拟归模拟，这份定力是真的。留着，下一局接着来。",
+  "panel.settlement_again_alive": "再来一局 · 趁手还热",
+  "panel.alive_state": "本局状态",
+  "panel.alive_state_value": "撑到结算日",
+  "panel.alive_praise_label": "本局评语"
 }

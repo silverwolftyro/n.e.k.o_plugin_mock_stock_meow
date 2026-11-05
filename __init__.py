@@ -208,6 +208,7 @@ from .meow import (
     MEOW_CALL_COOLDOWN_SECONDS,
     NAG_PROMPT,
     YUI_AUTHORITY_PROMPT,
+    YUI_DUO_DIRECTIVE,
     YUI_RECEIPT_CYCLE_DIRECTIVE,
     YUI_TRADE_FACTS,
     call_prompt,
@@ -512,7 +513,7 @@ __all__ = ["MockStockMeowPlugin"]
 PLUGIN_ID = "mock_stock_meow"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.12.0-live-ultimate"
+PLUGIN_VERSION = "0.13.4-final-safety"
 
 #: P10：游戏速度档位 → **真实时间**推进间隔的倍率。
 #:
@@ -675,6 +676,96 @@ YUI_ASSIST_GRANT_WINDOW_SECONDS = 120.0
 #: 三道防线的最后一道：模式闸门管「能不能」，授权窗口管「此刻能不能」，
 #: 配额管「今天别太疯」。超额 ⇒ 工具**拒绝**（而不是排队等）。
 YUI_TRADES_PER_DAY = 3
+
+# ------------------------------------------------------------------
+# P32.0：狂按快进感知 + 提示词队列熔断
+# ------------------------------------------------------------------
+#
+# 真机事故（2026-11-05）：主播嫌"等一天太久"，对着【跳过本日】**连点**，
+# 于是一口气把 30 天的新闻、收割、群友事件全攒进了 ``_yui_pending_prompts`` ——
+# 队列积压几百条，Yui 的反应延迟十几秒，开始对着旧消息**自言自语**。
+#
+# P32.0 用三把刀处理这件事：
+#
+# ① **感知狂按**（:meth:`MockStockMeowPlugin.skip_day` 记点击间隔）；
+# ② **狂按期限频**（她被限成"一句吐槽"，别再一直跳出来）；
+# ③ **推送前熔断**（:meth:`MockStockMeowPlugin._prune_yui_queue`）——
+#    积压的长队**只留最新一条**，过期的直接扔。
+
+#: 【狂按快进】的判定窗口（秒）：窗口内点击次数超过
+#: :data:`SKIP_FAST_MAX_CLICKS` 才算狂按。
+SKIP_FAST_WINDOW_SECONDS = 5.0
+
+#: 【狂按快进】的点击阈值：**5 秒内连续点击超过 3 次**（即 ≥ 4 次）。
+SKIP_FAST_MAX_CLICKS = 3
+
+#: 狂按期长度（秒）：从判定成立那一刻算起，这段时间里 Yui 被限频。
+#:
+#: 12 秒 ≈ 两三个心跳周期：够她把那句吐槽说完，又不至于让下一轮正常
+#: 直播也被静音。
+SKIP_FAST_MUTE_SECONDS = 12.0
+
+#: 狂按期里 Yui 的**最小说话间隔**（秒）。
+SKIP_FAST_TALK_MIN_GAP_SECONDS = 8.0
+
+#: 待推送提示词队列的**熔断阈值**：队列长度超过它 ⇒ 只留最新一条。
+YUI_QUEUE_MAX_LEN = 3
+
+#: 待推送提示词队列的**熔断阈值**：消息存放超过它 ⇒ 当成过期消息丢掉。
+YUI_QUEUE_MAX_AGE_SECONDS = 5.0
+
+#: P32.0：这些提示词**不参与**「同天同类去重」—— 它们必须**条条送到**。
+#:
+#: * ``yui_duo_commentary`` —— 双打模式「每成交一笔就点评一句」是节目效果，
+#:   同一天压成一条等于把主播最爱的互动给砍了；
+#: * ``yui_harvest`` / ``yui_bankrupt`` / ``yui_god_rescue`` —— 重大事件，
+#:   一次都不能少。
+#:
+#: 其余（新闻 / 群友事件 / 直觉预警 / 主动回合）按「同天同类只留最新」
+#: 折叠 —— 那才是快进时真正会积压成几百条的东西。
+YUI_QUEUE_KEEP_ALL_REASONS: tuple[str, ...] = (
+    "yui_duo_commentary",
+    "yui_harvest",
+    "yui_bankrupt",
+    "yui_god_rescue",
+)
+
+#: 狂按时注入给 Yui 的**特殊提示词**（P32.0 需求原文）。
+#:
+#: 重点是"**不要分析行情了，一句话搞定**" —— 玩家根本不看分析，
+#: 再长的行情解读都是噪音。
+SKIP_FAST_TAUNT_PROMPT = (
+    "玩家正在疯狂快进，根本不看你的分析。你现在只需要吐槽他急不可耐"
+    "（比如：'你赶着投胎啊！'），不要分析行情了，一句话搞定。"
+)
+
+
+class _YuiPendingPrompt(tuple):
+    """待推送的提示词条目（**恒为三元组** ``(prompt, reason, priority)``）。
+
+    P32.0：熔断需要知道两件额外的事 ——
+
+    * ``enqueued_at`` —— 入队时刻（秒）。存放超过
+      :data:`YUI_QUEUE_MAX_AGE_SECONDS` 的就是**过期消息**，推送前扔掉。
+    * ``day`` —— 入队时玩家所在的**游戏日**。同一天同类的消息只留最新一条。
+
+    刻意**不改元素形状**：它就是 ``tuple`` 的子类，``len(item) == 3``、
+    ``prompt, reason, priority = item`` 照旧成立（守卫 ``test_p290_duo_mock``
+    钉死的就是这一点）。两个新字段挂在实例上，不进元组本体。
+    """
+
+    def __new__(
+        cls,
+        prompt: str,
+        reason: str,
+        priority: int,
+        enqueued_at: float = 0.0,
+        day: int = 0,
+    ) -> "_YuiPendingPrompt":
+        obj = super().__new__(cls, (prompt, reason, priority))
+        obj.enqueued_at = float(enqueued_at)
+        obj.day = int(day)
+        return obj
 
 #: P23.0：【耻辱柱】最多展示多少条历史破产记录。
 #:
@@ -1234,6 +1325,36 @@ class MockStockMeowPlugin(NekoPluginBase):
         #: 而推送必须**锁外**做（``push_message`` 要 await 宿主 IPC，
         #: 持锁 await 会冻住事件循环 —— P11.1 那个 500 红色警告的根因）。
         self._yui_pending_prompts: list[tuple[str, str, int]] = []
+        # ── P32.0：狂按快进感知 + 队列熔断的状态（**纯内存**）────────────
+        #:
+        #: 最近几次点【跳过本日】的**时刻**（秒）。判定口径：
+        #: 5 秒窗口内超过 3 次 ⇒ 【狂按快进】。
+        self._skip_click_times: list[float] = []
+        #: 狂按期截止时刻（秒）。在这之前 Yui 被**限频**。
+        self._skip_fast_until: float = 0.0
+        #: 一共判定过几次狂按（只为了日志与面板观察）。
+        self._skip_fast_count: int = 0
+        #: 狂按期里 Yui 上次说话的时刻（限频闸门用）。
+        self._yui_fast_last_talk_at: float = 0.0
+        # ── P33.0：全局状态位 —— 现在有没有**活跃对局** ─────────────
+        #:
+        #: 玩家点【退出对局】或对局进入结算状态之后 ⇒ False ⇒
+        #: 心跳体与所有 ``push_message`` **立刻 return** ——
+        #: 这就是「退出后的幽灵播报」的总闸（心跳、Yui 播报、弹窗全停）。
+        #:
+        #: 开局（``join``）⇒ True；退场 / 结算 ⇒ False。
+        #: **纯内存**就够：插件重启后由 :meth:`_game_is_active` 用**库**复核。
+        self._is_game_active: bool = False
+        #: 「这一局已经结束了」的**闩锁**（P33.0）。
+        #:
+        #: 为什么要单独的闩锁：结算流程里 ``_deactivate_game()`` 先把嘴堵上，
+        #: **之后**才去清库里的席位。这中间有一个 ``await``（落库），
+        #: 心跳随时可能插进来 —— 如果它只看库，就会把刚关掉的闸门
+        #: **重新打开**（这一局又被判成"还活着"）。闩锁一旦上锁，
+        #: 这一局就**不许复活**，直到玩家重新 ``join``。
+        #:
+        #: 它是**纯内存**的：插件重启后闩锁归零，靠库里的席位判断对局还在不在。
+        self._game_ended: bool = False
         #: Yui 介入的**序号**（面板靠它判断"这条是不是新的"）。
         self._yui_seq: int = 0
         #: 兜底弹窗的**序号**（面板靠它判断"这条是不是新的"）。
@@ -1790,6 +1911,10 @@ class MockStockMeowPlugin(NekoPluginBase):
         self._yui_last_action = None
         # 新局 ⇒ 上一局的"回执周期锁"也不能留着（那一回合已经结束了）。
         self._yui_trade_cycle_unlock()
+        # ── P33.0：新的一局 ⇒ **打开广播闸门**（上一局的自毁状态不许带过来）──
+        self._is_game_active = True
+        # 新的一局 ⇒ 闩锁松开（这一局可以正常活跃，也可以正常结束）。
+        self._game_ended = False
         # ── P19.0：新的一局 ⇒ 黑天鹅纪录归零（否则上一局的纪录会挡住本局）──
         self._black_swan_peak = 0.0
         self._black_swan_fired = False
@@ -2909,6 +3034,14 @@ class MockStockMeowPlugin(NekoPluginBase):
         （P11.1 那个 500 红色警告的根因）。
 
         安静档（``quiet``）下点评为空串 ⇒ **不打扰**，这是设计如此。
+
+        P29.0：点评提示词**必须自带** ``YUI_DUO_DIRECTIVE``。点评是
+        **独立的一轮** ``push_message``（不是双打主动回合的后半截）⇒
+        模型这一轮**看不到**主动回合里的硬约束 —— 不拼上去的话，
+        "点评玩家这一手"就可能被模型读成"该替他动手了"。
+        同一个常量**只许有一处出处**（:data:`meow.YUI_DUO_DIRECTIVE`），
+        主动回合由 :func:`meow.yui_duo_prompt` 带，点评回合在这里带，
+        两处口径不许分叉。
         """
         if self._yui_current_mode() != YUI_MODE_DUO:
             return
@@ -2927,9 +3060,12 @@ class MockStockMeowPlugin(NekoPluginBase):
         prompt = (
             f"《拟股喵喵》里玩家刚{verb}了「{symbol_name}」。\n"
             f"（这句点评你可以直接用，也可以照这个味道改写：{commentary}）\n"
-            "现在立刻开口：点评他这一手，态度跟着盈亏走 —— 赚了就吹，亏了就损。"
+            "现在立刻开口：点评他这一手，态度跟着盈亏走 —— 赚了就吹，亏了就损。\n"
+            + YUI_DUO_DIRECTIVE
         )
-        self._yui_pending_prompts.append((prompt, "yui_duo_commentary", 4))
+        self._yui_queue_prompt(
+            prompt, "yui_duo_commentary", 4, day=int(session.player.day)
+        )
 
     def _record_fake_news(self, session: Session) -> None:
         """P28.0：把**当天的假新闻**记进插件层账本（**纯记账，不改任何数值**）。
@@ -3004,7 +3140,9 @@ class MockStockMeowPlugin(NekoPluginBase):
             "狠狠骂一顿，顺便替观众骂他两句。\n"
             "只准用上面给出的事实，不许编造金额、标的名或内幕。"
         )
-        self._yui_pending_prompts.append((prompt, "fake_news_outrage", 5))
+        self._yui_queue_prompt(
+            prompt, "fake_news_outrage", 5, day=int(session.player.day)
+        )
         self.logger.info(
             f"[P28.0] 假新闻爆发：{len(pending)} 条假新闻，亏 {loss:.2f} 元 ⇒ 推给 Yui"
         )
@@ -3080,12 +3218,18 @@ class MockStockMeowPlugin(NekoPluginBase):
         # 否则快进时一口气能攒出好几个回合。
         self._yui_talk_last_at = now
         if mode == YUI_MODE_DUO:
-            self._yui_pending_prompts.append(
-                (self._yui_duo_prompt(session), "yui_duo_turn", 3)
+            self._yui_queue_prompt(
+                self._yui_duo_prompt(session),
+                "yui_duo_turn",
+                3,
+                day=int(session.player.day),
             )
             return
-        self._yui_pending_prompts.append(
-            (self._yui_live_prompt(session), "yui_live_turn", 3)
+        self._yui_queue_prompt(
+            self._yui_live_prompt(session),
+            "yui_live_turn",
+            3,
+            day=int(session.player.day),
         )
 
     def _collect_yui_event_prompts(
@@ -3112,8 +3256,11 @@ class MockStockMeowPlugin(NekoPluginBase):
             if not news_id or news_id in self._yui_seen_news:
                 continue
             self._yui_seen_news.add(news_id)
-            self._yui_pending_prompts.append(
-                (self._yui_news_prompt(session, item), "yui_news", 5)
+            self._yui_queue_prompt(
+                self._yui_news_prompt(session, item),
+                "yui_news",
+                5,
+                day=int(getattr(session.market, "day", 0) or 0),
             )
         # 旧的新闻 id 别把内存吃满（一天几只，攒几十天就上百个）。
         if len(self._yui_seen_news) > 200:
@@ -3125,29 +3272,27 @@ class MockStockMeowPlugin(NekoPluginBase):
             stock_id = str(getattr(result, "stock_id", "") or "")
             stock = market.stocks.get(stock_id)
             name = str(getattr(stock, "name", "") or stock_id)
-            self._yui_pending_prompts.append(
-                (
-                    self._yui_event_prompt(
-                        f"「{name}」被盯上了，你手里的钱被强行砍了一刀。",
-                        f"集中度 {float(getattr(result, 'concentration', 0.0) or 0.0):.0%}，"
-                        f"触发源 {str(getattr(result, 'trigger', '') or '未知')}。",
-                    ),
-                    "yui_harvest",
-                    8,
-                )
+            self._yui_queue_prompt(
+                self._yui_event_prompt(
+                    f"「{name}」被盯上了，你手里的钱被强行砍了一刀。",
+                    f"集中度 {float(getattr(result, 'concentration', 0.0) or 0.0):.0%}，"
+                    f"触发源 {str(getattr(result, 'trigger', '') or '未知')}。",
+                ),
+                "yui_harvest",
+                8,
+                day=int(session.player.day),
             )
 
         # ③ 爆仓 —— 这一局结束了，她必须说点什么。
         if was_alive and not bool(player.alive):
-            self._yui_pending_prompts.append(
-                (
-                    self._yui_event_prompt(
-                        "这一局结束了 —— 家底见底了。",
-                        "玩家已经破产，这一局到此为止。",
-                    ),
-                    "yui_bankrupt",
-                    9,
-                )
+            self._yui_queue_prompt(
+                self._yui_event_prompt(
+                    "这一局结束了 —— 家底见底了。",
+                    "玩家已经破产，这一局到此为止。",
+                ),
+                "yui_bankrupt",
+                9,
+                day=int(session.player.day),
             )
 
         # ④ 群友随机事件（P26.0：天降 Token / 免费内参）—— 只给**事实**。
@@ -3160,12 +3305,11 @@ class MockStockMeowPlugin(NekoPluginBase):
             self._yui_seen_community.add(event.id)
             # 天降 Token 是"救命"级 ⇒ 优先级比内参高（内参只是彩蛋）。
             priority = 7 if event.kind == EVENT_KIND_TOKEN else 5
-            self._yui_pending_prompts.append(
-                (
-                    self._yui_community_prompt(event),
-                    f"yui_community_{event.kind}",
-                    priority,
-                )
+            self._yui_queue_prompt(
+                self._yui_community_prompt(event),
+                f"yui_community_{event.kind}",
+                priority,
+                day=int(session.player.day),
             )
         # 事件 id 别把内存吃满（一局最多几十条，攒久了也该收一收）。
         if len(self._yui_seen_community) > 200:
@@ -3415,12 +3559,11 @@ class MockStockMeowPlugin(NekoPluginBase):
                 else watch.price
             )
             watch.settled = True
-            self._yui_pending_prompts.append(
-                (
-                    self._yui_intuition_settle_prompt(watch, price_now),
-                    "yui_intuition_settle",
-                    6,
-                )
+            self._yui_queue_prompt(
+                self._yui_intuition_settle_prompt(watch, price_now),
+                "yui_intuition_settle",
+                6,
+                day=int(session.player.day),
             )
         # 冷却期过了的预警丢掉（别把内存吃满）。
         self._intuition_watch = [
@@ -3454,8 +3597,11 @@ class MockStockMeowPlugin(NekoPluginBase):
         )
         self._intuition_warnings += 1
         self._intuition_last_tick = tick
-        self._yui_pending_prompts.append(
-            (self._yui_intuition_prompt(signal), "yui_intuition_warning", 6)
+        self._yui_queue_prompt(
+            self._yui_intuition_prompt(signal),
+            "yui_intuition_warning",
+            6,
+            day=int(session.player.day),
         )
 
     def _maybe_god_rescue(
@@ -3514,8 +3660,11 @@ class MockStockMeowPlugin(NekoPluginBase):
         # 这一条**由本节自己推**（更完整：带「导演模式」事实），
         # 所以先标记成"已推过"，别让 P26.0 的群友提示词再推一遍。
         self._yui_seen_community.add(event.id)
-        self._yui_pending_prompts.append(
-            (self._yui_god_rescue_prompt(session, event), "yui_god_rescue", 7)
+        self._yui_queue_prompt(
+            self._yui_god_rescue_prompt(session, event),
+            "yui_god_rescue",
+            7,
+            day=int(session.player.day),
         )
         self.logger.info(
             f"[live_god_mode] 强制垫付：第 {day} 天到账 {event.amount:.2f} 元"
@@ -3600,16 +3749,171 @@ class MockStockMeowPlugin(NekoPluginBase):
         )
         return 1
 
+    def _yui_queue_prompt(
+        self,
+        prompt: str,
+        reason: str,
+        priority: int,
+        *,
+        day: int = 0,
+    ) -> None:
+        """把一条提示词攒进待推送队列（P32.0：带上入队时刻与游戏日）。
+
+        队列元素仍是 ``(prompt, reason, priority)`` 三元组 —— 只是多挂了
+        ``enqueued_at`` 与 ``day`` 两个只读属性（见 :class:`_YuiPendingPrompt`），
+        推送前的**熔断**要用它们判断"这条是不是过期了 / 这条是不是同类旧货"。
+        """
+        self._yui_pending_prompts.append(
+            _YuiPendingPrompt(
+                prompt,
+                reason,
+                priority,
+                enqueued_at=time.time(),
+                day=int(day),
+            )
+        )
+
+    def _prune_yui_queue(self) -> list[tuple[str, str, int]]:
+        """P32.0：推送前的**熔断** —— 丢掉积压，只留最新。
+
+        三条规则（**按顺序**执行）：
+
+        ① **过期** —— 存放超过 :data:`YUI_QUEUE_MAX_AGE_SECONDS` 的直接扔；
+        ② **同天同类** —— 同一个游戏日、同一个 ``reason`` 的只留**最新**一条
+           （旧的全部 ``pop`` 掉 —— 快进一天能攒十几条新闻，只要一条）；
+           但**必须条条送到**的那几类（见 :data:`YUI_QUEUE_KEEP_ALL_REASONS`）
+           **不参与**折叠；
+        ③ **太长** —— 剩下的还超过 :data:`YUI_QUEUE_MAX_LEN` 条 ⇒ 只留最新一条。
+
+        没有这一步，狂按快进会把几百条消息堆在队列里，Yui 隔十几秒才开始
+        回话，还会对着早就过期的行情**自言自语**。
+        """
+        queue = list(self._yui_pending_prompts)
+        if not queue:
+            return []
+        now = time.time()
+        # ① 过期消息：存放超过 5 秒的，Yui 收到也是**过期货**（行情早变了）。
+        fresh: list[tuple[str, str, int]] = []
+        for item in queue:
+            stamp = float(getattr(item, "enqueued_at", 0.0) or 0.0)
+            if stamp > 0.0 and (now - stamp) > YUI_QUEUE_MAX_AGE_SECONDS:
+                continue
+            fresh.append(item)
+        if not fresh:
+            return []
+        # ② 同一天同类：只留最新的一条（旧的全部 pop 掉）。
+        #    「必须条条送到」的提示词（双打点评 / 重大事件）**不参与**折叠。
+        kept: list[tuple[str, str, int]] = []
+        slots: dict[tuple[str, int], int] = {}
+        for item in fresh:
+            reason = str(item[1])
+            if reason in YUI_QUEUE_KEEP_ALL_REASONS:
+                kept.append(item)
+                continue
+            key = (reason, int(getattr(item, "day", 0) or 0))
+            if key in slots:
+                kept[slots[key]] = item
+            else:
+                slots[key] = len(kept)
+                kept.append(item)
+        # ③ 还是太长 ⇒ 只留最新一条。
+        if len(kept) > YUI_QUEUE_MAX_LEN:
+            kept = kept[-1:]
+        return kept
+
+    def _skip_fast_active(self, now: float | None = None) -> bool:
+        """现在是不是**狂按期**（Yui 被限频的那段时间）。"""
+        until = float(getattr(self, "_skip_fast_until", 0.0) or 0.0)
+        if until <= 0.0:
+            return False
+        current = time.time() if now is None else float(now)
+        return current < until
+
+    def _note_skip_click(self) -> bool:
+        """P32.0：记一次【跳过本日】点击，返回这是不是【狂按快进】。
+
+        判据：**5 秒窗口内点击超过 3 次**（也就是从第 4 次开始算狂按）。
+
+        为什么记在**入口**（而不是"跳过成功之后"）：主播的狂按是**手速**
+        问题 —— 他看都不看就一路点下去。其中被游戏自己的「今天已经跳过一次」
+        挡下来的那几下，**也是狂按的一部分**：手速就是这么快。
+        """
+        now = time.time()
+        stamps = [
+            stamp
+            for stamp in self._skip_click_times
+            if (now - stamp) <= SKIP_FAST_WINDOW_SECONDS
+        ]
+        stamps.append(now)
+        self._skip_click_times = stamps
+        if len(stamps) <= SKIP_FAST_MAX_CLICKS:
+            return False
+        self._skip_fast_count += 1
+        self._skip_fast_until = now + SKIP_FAST_MUTE_SECONDS
+        self.logger.info(
+            f"[P32.0] 狂按快进：{SKIP_FAST_WINDOW_SECONDS:.0f} 秒内点了 {len(stamps)} 次"
+            f"【跳过本日】（第 {self._skip_fast_count} 次）"
+        )
+        return True
+
+    def _yui_fast_forward_clear(self) -> None:
+        """P32.0：狂按 ⇒ **清空** Yui 的待推送队列。
+
+        玩家疯狂快进时，队列里堆的是几百条**已经过时**的新闻与事件 ——
+        留着只会让 Yui 隔十几秒才开始回话，还会对着旧行情**自言自语**。
+        """
+        self._yui_pending_prompts.clear()
+
+    def _yui_fast_forward_taunt(self, day: int = 0) -> None:
+        """P32.0：狂按 ⇒ 注入一条**吐槽**提示词（只吐槽，不分析行情）。
+
+        玩家根本不看分析 ⇒ 再长的行情解读都是噪音。提示词原文见
+        :data:`SKIP_FAST_TAUNT_PROMPT`。
+        """
+        self._yui_queue_prompt(
+            SKIP_FAST_TAUNT_PROMPT,
+            "yui_fast_forward",
+            6,
+            day=int(day),
+        )
+        # 吐槽**必须**立刻说出去 ⇒ 清掉限频闸门（它只拦"连续说话"）。
+        self._yui_fast_last_talk_at = 0.0
+
     async def _flush_yui_prompts(self) -> None:
         """把攒好的提示词推给 Yui（**锁外** —— 心跳里调用）。
 
         推送必须**锁外**做：``push_message`` 要 ``await`` 宿主 IPC，
         持锁 await 会冻住整个事件循环（P11.1 那个 500 红色警告的根因）。
+
+        P32.0：推之前先**熔断**（:meth:`_prune_yui_queue`）——
+        积压的长队只留最新一条，狂按期再叠一层**限频**（一句吐槽就够）。
+
+        P33.0：对局已结束 ⇒ **立刻 return** —— 这一局的旧消息一条都不推
+        （这正是「退出后的幽灵播报」的第二道闸）。
         """
-        pending = list(self._yui_pending_prompts)
+        if not self._is_game_active:
+            self._yui_pending_prompts.clear()
+            return
+        pending = self._prune_yui_queue()
+        # **先清队列再推**：熔断后的结果就是队列的新状态 ——
+        # 过期消息必须真的离开队列（不然它们会一直躺在那儿，占着位置）。
+        self._yui_pending_prompts = []
         if not pending:
             return
-        self._yui_pending_prompts = []
+        # ── P32.0：狂按期限频 ────────────────────────────────────
+        # 玩家在疯狂快进 ⇒ 别让她一直跳出来。一句吐槽说完就闭嘴，
+        # 等他慢下来再说。
+        now = time.time()
+        if self._skip_fast_active(now):
+            last_at = float(getattr(self, "_yui_fast_last_talk_at", 0.0) or 0.0)
+            if last_at > 0.0 and (now - last_at) < SKIP_FAST_TALK_MIN_GAP_SECONDS:
+                self.logger.info(
+                    f"[P32.0] 狂按快进中，限频生效：这一批 {len(pending)} 条提示词全部丢弃"
+                )
+                return
+            self._yui_fast_last_talk_at = now
+            # 狂按期只留**最新一条**（通常就是那句吐槽）。
+            pending = pending[-1:]
         for prompt, reason, priority in pending:
             await self._push_proactive(prompt, reason=reason, priority=priority)
 
@@ -4947,6 +5251,90 @@ class MockStockMeowPlugin(NekoPluginBase):
         )
 
     # ------------------------------------------------------------------
+    # P33.0：入口：切换观察标的（点行情卡 ⇒ 主 K 线跟着切）
+    # ------------------------------------------------------------------
+    #
+    # 面板那边点一下老虎机方块卡，就调这个入口：
+    #   * 面板自己把主 K 线切过去、给那张卡打上**选中态**；
+    #   * 后端这边给 Yui 递一条**轻量事实**，让她能顺嘴搭腔。
+    #
+    # 提示词里**只给事实**（P13 契约）：标的、现价、涨跌幅。
+    # 怎么说是她的事 —— 插件不替她写好那句话。
+
+    @ui.action(
+        id="watch_stock",
+        label="切换观察标的",
+        icon="eye",
+        tone="default",
+        group="market",
+        order=5,
+    )
+    @plugin_entry(
+        id="watch_stock",
+        name="切换观察标的",
+        description=(
+            "玩家点了行情卡（切主 K 线）。后端给 Yui 递一条轻量事实"
+            "（正在盯哪只、涨跌幅多少），让她能顺嘴搭腔。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "stock_id": {
+                    "type": "string",
+                    "description": "被点中的标的 ID（形如 FAKE-xxx）",
+                }
+            },
+            "required": ["stock_id"],
+        },
+    )
+    @_locked
+    async def watch_stock(self, stock_id: str) -> Ok:
+        """玩家切换观察标的 ⇒ 给 Yui 递一条**轻量事实**（P33.0）。
+
+        面板那侧负责"切图 + 选中态"，这边负责**让她知道玩家在看哪只** ——
+        不然她只能对着自己那份仓位点评，玩家换标的了她还在念旧账。
+
+        提示词里**只给事实**：标的、现价、涨跌幅。措辞她自己定。
+        """
+        engine_config = await self._engine_config()
+        session, error = await self._session_or_error(engine_config)
+        if error is not None:
+            return error
+        if session is None:
+            return _err("not_joined")
+        market = session.market
+        stock = market.stocks.get(str(stock_id or ""))
+        if stock is None:
+            return _err("stock_not_found")
+        name = str(getattr(stock, "name", "") or stock_id)
+        price = float(getattr(stock, "price", 0.0) or 0.0)
+        prev_price = float(getattr(stock, "prev_price", 0.0) or 0.0)
+        change = ((price - prev_price) / prev_price * 100.0) if prev_price > 0 else 0.0
+        prompt = (
+            "《拟股喵喵》里玩家切换了观察标的。\n"
+            f"事实：他现在盯着「{name}」（{stock.id}），现价 {price:.2f}，"
+            f"涨跌幅 {change:+.2f}%。\n"
+            "你可以顺嘴接一句（这句只是素材，措辞你自己定）："
+            "他盯得这么紧，是不是有什么打算？\n"
+            "只准用上面给出的事实，不许编造别的数字或内幕。"
+        )
+        self._yui_queue_prompt(
+            prompt,
+            "yui_watch_stock",
+            4,
+            day=int(session.player.day),
+        )
+        return Ok(
+            {
+                "action": "watch_stock",
+                "stock_id": str(stock.id),
+                "name": name,
+                "price": round(price, 6),
+                "change": round(change, 4),
+            }
+        )
+
+    # ------------------------------------------------------------------
     # P5.5 改动 4：天桥虚惊一场（death_scene）
     # ------------------------------------------------------------------
     #
@@ -5212,6 +5600,10 @@ class MockStockMeowPlugin(NekoPluginBase):
 
         player = session.player
         payload = await self._build_settlement_payload(session, engine_config)
+        # ── P33.0：对局进入结算状态 ⇒ **立刻自毁** ────────────────────
+        # 这一局到此为止：心跳空转、待推送队列清空、所有播报闭嘴。
+        # （放在落库**之前**：库里清席位之前就得先把嘴堵上。）
+        self._deactivate_game("settle")
 
         now = time.time()
         try:
@@ -5384,6 +5776,23 @@ class MockStockMeowPlugin(NekoPluginBase):
             # 没命中就是 ``None`` ⇒ 普通流程一个字都不变。
             "special_ending": self._special_ending(session, dead=dead),
             "anti_fraud_notice": ANTI_FRAUD_NOTICE,
+            # ── P32.0：存活结局的**专属骄傲文案** ────────────────────
+            # 真机事故（2026-11-05）：街机档撑满 30 天、**活着**走到结算日，
+            # 结算页却挂着「你连这个游戏都玩不过」和【不服再来？】——
+            # 两套结局文案混用。口径只有一条：**有没有真破产**。
+            # 存活 ⇒ 给骄傲文案（``panel`` 用它，不许再出现破产文案）；
+            # 破产 ⇒ ``anti_fraud_notice`` 照旧，反诈警告一个字都不改。
+            "survivor_praise": (
+                _fill_text(
+                    i18n_text(
+                        "settlement.survived_praise",
+                        "你居然撑了 {days} 天？有点东西。",
+                    ),
+                    {"days": int(report.days_survived)},
+                )
+                if report.survivor
+                else ""
+            ),
         }
 
     async def _inaction_exempt_trades(self, session: Session) -> int:
@@ -5562,8 +5971,17 @@ class MockStockMeowPlugin(NekoPluginBase):
         不存在（实测：运行时二进制里 ``create_card`` 出现 0 次）。所以这里
         **按能力探测**：有 ``create_card`` 就用卡片；没有就降级成一条
         **纯文本**聊天消息（``push_message`` 在 0.9.0 里是有的）。
+
+        **P33.0：退场之后不许再弹卡片。**
+        卡片全是**局中事件**（日终结算 / 收割 / 新闻 / 账单）——
+        这一局都结束了还弹，就是观众眼里的"幽灵弹窗"。
         """
         if card is None:
+            return
+        if not self._is_game_active:
+            self.logger.info(
+                f"[P33.0] 对局已结束：跳过卡片投递（{card.kind}）"
+            )
             return
         creator = getattr(self.ctx, "create_card", None)
         if callable(creator):
@@ -6001,6 +6419,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         reason: str,
         priority: int = 2,
         ai_behavior: str = "respond",
+        allow_inactive: bool = False,
     ) -> bool:
         """让猫娘**主动开口**（P11 主路径）。返回宿主是否受理了这次推送。
 
@@ -6016,7 +6435,19 @@ class MockStockMeowPlugin(NekoPluginBase):
         （是她在调工具），错误已经进了她的上下文，她本来就会如实说；
         再用 ``respond`` 多触发一个回合，她会在那个回合里**再试一次**
         ⇒ 又一条失败回执 ⇒ **自触发循环**（直播里就变成她一直"再买一次"）。
+
+        **P33.0：退场之后一律闭嘴。**
+        玩家点了【退出对局】或对局结算之后，``_is_game_active`` 变 False ⇒
+        这里**立刻 return** —— 绝不再冒出"幽灵播报"（观众看到人走了、
+        猫还在对着上一局自言自语）。
+        ``allow_inactive=True`` 是给**玩家主动要的回应**留的口子
+        （【呼叫猫娘】/【猫娘招呼】：那是玩家点的，不是幽灵）。
         """
+        if not allow_inactive and not self._is_game_active:
+            self.logger.info(
+                f"[P33.0] 对局已结束（{reason}）：本次主动搭话跳过（不许幽灵播报）"
+            )
+            return False
         push = getattr(self.ctx, "push_message", None)
         if not callable(push):
             self.logger.info(f"宿主未提供 push_message（{reason}）：本次跳过主动搭话")
@@ -6179,7 +6610,12 @@ class MockStockMeowPlugin(NekoPluginBase):
                     "line": "",
                 }
             )
-        spoken = await self._push_proactive(GREET_PROMPT, reason="greet")
+        spoken = await self._push_proactive(
+            GREET_PROMPT,
+            reason="greet",
+            # P33.0：玩家**主动点的**招呼 —— 不受"对局已结束"闸门限制。
+            allow_inactive=True,
+        )
         # **无论成功与否**都记下"打过招呼"：失败时已经弹过兜底弹窗了，
         # 反复重试只会反复弹窗。
         self._meow_greeted = True
@@ -6251,7 +6687,10 @@ class MockStockMeowPlugin(NekoPluginBase):
         # 只在**真的要开口**时才去查库 —— 没有画像时提示词与旧版一模一样。
         await self._refresh_emotion_profile()
         spoken = await self._push_proactive(
-            call_prompt(chosen, self._emotion_block()), reason="call"
+            call_prompt(chosen, self._emotion_block()),
+            reason="call",
+            # P33.0：玩家**主动点的**回应 —— 不受"对局已结束"闸门限制。
+            allow_inactive=True,
         )
         self._meow_call_last_at = now
         if not spoken:
@@ -6630,6 +7069,12 @@ class MockStockMeowPlugin(NekoPluginBase):
         if not callable(push):
             self.logger.info(f"宿主未提供 push_message（story:{chapter_id}）：本次跳过")
             return False
+        # ── P33.0：退场之后不许再演剧情（幽灵播报）────────────────────
+        if not self._is_game_active:
+            self.logger.info(
+                f"[P33.0] 对局已结束：跳过剧情推送（{chapter_id}）"
+            )
+            return False
         # 把**实际推出去的那段提示词**记下来：既方便排查"她为什么这么说"，
         # 也让"提示词里只有事实、没有表演指令"这条规矩**可审计**。
         self.logger.info(f"剧情提示词（{chapter_id}）：{prompt}")
@@ -6971,12 +7416,127 @@ class MockStockMeowPlugin(NekoPluginBase):
             self.logger.error(f"市场心跳异常（不影响后续 tick）：{error}")
             return Ok({"status": "heartbeat", "due": 0, "error": True})
 
+    # ------------------------------------------------------------------
+    # P33.0：对局生命周期（**退出即自毁**）
+    # ------------------------------------------------------------------
+    #
+    # 真机事故（2026-11-05）：主播点了【退出对局】（或对局自动结算）之后，
+    # 后台心跳**还在跑**，Yui 还在对着**上一局**的旧行情自言自语 ——
+    # 严重的串台（观众看到的是"人走了猫还在播"）。
+    #
+    # 根因有两条：
+    #
+    # ① 宿主那个 1 秒心跳是**宿主线程**（``plugin/core/host.py`` 的
+    #    ``_run_timer_interval``），**插件层清不掉**它 —— 唯一的停法是
+    #    "让心跳体自己变成空转"（:meth:`_heartbeat_body` 的第一道闸）。
+    # ② 各个 ``push_message`` 入口**没有"这局还在吗"的判断** ——
+    #    于是剧情、看门狗、攒好的提示词队列全都能在退场后继续推。
+    #
+    # 所以这里给一条**全局状态位** ``_is_game_active``：退场 ⇒ False ⇒
+    # 心跳与所有推送立刻闭嘴。
+
+    def _deactivate_game(self, reason: str = "") -> None:
+        """P33.0：玩家退场（退出对局 / 对局结算）⇒ **全量清理**。
+
+        清三样东西：
+
+        ① **状态位** ``_is_game_active = False`` —— 心跳与所有
+           ``push_message`` 从这一刻起立刻 return；
+        ② **待推送队列** ``_yui_pending_prompts`` —— 攒着的几百条旧消息
+           一条都不推（推了就是"对着旧行情自言自语"）；
+        ③ 各种**待办**（剧情、网贷弹窗、直觉预警）—— 看门狗不会再动它们。
+
+        这不是"把插件关掉"：插件进程还在跑，只是**这一局**结束了。
+        下一局 ``join`` 会把状态位重新打开。
+        """
+        # 闩锁与状态位**永远**要落到位 —— 即使这一局早就清过了。
+        # （早退分支只省日志：那一次早退如果顺手把闩锁也省掉，
+        #  插件重启后进来的玩家一退出，闸门就可能被心跳重新打开。）
+        already_clean = (
+            (not self._is_game_active) and (not self._yui_pending_prompts) and self._game_ended
+        )
+        self._is_game_active = False
+        # 上闩锁：这一局**不许复活**（结算落库前的那段时间里，
+        # 心跳若只看库会把闸门重新打开）。
+        self._game_ended = True
+        self._yui_pending_prompts.clear()
+        # 剧情待办：退场之后不许再演下一幕。
+        self._story_state = None
+        # 网贷弹窗：退场之后看门狗不许再替他点「确认」。
+        self._loan_prompt_at = 0.0
+        self._loan_prompt_day = 0
+        # 最近一次收割通知：退场之后不再弹。
+        self._pending_event = None
+        # 直觉预警的挂单：退场之后全部作废。
+        self._intuition_watch = []
+        # P32.0：狂按期的限频闸门也一并归零（新局重新计时）。
+        self._skip_fast_until = 0.0
+        self._yui_fast_last_talk_at = 0.0
+        if already_clean:
+            # 已经清过了 ⇒ 不重复记日志。
+            return
+        self.logger.info(f"[P33.0] 对局已结束（{reason or 'exit'}）：心跳与播报全部闭嘴")
+
+    async def _game_is_active(self) -> bool:
+        """现在有没有**活跃对局**（**以库为准**，状态位只是快路径）。
+
+        为什么还要查库
+        --------------
+        插件进程重启后状态位会丢（纯内存），但对局可能**还在库里** ——
+        只认状态位会把市场**按住不动**（真机事故：面板还在、按钮还能点，
+        时间却不流动了）。反过来，结算 / 退场之后库里已经没有席位 ⇒
+        状态位与库**一致** ⇒ 心跳与所有推送立刻闭嘴。
+
+        库读不到（数据库还没起来 / 被删了）⇒ **保守地当作还有对局** ——
+        宁可多跑一拍心跳，也不许把市场按住不动。
+
+        插件进程**重启**（状态位丢失）但对局还在库里 ⇒ 这里把状态位
+        **重新打开** —— 否则市场还在走、Yui 却哑了（真机事故）。
+
+        **快路径**：状态位已经是 True ⇒ 直接返回，**不查库**。
+        心跳每秒一次，多一次查询就是多一次 IO；退出路径都会显式调
+        :meth:`_deactivate_game`，所以"这一局还在"这件事轮不到库来回答。
+        """
+        # 闩锁上着 ⇒ 这一局已经结束，**不许复活**（结算落库前的那段时间）。
+        if self._game_ended:
+            return False
+        if self._is_game_active:
+            return True
+        try:
+            row = await self._repo.fetch_one(
+                "SELECT player_id FROM market_state WHERE id = 1"
+            )
+        except (DbUnavailableError, sqlite3.Error):
+            return True
+        active = bool(row is not None and row["player_id"])
+        if active:
+            # 插件重启后对局还在 ⇒ 把广播闸门重新打开（Yui 别哑掉）。
+            self._is_game_active = True
+        return active
+
     async def _heartbeat_body(self) -> Ok:
         """心跳的**真正**内容（由 ``market_tick`` 用硬超时包住）。
 
         这里面每一步都各自 ``try/except``：**一步挂了不许拖垮整轮心跳**。
+
+        **P33.0：第一道闸 —— 没有活跃对局就立刻返回。**
+        宿主那个 1 秒心跳是**宿主线程**（``plugin/core/host.py`` 的
+        ``_run_timer_interval``），插件层 ``clearInterval`` **清不掉**它；
+        唯一的停法就是让心跳体**变成空转**。退场之后这一句挡住：
+        剧情、网贷看门狗、主动搭话看门狗、提示词队列 —— 一个都不再跑。
         """
         started = time.perf_counter()
+        # ── P33.0：LLM 工具自愈**永远跑**（跟对局无关）──────────────
+        # 玩家在空闲页也要能聊天 ⇒ 这道自愈不能被"没有对局"挡住。
+        try:
+            await self._reregister_llm_tools_if_due()
+        except Exception as error:  # noqa: BLE001 - 自愈绝不能把心跳带崩
+            self.logger.error(f"LLM 工具自愈异常（不影响后续心跳）：{error}")
+        # ── P33.0：没有活跃对局 ⇒ **立刻返回**（幽灵播报的第一道闸）──
+        if not await self._game_is_active():
+            # 基线照常刷新：否则下一局开局会一次性补一大串 tick。
+            self._last_tick_at = time.time()
+            return Ok({"status": "heartbeat", "due": 0, "inactive": True})
         due = 0
         try:
             due = await self._due_ticks()
@@ -6998,10 +7558,7 @@ class MockStockMeowPlugin(NekoPluginBase):
         except Exception as error:  # noqa: BLE001 - 看门狗绝不能把心跳带崩
             self.logger.error(f"网贷弹窗看门狗异常（不影响后续心跳）：{error}")
         # P7.4：LLM 工具注册的**自愈**（main_server 重启后把工具救回来）。
-        try:
-            await self._reregister_llm_tools_if_due()
-        except Exception as error:  # noqa: BLE001 - 自愈绝不能把心跳带崩
-            self.logger.error(f"LLM 工具重注册异常（不影响后续心跳）：{error}")
+        # ⚠ P33.0：这一段已经挪到本方法**最前面**（没有对局时也要跑）。
         # P16.0：玩家发呆太久 → 猫娘主动搭话（对齐宿主 Focus 语义）。
         try:
             await self._idle_meow_watchdog()
@@ -7483,6 +8040,8 @@ class MockStockMeowPlugin(NekoPluginBase):
         payload = await self._build_settlement_payload(session, engine_config)
         payload["auto_finished"] = True
         payload["finish_reason"] = "classic_total_days"
+        # ── P33.0：自动结算 ⇒ 这一局结束 ⇒ **立刻自毁**（不许再播报）──
+        self._deactivate_game("auto_finish")
 
         now = time.time()
         try:
@@ -7888,10 +8447,10 @@ class MockStockMeowPlugin(NekoPluginBase):
     @plugin_entry(
         id="skip_day",
         name="跳过本日",
-        description="无限模式专用：立即推进到下一个日终，不等 tick 走完。",
+        description="所有档位可用：立即推进到下一个日终，不等 tick 走完。",
     )
     async def skip_day(self) -> Ok:
-        """跳过本日（无限模式专用）。
+        """跳过本日（**全档位可用**）。
 
         **逐 tick 快进**（不是"跳 tick 计数"）—— 复用现有的 tick 流水线一直
         跑到下一个日终边界：
@@ -7902,10 +8461,16 @@ class MockStockMeowPlugin(NekoPluginBase):
 
         约束：
 
-        * **只允许无限模式**（经典模式是教学关，不给跳）；
         * **每天只能跳一次**（``players.skip_day_used`` 记当前游戏日）；
         * 跳过时**照常走日终结算**（扣生活费、三振、猫娘日终决策一个不少）；
         * 跳过时**照常发卡片**（日终卡片、收割卡片都在）。
+
+        **P31.0：所有档位都能跳。**
+        以前只有无限模式放行（经典档位是教学关，不给跳）—— 但直播时主播
+        要的是「让时间跑起来」，教学关也一样想快进。现在那道模式闸门
+        **已经拆掉**：街机 / 入门 / 进阶 / 无尽**一律可跳**。
+        每天一次的限制保留（那是游戏自己的 ``skip_day_used`` 闸门，
+        防的是"同一天狂按"，不是"不许跳"）。
 
         **P11.1：这里刻意不加时间戳闸门。**
         跳过本日本来就**每天只能一次**（游戏自己的 ``skip_day_used`` 闸门），
@@ -7913,8 +8478,30 @@ class MockStockMeowPlugin(NekoPluginBase):
         「无为而治」的测试就靠它）—— 加个时间戳闸门反而会把连续快进打断。
         真正的并发风险已经由**上下文处理器的非阻塞拿锁**挡住了（见
         :meth:`market_context`）：宿主的上下文查询**永远不会再被冻住**。
+
+        **P32.0：感知【狂按快进】。**
+        「每天只能跳一次」挡不住**连点**：跳过会把日子推进一天，于是下一次
+        点击落在**新的一天**，闸门形同虚设 —— 主播一路点下去，一天能快进
+        三十天，``_yui_pending_prompts`` 当场积压几百条。
+
+        所以这里**记点击间隔**（:meth:`_note_skip_click`）：**5 秒内点超过
+        3 次**判定为【狂按快进】。判定成立 ⇒
+
+        ① **立刻清空** Yui 的待推送队列（:meth:`_yui_fast_forward_clear`）；
+        ② 快进跑完后注入一条**吐槽**提示词（:meth:`_yui_fast_forward_taunt`），
+           让她只说一句"你赶着投胎啊"，别再分析行情；
+        ③ 狂按期内她被**限频**（:meth:`_flush_yui_prompts`），
+           别让她一直跳出来。
+
+        注意：这**不是**"不许快进" —— 连续快进仍然是合法玩法（隐藏结局
+        「无为而治」就靠它）。这里只是让 Yui 的反应跟得上玩家的节奏。
         """
         self._touch_player_action()
+        # ── P32.0：狂按快进感知（**在拿锁之前**记点击时间）──────────
+        fast_forward = self._note_skip_click()
+        if fast_forward:
+            # 先把上一轮攒下的旧消息清掉（别让它们堆到快进之后）。
+            self._yui_fast_forward_clear()
         with self._lock:
             engine_config = await self._engine_config()
             session, error = await self._session_or_error(engine_config)
@@ -7922,8 +8509,6 @@ class MockStockMeowPlugin(NekoPluginBase):
                 return error
             if session is None:
                 return _err("not_joined")
-            if session.mode != "infinite":
-                return _err("skip_day_classic_forbidden")
             player = session.player
             if not player.alive:
                 return _err("skip_day_dead")
@@ -7946,6 +8531,10 @@ class MockStockMeowPlugin(NekoPluginBase):
                     await self._tick_once()
             except Exception as error:  # noqa: BLE001 - 跳过失败不该炸掉入口
                 self.logger.error(f"跳过本日异常（不影响后续 tick）：{error}")
+                if fast_forward:
+                    # 半路失败也得给玩家一个反应（别让队列继续堆着）。
+                    self._yui_fast_forward_clear()
+                    self._yui_fast_forward_taunt(day=int(player.day))
                 return _err("skip_day_failed")
             finally:
                 self._tick_running = False
@@ -7956,6 +8545,15 @@ class MockStockMeowPlugin(NekoPluginBase):
             fresh, fresh_error = await self._session_or_error(engine_config)
             if fresh_error is not None:
                 return fresh_error
+            # ── P32.0：狂按 ⇒ 只留一句吐槽 ────────────────────────
+            # 快进跑完了 ⇒ 积压已经形成（几十条过时的新闻与事件）。
+            # 这里**再清一次**，然后注入唯一一条吐槽 —— 她只说一句，
+            # 别再对着旧行情自言自语。
+            if fast_forward:
+                self._yui_fast_forward_clear()
+                self._yui_fast_forward_taunt(
+                    day=int(getattr(getattr(fresh, "player", None), "day", 0) or 0)
+                )
             # ── P7：猫娘弹幕（跳过本日也算一次嘴臭）─────────────────
             self._push_danmaku(
                 pick_taunt(
@@ -8682,6 +9280,9 @@ class MockStockMeowPlugin(NekoPluginBase):
             apply_death(player, "starved")
             self._override_death_title(player)
         payload = await self._build_settlement_payload(session, engine_config)
+        # ── P33.0：玩家退场（【退出对局】）⇒ **立刻自毁** ─────────────
+        # 心跳空转、待推送队列清空、所有播报闭嘴 —— 不许再有"幽灵播报"。
+        self._deactivate_game("declare_bankrupt")
 
         now = time.time()
         try:

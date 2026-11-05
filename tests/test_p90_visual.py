@@ -151,7 +151,7 @@ def test_trade_buttons_use_the_design_gradients() -> None:
 
 
 def test_trade_buttons_are_tall_and_round() -> None:
-    """按钮**够大够圆**：高度 ≥56px、圆角 ≥26px、字号 ≥18px 加粗。
+    """按钮**够大够圆**：高度 ≈48px、圆角 ≥14px、字号 ≥18px 加粗。
 
     P21.0：三个值都改成 **clamp()**（下限不变，上限随全屏放大）——
     这里守的是「**下限不许退**」。
@@ -161,12 +161,15 @@ def test_trade_buttons_are_tall_and_round() -> None:
 
     P23.2：又**收回去**一档（76 → 56 / 34 → 26 / 24 → 18）——
     直播看板的右栏只有 40% 宽，巨号按钮会把**滑块和预览数字**挤没。
-    现在守的是「紧凑档的下限不许再退」。
+
+    P30.0：再收一档（56 → 44 / 26 → 14 / 24 → 18）——
+    三键搬进了**右侧 30% 窄列**（不再压整条下沿当砖头），
+    高度锁在 48px 一线、圆角收紧 ⇒ 「两块砖头」变回「三个按钮」。
     """
     css = _panel_css()
     block = _block(css, ".rrm-root .neko-button.rrm-pill {")
-    assert "height: clamp(56px" in block
-    assert "border-radius: clamp(26px" in block
+    assert "height: clamp(44px" in block
+    assert "border-radius: clamp(14px" in block
     assert "font-size: clamp(18px" in block
     assert "font-weight: 800" in block
     assert "white-space: nowrap" in block, "中文不许竖排"
@@ -289,10 +292,13 @@ def test_card_gaps_are_wider() -> None:
     P9.0 时是 16px（设计图说「别挤在一起」）；
     P23.2 改成直播看板布局 —— 间距压到 8px，把像素让给核心数据，
     而且**页面本身必须一屏装下**（不许出现纵向滚动条）。
+
+    P30.0：行情方块放大一档（``minWidth`` 228 → 248）——
+    「老虎机方块」要真的像方块，字号才撑得开。
     """
     code = _panel_code()
     assert "gap={8}" in code, "主 Stack 的间距必须是 8（直播紧凑布局）"
-    assert "minWidth={228} gap={8}" in code
+    assert "minWidth={248} gap={8}" in code
 
 
 def test_new_strings_are_in_the_dictionary() -> None:
@@ -343,6 +349,6 @@ def test_assets_are_still_inline_data_uris() -> None:
 
 def test_version_is_0_9_5() -> None:
     """版本号 = 0.10.5。"""
-    assert 'version = "0.12.0-live-ultimate"' in _TOML.read_text(encoding="utf-8")
+    assert 'version = "0.13.4-final-safety"' in _TOML.read_text(encoding="utf-8")
     init = (_PLUGIN_ROOT / "__init__.py").read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.12.0-live-ultimate"' in init
+    assert 'PLUGIN_VERSION = "0.13.4-final-safety"' in init

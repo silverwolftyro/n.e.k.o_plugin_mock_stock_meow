@@ -210,9 +210,13 @@ def test_kline_is_the_first_card_and_full_width() -> None:
 
     P8.0 把它从 190px 加高到 232px（它是上半区的主视觉）。这里不写死数字 ——
     守卫盯的是「**够高**」这个不变式，具体数值以后还能再调。
+
+    P30.0：三键搬进右列操作卡之后，局中页的卡片顺序改成
+    「左列 K 线 → 行情 → 右列 操作卡 → 持仓」——
+    守卫改为**直接在局中页里**查三张卡的先后，不再拿操作卡的标题当分界点。
     """
     code = _panel_code()
-    playing = code.split('t("panel.trade")', 1)[0]
+    playing = code[code.index("rrm-live-page") :]
     kline_at = playing.find('t("panel.kline")')
     market_at = playing.find('t("visual.market_title")')
     holdings_at = playing.find('t("visual.holdings_title")')

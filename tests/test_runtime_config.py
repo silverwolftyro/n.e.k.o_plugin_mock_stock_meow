@@ -162,6 +162,9 @@ def test_push_card_falls_back_to_a_text_message(plugin, monkeypatch) -> None:
         lambda **kwargs: sent.append(kwargs),
         raising=False,
     )
+    # P33.0：广播闸门默认是关的（没开局 ⇒ 不许投递）。
+    # 这条测的是**投递机制本身**，所以手动把闸门打开。
+    plugin._is_game_active = True
 
     card = build_taunt_card(trigger="on_player_default", text="嘴上说说而已")
     run(plugin._push_card(card))
@@ -188,6 +191,8 @@ def test_push_card_uses_create_card_when_the_host_provides_it(
         lambda **kwargs: pushed.append(kwargs),
         raising=False,
     )
+    # P33.0：同上一条 —— 这条测的是**投递机制本身**，先把闸门打开。
+    plugin._is_game_active = True
 
     card = build_taunt_card(trigger="on_player_default", text="嘴上说说而已")
     run(plugin._push_card(card))

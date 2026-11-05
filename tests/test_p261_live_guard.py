@@ -813,5 +813,5 @@ def test_the_god_mode_is_reachable_from_the_config_section() -> None:
 def test_the_version_is_bumped() -> None:
     """P26.1 的版本守卫。"""
     toml = _PLUGIN_ROOT.joinpath("plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.12.0-live-ultimate"' in toml
-    assert 'PLUGIN_VERSION = "0.12.0-live-ultimate"' in _INIT.read_text(encoding="utf-8")
+    assert 'version = "0.13.4-final-safety"' in toml
+    assert 'PLUGIN_VERSION = "0.13.4-final-safety"' in _INIT.read_text(encoding="utf-8")

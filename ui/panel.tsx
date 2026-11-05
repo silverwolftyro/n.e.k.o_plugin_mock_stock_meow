@@ -790,6 +790,9 @@ const RRM_CSS = `
 .rrm-root.rrm-live-page .rrm-anchor-market-grid .neko-scroll-area {
   flex: 1 1 0;
 }
+/* P31.0：行情卡本身**不许被压扁** —— 至少留一行完整方块的高度。
+   （截图里它被上面的巨幅 K 线挤成一条，巨号涨跌幅直接撑破卡片。） */
+.rrm-root.rrm-live-page .rrm-anchor-market-grid { min-height: 180px; }
 /* 精调区：按**内容高度**（卡片本身也是按内容高度的）。 */
 .rrm-root.rrm-live-page .rrm-trade-finetune-card .neko-scroll-area {
   flex: 0 1 auto;
@@ -797,9 +800,21 @@ const RRM_CSS = `
 /* 精调卡（买卖比例）：**按内容高度**（折叠时只有一行摘要，
    不该被拉成一个空盒子）；展开时自己长高，多余的空间让给下面。 */
 .rrm-root.rrm-live-page .rrm-trade-finetune-card { flex: 0 1 auto; }
-/* 每日动作卡 + 操作卡 **贴住右列底部** —— 主播的手够按钮，
-   而按钮上方就是「钱」。 */
-.rrm-root.rrm-live-page .rrm-daily-actions { margin-top: auto; }
+/* P30.0：右列从上到下 = 操作卡 → 持仓 → 每日动作 → 聊天框。
+   每日动作不再「贴底」（贴底会把上面的东西顶散），改成可压缩的一格。 */
+.rrm-root.rrm-live-page .rrm-daily-actions { flex: 0 1 auto; min-height: 0; }
+/* ── P30.0：猫娘点评 / 聊天框（右列最后一张，吃掉剩余高度）──────────── */
+.rrm-root.rrm-live-page .rrm-live-chat { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+.rrm-root.rrm-live-page .rrm-live-chat .neko-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 10px 8px;
+}
+.rrm-root.rrm-live-page .rrm-live-chat .neko-scroll-area { flex: 1 1 auto; min-height: 0; max-height: none; }
+.rrm-root .rrm-live-chat-line { font-size: 12px; line-height: 1.5; color: var(--muted); }
 /* ── ③ 页面标题（空闲页 / 结算页仍在用）─────────────────────────── */
 .rrm-root .neko-page-title { font-size: 24px; font-weight: 700; color: #1f2d3d; letter-spacing: 0.5px; }
 .rrm-root .neko-page-subtitle { color: #a8bacd; font-size: 13px; }
@@ -919,12 +934,14 @@ const RRM_CSS = `
 .rrm-root .neko-button.rrm-pill {
   flex: 1 1 0;
   min-width: 0;
-  height: clamp(56px, 7vh, 80px);
-  padding: 0 16px;
-  font-size: clamp(18px, 1.7vw, 28px);
+  /* P30.0：三键搬进**右侧 30% 窄列** ⇒ 高度砍到 48px 一线。
+     原来 56~80px 的巨砖在窄列里既挤爆布局又喧宾夺主。 */
+  height: clamp(44px, 4.8vh, 48px);
+  padding: 0 10px;
+  font-size: clamp(18px, 1.15vw, 24px);
   font-weight: 800;
-  letter-spacing: 2px;
-  border-radius: clamp(26px, 3.4vh, 38px);
+  letter-spacing: 1px;
+  border-radius: clamp(14px, 1.9vh, 20px);
   border: none;
   /* 真机教训：按钮被压窄时中文会**竖着排**（一字一行），难看且读不出来。
      锁死不换行，宁可两行空间也要横着排。 */
@@ -1000,24 +1017,44 @@ const RRM_CSS = `
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-/* ── P27.1：顶部概览（总资产 + 赚亏 + 现金红线）────────────────────
-   三样都是「一眼要看」的东西 ⇒ 顶格放在工具条下面。
-   里面的 BigStat 把自带的白底去掉，免得卡片里再套一层白盒子。 */
+/* ── P30.0：顶部三大数字压成**一行扁平 HUD** ────────────────────────
+   P27.1 时代是「左半格一张巨卡 + 右半格两张小卡」—— 顶部白白吃掉近 1/5 屏。
+   现在压成**三格并排的薄片**：数字统一 clamp(24px, 2.5vw, 36px)，
+   提示小字全部藏掉，只留「标签 + 数字」。 */
 .rrm-root.rrm-live-page .rrm-live-overview { flex: 0 0 auto; min-height: 0; }
-.rrm-root.rrm-live-page .rrm-live-overview .neko-card-body { gap: 6px; padding: 10px 14px 12px; }
+.rrm-root.rrm-live-page .rrm-live-overview .neko-card-body { gap: 2px; padding: 5px 10px 7px; }
 .rrm-root.rrm-live-page .rrm-live-overview .neko-stat {
   background: transparent;
   border: none;
   box-shadow: none;
 }
-/* ── P27.1：底部操作台（整条压在下沿，三键并排）────────────────────
+/* HUD 的三格：薄薄一条，卡片阴影压到最轻。 */
+.rrm-root.rrm-live-page .rrm-live-hud .neko-card {
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 12px;
+  box-shadow: 0 6px 16px rgba(133, 163, 214, 0.12);
+  padding: 0;
+}
+.rrm-root.rrm-live-page .rrm-live-hud .neko-card-title { font-size: 11px; }
+.rrm-root.rrm-live-page .rrm-live-hud .neko-stat-label { font-size: 11px; }
+.rrm-root.rrm-live-page .rrm-live-hud .rrm-stat-hint { display: none; }
+.rrm-root.rrm-live-page .rrm-live-hud .neko-text { display: none; }
+
+/* ── P30.0：操作卡（右侧窄列里的**独立**操作卡片）────────────────────
    注意：这张卡必须**原样**挂着教程锚点 rrm-anchor-trade-console
    （class 后面不许再追加别的 —— 教程按这个 class 圈焦点），
    所以这里用锚点本身当选择器，不另加 class。 */
 .rrm-root.rrm-live-page .rrm-anchor-trade-console { flex: 0 0 auto; min-height: 0; }
 .rrm-root.rrm-live-page .rrm-anchor-trade-console .neko-card-body {
-  gap: 8px;
-  padding: 10px 14px 12px;
+  gap: 6px;
+  padding: 8px 10px 10px;
+}
+/* ── P30.0：操作卡自己的滚动区（精调件的预览区自己滚）────────────── */
+.rrm-root.rrm-live-page .rrm-anchor-trade-console .neko-scroll-area {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
 }
 /* 杠杆 / 保证金输入卡：紧贴三键上方，一行排开。 */
 .rrm-root .rrm-short-panel {
@@ -1030,7 +1067,9 @@ const RRM_CSS = `
   background: rgba(91, 143, 249, 0.08);
   border: 1px solid rgba(91, 143, 249, 0.22);
 }
-.rrm-root .rrm-short-panel .neko-select { max-width: 220px; }
+/* P30.0：右列只有 30% 宽 —— 做空输入条那三个控件挤在一行里，
+   下拉框必须收窄，否则整条会折成三行、吃掉半张卡的高度。 */
+.rrm-root .rrm-short-panel .neko-select { max-width: 130px; }
 .rrm-root .rrm-short-label { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .rrm-root .rrm-short-count { font-size: 12px; font-weight: 700; color: #d6486a; }
 /* ── P27.1：资产曲线（K 线正下方，深色画布 + 图例）────────────────── */
@@ -1661,7 +1700,202 @@ const RRM_CSS = `
   background: rgba(91, 143, 249, 0.08);
   border: 1px solid rgba(91, 143, 249, 0.22);
 }
+
+/* ── P29.0：赌场老虎机 / 大字报风格（行情卡翻成大卡）──────────────────
+   行情卡从「金融终端的小方块」翻成「老虎机滚轮停下」的大卡片：
+   巨型涨跌百分比当主角，名称 / 现价缩成两行小字。
+   涨跌色用**赌场那对色**：珊瑚粉 #FF6B81（涨）/ 薄荷绿 #5AC8A8（跌）。
+
+   高光扫过用 **box-shadow 的内阴影位移**做（背景图那套写法会把
+   定位相关的词写进 RRM_CSS —— 守卫连那个词都不许有）；
+   动效走 transition —— 面板禁关键帧与 animation（0.8.0 崩 UI 的根因之一），
+   高光扫过由 JS 定时切 class 触发（SLOT_SHEEN_*）。 */
+.rrm-root .neko-card.rrm-slot {
+  background-color: rgba(255, 255, 255, 0.88);
+  background-image: linear-gradient(180deg, rgba(244, 250, 255, 0.96) 0%, rgba(255, 255, 255, 0.9) 100%);
+  border-radius: 20px;
+  padding: 12px 14px;
+  /* P31.0：每个行情方块**至少**这么高 —— 不许被网格压成一条。
+     （压扁之后巨号涨跌幅会撑破卡片，看着像坏掉了。） */
+  min-height: 100px;
+  /* P31.0：撑出去的部分一律**裁掉**，绝不许溢出到卡片外面。 */
+  overflow: hidden;
+  box-shadow: inset -160px 0 70px rgba(91, 143, 249, 0), 0 14px 34px rgba(133, 163, 214, 0.15);
+}
+/* P33.0：点击热区 —— 宿主的 Card 不转发 onClick，所以点击挂在**内层**
+   这层 div 上。它是卡片内容的**第一层** ⇒ 头 / 脚都还在里面（两层结构不变）。
+   display:flex + column + gap:8px ⇒ 把原来那层的竖排间距还回来
+   （宿主那张卡片的内容层是 grid，间距由插件改成 8px；多包一层就得自己补上）。 */
+.rrm-root .rrm-slot .rrm-slot-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+/* P33.0：整张方块卡都是点击热区 ⇒ 指针也整张都变手型。 */
+.rrm-root .rrm-slot,
+.rrm-root .rrm-slot .rrm-slot-body {
+  cursor: pointer;
+}
+/* P33.0：被点中的那张行情卡 ⇒ **选中态**。
+   玩家一眼就知道"我现在盯的是哪只"（描边 + 蓝色底 + 外圈光晕）。
+   ⚠ 用 outline 而不是 border ⇒ 不改变盒模型（方块不会被撑大一圈）。 */
+.rrm-root .rrm-slot.rrm-slot-selected {
+  outline: 3px solid rgba(91, 143, 249, 0.9);
+  outline-offset: -3px;
+  background-image: linear-gradient(180deg, rgba(224, 235, 255, 0.98) 0%, rgba(238, 244, 255, 0.96) 100%);
+}
+/* 选中态的两条光影分支：扫过时 / 没扫过时（内阴影的位置不同）。
+   写在 sheen 规则**旁边**即可 —— 这两条的选择器比 sheen 规则多一级，
+   所以光晕不会被 sheen 盖掉，而光扫到选中卡上时内阴影也不会突然变秃。 */
+.rrm-root .rrm-slot.rrm-slot-selected:not(.rrm-slot-sheen) {
+  box-shadow: inset -160px 0 70px rgba(91, 143, 249, 0), 0 0 0 4px rgba(91, 143, 249, 0.22), 0 14px 34px rgba(91, 143, 249, 0.28);
+}
+.rrm-root .rrm-slot.rrm-slot-selected.rrm-slot-sheen {
+  box-shadow: inset 160px 0 70px rgba(91, 143, 249, 0.16), 0 0 0 4px rgba(91, 143, 249, 0.22), 0 14px 34px rgba(91, 143, 249, 0.28);
+}
+/* 切上 rrm-slot-sheen ⇒ 一道柔和的蓝白高光从左扫到右；撤掉 class ⇒
+   立刻归位（基础态没有 transition，所以回位是瞬时的，不会倒着扫一遍）。 */
+.rrm-root .rrm-slot.rrm-slot-sheen {
+  box-shadow: inset 160px 0 70px rgba(91, 143, 249, 0.16), 0 14px 34px rgba(133, 163, 214, 0.15);
+  transition: box-shadow 1500ms ease-in-out;
+}
+.rrm-root .rrm-slot.rrm-slot-sheen:nth-child(2) { transition-delay: 160ms; }
+.rrm-root .rrm-slot.rrm-slot-sheen:nth-child(3) { transition-delay: 320ms; }
+.rrm-root .rrm-slot.rrm-slot-sheen:nth-child(4) { transition-delay: 480ms; }
+/* 卡内三行：名称 / 现价 / 涨跌（涨跌是主角，巨型）。 */
+.rrm-root .rrm-slot .rrm-tile-head { flex-direction: column; align-items: flex-start; gap: 2px; }
+.rrm-root .rrm-slot .rrm-tile-foot { flex-direction: column; align-items: flex-start; gap: 6px; }
+/* P30.0：老虎机方块再放大一档 —— 数字是主角，名字 / 现价只做陪衬。 */
+.rrm-root .rrm-slot .rrm-stock-name { flex: 0 0 auto; font-size: 15px; }
+.rrm-root .rrm-slot .rrm-price { margin-left: 0; font-size: 17px; }
+.rrm-root .rrm-slot canvas.rrm-spark,
+.rrm-root .rrm-slot div.rrm-spark { flex: 0 0 auto; height: 34px; }
+/* P31.0：巨号涨跌胶囊**必须有上限** ——
+   数字再大也不许把方块撑破（原来是 clamp(30px, 3.6vw, 62px)，一撞上
+   四位数涨跌就溢出卡片了）。行高锁死 + overflow 裁切 + 不许换行。 */
+.rrm-root .rrm-slot .rrm-change-pill {
+  padding: 4px 14px;
+  border-radius: 14px;
+  font-size: clamp(24px, 2.6vw, 44px);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.5px;
+  max-height: 58px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+/* 赌场配色：涨 = 珊瑚粉 #FF6B81，跌 = 薄荷绿 #5AC8A8（巨号数字，不抢戏）。
+   ⚠ 这三条必须 !important —— 涨跌色在源码里是**内联**的（changeColor，
+   守卫钉死「涨跌颜色必须走 changeColor」），要换成赌场那套只能压过去。 */
+.rrm-root .rrm-slot .rrm-change-up { background: rgba(255, 107, 129, 0.12); color: #ff6b81 !important; }
+.rrm-root .rrm-slot .rrm-change-down { background: rgba(90, 200, 168, 0.14); color: #5ac8a8 !important; }
+.rrm-root .rrm-slot .rrm-change-flat { background: rgba(238, 243, 250, 0.85); color: #7b8ca6 !important; }
+
+/* ── P29.0：街机档（第一关）**弱化一切非核心文字** ─────────────────────
+   规矩：除「买 / 卖 / 钱」三类语义外，其余文字一律缩小或折叠。
+   买 / 卖 = 底部两颗胶囊大按钮（一个字都不动）；
+   钱 = 顶部概览的**现钱**数字与它的标签（也不许动）。 */
+.rrm-root.rrm-arcade-simple .rrm-anchor-overview .neko-card-title { display: none; }
+.rrm-root.rrm-arcade-simple .rrm-anchor-overview .neko-stat-label { display: none; }
+.rrm-root.rrm-arcade-simple .rrm-anchor-overview .rrm-stat-hint { display: none; }
+.rrm-root.rrm-arcade-simple .rrm-anchor-overview .neko-text { display: none; }
+/* 现钱那格的标签必须留着 —— 「钱」是街机档三根支柱之一。 */
+.rrm-root.rrm-arcade-simple .rrm-anchor-overview .rrm-overview-cash .neko-stat-label { display: inline-block; }
+.rrm-root.rrm-arcade-simple .rrm-slot .rrm-stock-name { font-size: 11px; }
+.rrm-root.rrm-arcade-simple .rrm-slot .rrm-price { font-size: 12px; }
+.rrm-root.rrm-arcade-simple .rrm-slot .rrm-avatar { display: none; }
+.rrm-root.rrm-arcade-simple .rrm-anchor-market-grid .neko-card-title { font-size: 12px; }
+.rrm-root.rrm-arcade-simple .rrm-anchor-market-grid .neko-text { font-size: 10px; }
+
+/* P29.0：用户说「少动效」⇒ 高光扫过立刻到位（不扫了），猫爪那一段
+   （RRM_CSS_PAW）里也有同样的一条。 */
+@media (prefers-reduced-motion: reduce) {
+  .rrm-root .rrm-slot.rrm-slot-sheen { transition: none; }
+}
 `
+
+/**
+ * P29.0：**纯 CSS 猫爪**（四瓣肉垫 + 一个掌垫）—— 手绘，不带任何素材。
+ *
+ * 为什么单独一段（不并进 RRM_CSS）：
+ *   RRM_CSS 有两条守卫红线（tests/test_p210_ui.py / test_p90_visual.py）：
+ *     ① 零 ``content:``（零伪元素）；
+ *     ② 零 ``@keyframes``、零 ``animation``（只许 ``animation: none``）。
+ *   猫爪必须靠 ``::before`` / ``::after`` 画（掌垫 + 四瓣肉垫）⇒ 只能住在
+ *   **另一段**注入的 CSS 里；这一段因此是全面板唯一允许出现伪元素的地方。
+ *
+ * 动效：呼吸（scale）+ 摆动（rotate）由 **JS 定时切 class + CSS transition**
+ * 实现 —— 面板一条 ``@keyframes`` / ``animation`` 都不许有（0.8.0 崩 UI
+ * 的根因之一）。``prefers-reduced-motion: reduce`` ⇒ 过渡全关，猫爪静止。
+ *
+ * 定位：**跟在新手教程正在指向的按钮旁**（教练条那一排），并且
+ * ``pointer-events: none`` ⇒ 绝不挡住玩家点按钮。
+ */
+const RRM_CSS_PAW = `
+.rrm-root .rrm-paw {
+  display: inline-block;
+  width: 42px;
+  height: 46px;
+  flex: 0 0 auto;
+  vertical-align: middle;
+  pointer-events: none;
+  transform: translateY(-2px) rotate(-10deg);
+  transition: transform 1100ms ease-in-out;
+}
+.rrm-root .rrm-paw.rrm-paw-breathe {
+  transform: translateY(-5px) rotate(-3deg) scale(1.08);
+}
+/* 四瓣肉垫：一颗空心圆 + 四个 box-shadow 副本（弧形排开，像猫爪趾）。 */
+.rrm-root .rrm-paw::before {
+  content: "";
+  display: block;
+  width: 11px;
+  height: 11px;
+  margin: 12px auto 0 auto;
+  border-radius: 50%;
+  box-shadow:
+    -12px 5px 0 -1px #ffc2d1,
+    12px 5px 0 -1px #ffc2d1,
+    -5px -5px 0 -1px #ffd7e1,
+    5px -5px 0 -1px #ffd7e1;
+}
+/* 掌垫：一个大扁圆（浅色清丽风，配面板的珊瑚粉系）。 */
+.rrm-root .rrm-paw::after {
+  content: "";
+  display: block;
+  width: 26px;
+  height: 18px;
+  margin: 1px auto 0 auto;
+  border-radius: 50% 50% 44% 44% / 64% 64% 36% 36%;
+  background: linear-gradient(180deg, #ffe3ec 0%, #ffb3c6 100%);
+  box-shadow: 0 4px 10px rgba(232, 69, 95, 0.22);
+}
+@media (prefers-reduced-motion: reduce) {
+  .rrm-root .rrm-paw {
+    transition: none;
+    transform: translateY(-2px) rotate(-8deg);
+  }
+}
+`
+
+/**
+ * P29.0：猫爪呼吸的节奏（毫秒）。
+ *
+ * 面板没有 ``@keyframes`` / ``animation`` ⇒ 动效 = 定时切 class + transition。
+ * 呼气（放大 + 摆正）用 ``PAW_BREATHE_ON_MS``，然后歇半口气再吸回来。
+ */
+const PAW_BREATHE_PERIOD_MS = 2400
+const PAW_BREATHE_ON_MS = 1100
+
+/**
+ * P29.0：老虎机卡**高光扫过**的节奏（毫秒）。
+ *
+ * 扫一遍 1.5s（CSS transition 的时长），歇 2.7s 再扫 —— 慢、低调，
+ * 不许抢了涨跌数字的戏。
+ */
+const SLOT_SHEEN_PERIOD_MS = 4200
+const SLOT_SHEEN_ON_MS = 1600
 
 function money(value: number | undefined | null): string {
   if (value === undefined || value === null) return "—"
@@ -1876,7 +2110,11 @@ function BigStat(props: {
       props.value
     ),
     props.hint
-      ? h("span", { style: { fontSize: "12px", color: "var(--muted)" } }, props.hint)
+      ? h(
+          "span",
+          { className: "rrm-stat-hint", style: { fontSize: "12px", color: "var(--muted)" } },
+          props.hint
+        )
       : null
   )
 }
@@ -2309,8 +2547,26 @@ function EquityBattle(props: {
       return
     }
     try {
-      const width = Number(canvas.width) || 240
-      const height = Number(canvas.height) || 72
+      // ── P31.0：画布按**实际显示宽度**铺，且按 devicePixelRatio 放大 ──
+      // 以前画布只有 320px 宽，却被 ``width: 100%`` 拉到整行 ——
+      // 一拉就糊，锯齿全被抹平，看着像一条「画出来的直线」。
+      // 现在画布分辨率 = 显示宽度 × 像素比 ⇒ 每一根锯齿都咬得住。
+      const cssWidth = Math.max(
+        120,
+        Number((canvas as any).clientWidth) || props.width || 320
+      )
+      const cssHeight = Math.max(48, props.height || 72)
+      const ratio =
+        typeof window !== "undefined" ? Number((window as any).devicePixelRatio) : 1
+      const canScale = typeof ctx.setTransform === "function"
+      const scale = canScale && ratio > 0 && ratio <= 4 ? ratio : 1
+      const width = cssWidth
+      const height = cssHeight
+      canvas.width = Math.round(width * scale)
+      canvas.height = Math.round(height * scale)
+      if (canScale) {
+        ctx.setTransform(scale, 0, 0, scale, 0, 0)
+      }
       ctx.clearRect(0, 0, width, height)
       const series = [playerValues, yuiValues]
       const colors = [EQUITY_PLAYER_COLOR, EQUITY_YUI_COLOR]
@@ -2338,6 +2594,21 @@ function EquityBattle(props: {
         const values = series[s]
         const color = colors[s]
         if (values.length === 0) continue
+        // ── P31.0：玩家线下面垫一层**极淡的填充** ──────────────
+        // 锯齿的上下摆动因此有了「面积」⇒ 一眼看见心跳，而不是一条细线。
+        if (s === 0 && values.length > 1) {
+          ctx.beginPath()
+          ctx.moveTo(pad, height - pad)
+          for (let index = 0; index < values.length; index += 1) {
+            const x = pad + step * index
+            const y = height - pad - ((values[index] - min) / span) * (height - pad * 2)
+            ctx.lineTo(x, y)
+          }
+          ctx.lineTo(pad + step * (values.length - 1), height - pad)
+          ctx.closePath()
+          ctx.fillStyle = "rgba(91, 143, 249, 0.14)"
+          ctx.fill()
+        }
         ctx.strokeStyle = color
         ctx.lineWidth = 2
         ctx.lineJoin = "round"
@@ -2436,7 +2707,8 @@ function RosterAvatar(props: { alias?: string }) {
 /**
  * P8.0：**行情方块卡片**（网格单元）。
  *
- * 一格 = 股票名（+ 群友头像）+ 微型折线 + **巨大**涨跌百分比 + 现价。
+ * P29.0：翻成**老虎机大卡** —— 名称 / 现价 / 涨跌**三行竖排**，
+ * 涨跌百分比是主角（巨型，字号走 vw 自适应），走势缩在最后当底纹。
  *
  * 用宿主 `Card` 组件 ⇒ 它是网格容器的**直接**子元素（0.8.0 的第四条根因
  * 就是自定义 div 包裹层把卡片挤出 flex 流），布局由宿主负责，不会挤成一团。
@@ -2444,55 +2716,79 @@ function RosterAvatar(props: { alias?: string }) {
  * 三个信息维度（走势 / 现价 / 涨跌）的标签走 i18n，用原生 ``title`` 属性
  * 当悬浮提示 —— 不加任何 CSS，也不破坏方块卡的紧凑排版。
  */
-function StockTile(props: { stock: Stock; t: Translate }) {
+function StockTile(props: {
+  stock: Stock
+  t: Translate
+  sheen?: boolean
+  selected?: boolean
+  onClick?: () => void
+}) {
   const stock = props.stock
   const t = props.t
   const up = Number(stock.change || 0) >= 0
   const change = Number(stock.change || 0)
   const tone = change > 0.001 ? "up" : change < -0.001 ? "down" : "flat"
-  // P9.0：卡片改成**设计图的两层结构** ——
-  //   上层：股票名（+ 群友头像）  ····  右侧是涨跌胶囊
-  //   下层：迷你走势（带渐变面积）  ····  右侧是现价
+  // P29.0：行情卡翻成**老虎机大卡** —— 名称 / 现价 / 涨跌三行竖排，
+  // 涨跌百分比是主角（巨型，vw 自适应）；涨跌色由 CSS 压成赌场配色
+  // （珊瑚粉 / 薄荷绿，见 RRM_CSS 里的 .rrm-slot .rrm-change-*）。
+  //
+  // P33.0：卡片**可点** —— 点了就切主 K 线（外加一层选中态）。
+  // 宿主的 ``Card`` 只渲染 className（不吃 onClick）⇒ 点击挂在**内层**
+  // 那层 ``div`` 上（外层仍是卡片的直接子元素，不破坏 0.8.0 的布局红线）。
+  const tileClass = [
+    "rrm-tile",
+    "rrm-slot",
+    props.sheen ? "rrm-slot-sheen" : "",
+    props.selected ? "rrm-slot-selected" : "",
+  ]
+    .filter(Boolean)
+    .join(" ")
   return h(
     Card,
-    { className: "rrm-tile" },
+    {
+      className: tileClass,
+    },
     h(
       "div",
-      { className: "rrm-tile-head" },
+      { className: "rrm-slot-body", onClick: props.onClick },
       h(
-        "span",
-        { className: "rrm-stock-name" },
-        h(RosterAvatar, { alias: stock.roster_alias }),
+        "div",
+        { className: "rrm-tile-head" },
         h(
           "span",
-          { className: "rrm-tile-name-text" },
-          stock.display_name || stock.name
+          { className: "rrm-stock-name" },
+          h(RosterAvatar, { alias: stock.roster_alias }),
+          h(
+            "span",
+            { className: "rrm-tile-name-text", title: stock.display_name || stock.name },
+            stock.display_name || stock.name
+          )
+        ),
+        h(
+          "span",
+          { className: "rrm-price", title: t("visual.price_title") },
+          money(stock.price)
         )
       ),
       h(
-        "span",
-        {
-          className: `rrm-change-pill rrm-change-${tone}`,
-          title: t("visual.change_title"),
-          style: { color: changeColor(stock.change) },
-        },
-        changeText(stock.change)
-      )
-    ),
-    h(
-      "div",
-      { className: "rrm-tile-foot" },
-      h(Sparkline, {
-        points: (stock.spark || []).map((point) => point[1]),
-        up,
-        title: t("visual.trend_title"),
-        width: 200,
-        height: 30,
-      }),
-      h(
-        "span",
-        { className: "rrm-price", title: t("visual.price_title") },
-        money(stock.price)
+        "div",
+        { className: "rrm-tile-foot" },
+        h(
+          "span",
+          {
+            className: `rrm-change-pill rrm-change-${tone}`,
+            title: t("visual.change_title"),
+            style: { color: changeColor(stock.change) },
+          },
+          changeText(stock.change)
+        ),
+        h(Sparkline, {
+          points: (stock.spark || []).map((point) => point[1]),
+          up,
+          title: t("visual.trend_title"),
+          width: 200,
+          height: 30,
+        })
       )
     )
   )
@@ -2586,8 +2882,17 @@ const MIN_KLINE_POINTS = 5
  * K 线必须**再让**一截高度出来（下面要塞资产曲线，右侧还要塞持仓卡）：
  * 压到 ``clamp(210px, 26vh, 330px)`` —— 下限仍守在 200px 以上
  * （它依然是主视觉，不能塌成一根线）。
+ *
+ * P30.0：左右改成 70/30 之后，左列宽了 10%，右列的操作件也压了一轮 ——
+ * K 线重新拿回**高度**：拉高到 ``clamp(240px, 34vh, 460px)``，
+ * 深色画布在左列里占满一整块，压迫感回来了。
+ *
+ * P31.0：但左列下方的**行情卡**被挤扁了（截图里那排「今天在涨的这些」
+ * 压成一条，巨号涨跌幅直接撑破方块）。于是把高度**让**回去一截：
+ * ``clamp(220px, 30vh, 400px)`` —— K 线仍然是主视觉，但行情卡拿得到
+ * 至少一行完整方块的高度。
  */
-const KLINE_HEIGHT_CSS = "clamp(210px, 26vh, 330px)"
+const KLINE_HEIGHT_CSS = "clamp(220px, 30vh, 400px)"
 
 function Kline(props: {
   points: KlinePoint[]
@@ -2974,6 +3279,28 @@ function TutorialOverlay(props: {
   const step = tutorial.step || null
   const stepTitle = step && step.title_key ? t(step.title_key) : ""
   const stepBody = step && step.body_key ? t(step.body_key) : ""
+  // P29.0：CSS 猫爪的**呼吸** —— 面板禁 @keyframes / animation，
+  // 所以是「JS 定时切 class + CSS transition」（幽灵提示同一套路）。
+  const [pawBreathe, setPawBreathe] = useState(false)
+  useEffect(() => {
+    if (phase !== "greet" && phase !== "step") return
+    let hideTimer: any = 0
+    const timer = setInterval(() => {
+      setPawBreathe(true)
+      hideTimer = setTimeout(() => setPawBreathe(false), PAW_BREATHE_ON_MS)
+    }, PAW_BREATHE_PERIOD_MS)
+    return () => {
+      clearInterval(timer)
+      if (hideTimer) clearTimeout(hideTimer)
+    }
+  }, [phase])
+  // 猫爪：纯 CSS 画（四瓣肉垫 + 一个掌垫），跟在新手教程正在指的按钮旁。
+  // ``pointer-events: none`` ⇒ 绝不挡住玩家点按钮。
+  const renderPaw = () =>
+    h("span", {
+      className: pawBreathe ? "rrm-paw rrm-paw-breathe" : "rrm-paw",
+      title: t("panel.paw_hint"),
+    })
 
   if (phase === "greet") {
     return h(
@@ -2999,6 +3326,7 @@ function TutorialOverlay(props: {
           "div",
           { className: "neko-button-group" },
           h(Button, { onClick: props.onBegin, children: t("tutorial.greet.begin") }),
+          renderPaw(),
           h(Button, { tone: "default", onClick: props.onSkip, children: t("tutorial.step.skip") })
         ),
       }
@@ -3031,6 +3359,7 @@ function TutorialOverlay(props: {
           "div",
           { className: "neko-button-group" },
           h(Button, { onClick: props.onAdvance, children: t("tutorial.step.next") }),
+          renderPaw(),
           h(Button, { tone: "default", onClick: props.onSkip, children: t("tutorial.step.skip") })
         )
       )
@@ -3571,6 +3900,21 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
     setGuideOpen(true)
   }, [onboarding.auto_open])
 
+  // P29.0：老虎机卡的**高光扫过** —— 面板禁 @keyframes / animation，
+  // 所以是「JS 定时切 class + CSS transition」（危机红光同一套路）。
+  const [slotSheen, setSlotSheen] = useState(false)
+  useEffect(() => {
+    let hideTimer: any = 0
+    const timer = setInterval(() => {
+      setSlotSheen(true)
+      hideTimer = setTimeout(() => setSlotSheen(false), SLOT_SHEEN_ON_MS)
+    }, SLOT_SHEEN_PERIOD_MS)
+    return () => {
+      clearInterval(timer)
+      if (hideTimer) clearTimeout(hideTimer)
+    }
+  }, [])
+
   // ── P20.0：玩家自报名号（**戏名**）───────────────────────────────
   //
   // 后端把玩家上次的自报名号放进 `state.player_name`（空闲态回填）。
@@ -4100,7 +4444,11 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
   const sortedStocks = sortStocksByHotness(stocks)
   // 防御性上限（载荷不可信）：引擎的 initial_symbols = 20，60 足够宽松。
   const visibleStocks = sortedStocks.slice(0, 60)
-  const hiddenStockCount = Math.max(0, stocks.length - visibleStocks.length)
+  // P29.0：老虎机**只留一屏**的大卡 —— 街机档 4 张、其余档位 6 张，
+  // 其余的折成一行字（「还有 N 只」）。观众第一眼落在最刺激的那几只上。
+  const slotMarketLimit = arcadeSimple ? 4 : 6
+  const slotStocks = visibleStocks.slice(0, slotMarketLimit)
+  const hiddenStockCount = Math.max(0, stocks.length - slotStocks.length)
   // ── P21.0：三档 UI 密度（渐进式简化）──────────────────────────────
   //
   // 只影响**显示**：底层的计算、费率、判定一个字都没动。
@@ -4150,6 +4498,27 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
 
   const actionById = (id: string): HostedAction | undefined =>
     (actions || []).find((item) => item.id === id)
+
+  // ── P33.0：点行情卡 ⇒ 主 K 线切过去 + 告诉 Yui 玩家在看哪只 ──────
+  //
+  // 三件事一起做：
+  // ① 主视觉的 K 线换成这只标的（``klineStockPick``）；
+  // ② 那张卡打上**选中态**（玩家一眼知道自己在盯哪只）；
+  // ③ 后端给 Yui 递一条轻量事实（"玩家正在盯 XXX"）—— 她能顺嘴搭腔。
+  const focusStock = (stock: Stock) => {
+    const id = String((stock && stock.id) || "")
+    if (!id) return
+    setKlineStockPick(id)
+    try {
+      props.api
+        .call("watch_stock", { stock_id: id }, { userInitiated: true })
+        .catch((error: any) => {
+          showToast(String((error && error.message) || error), "danger")
+        })
+    } catch (_error) {
+      // 面板这一侧坏了也不能把整局带崩（切图与选中态已经生效）。
+    }
+  }
 
   // ── P7.4：动作失败后把上下文拉回来 ────────────────────────────
   // 宿主的上下文不轮询，不主动拉的话面板会一直停在旧状态
@@ -5318,6 +5687,18 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
         ? `${t("panel.mode_classic")} · ${report.mode_name || modeText}`
         : "—"
 
+    // ── P32.0：结局文案分流 ──────────────────────────────────────
+    //   真机事故（2026-11-05）：街机档撑满 30 天、**活着**走到结算日，
+    //   结算页却挂着「你连这个游戏都玩不过」和【不服再来？】——
+    //   两套结局文案混用，玩家刚打完一场漂亮的仗就被指着鼻子骂。
+    //
+    //   口径只有一条：**有没有真破产**（现金归零 / 负债）。
+    //   存活 ⇒ 专属骄傲文案 + 正向按钮；破产 ⇒ 原来的反诈警告与破防文案。
+    const alivePraise = String(
+      report.survivor_praise ||
+        t("settlement.survived_praise", { days: report.days_survived })
+    )
+
     return (
       <Page className="rrm-root" title={t("panel.title")} subtitle={t("panel.subtitle")}>
         <Stack gap={12}>
@@ -5361,10 +5742,18 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
                   { key: "trades", label: t("panel.trades"), value: report.trade_count },
                   {
                     key: "reason",
-                    label: t("panel.death_reason"),
-                    value: enumText(t, "death_reason", report.death_reason),
+                    // P32.0：存活结局**不许**再挂"破产原因"这个标签
+                    //（值本来就是空的，只会让整页像在报丧）。
+                    label: deadReport ? t("panel.death_reason") : t("panel.alive_state"),
+                    value: deadReport
+                      ? enumText(t, "death_reason", report.death_reason)
+                      : t("panel.alive_state_value"),
                   },
-                  { key: "title", label: t("panel.death_title"), value: report.death_title || "—" },
+                  {
+                    key: "title",
+                    label: deadReport ? t("panel.death_title") : t("panel.alive_praise_label"),
+                    value: deadReport ? report.death_title || "—" : alivePraise,
+                  },
                   {
                     key: "ending",
                     label: t("panel.ending"),
@@ -5415,13 +5804,29 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
               ) : null}
               {/* P5.5 改动 3：猫娘沉默旁白（在猫娘播报之后） */}
               {report.catgirl_silence ? <Text>{report.catgirl_silence}</Text> : null}
-              <Text>{report.anti_fraud_notice || ""}</Text>
-              {/* P8.1：结算完别让玩家干瞪眼 —— 给一个**带嘲讽**的再来一局。 */}
+              {/* ── P32.0：结局文案分流 ───────────────────────────────
+                  破产 ⇒ 原来的反诈警告 + 破防文案（**原封不动**）。
+                  存活 ⇒ **一句都不许出现**破产文案，改成专属骄傲文案。── */}
+              {deadReport ? (
+                <Text>{report.anti_fraud_notice || ""}</Text>
+              ) : (
+                <>
+                  <Text>{alivePraise}</Text>
+                  <Text>{t("settlement.survived_praise_more")}</Text>
+                  <Text>{t("settlement.survived_footer")}</Text>
+                </>
+              )}
+              {/* P8.1：结算完别让玩家干瞪眼 —— 破产给**带嘲讽**的再来一局，
+                  存活给**正向**的再来一局（P32.0：别让活下来的人挨骂）。 */}
               {joinAction ? (
                 <Inline gap={8} align="center">
                   <ActionButton
                     action={joinAction}
-                    label={t("panel.settlement_again")}
+                    label={
+                      deadReport
+                        ? t("panel.settlement_again")
+                        : t("panel.settlement_again_alive")
+                    }
                     tone="primary"
                     values={{ mode: "classic_arcade" }}
                     onError={onActionError}
@@ -5985,6 +6390,8 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
     <Page className={`${rootClass} rrm-live-page${arcadeSimple ? " rrm-arcade-simple" : ""}`}>
       <Stack className={`${stageClass} rrm-live-stage`} gap={8}>
         {h("style", null, RRM_CSS)}
+        {/* P29.0：CSS 猫爪那一段（唯一允许出现伪元素的地方，见 RRM_CSS_PAW）。 */}
+        {h("style", null, RRM_CSS_PAW)}
         {/* ── P18.0：动态聚焦引导（开场 / 上课 / 结课）───────────────── */}
         {h(TutorialOverlay, {
           tutorial: tutorial,
@@ -6138,86 +6545,78 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
         {/* ── P23.2：节奏卡与 Yui 模式**已经搬进上面那行工具条** ─────
             （自动 / 手动依然一眼可见，但不再各占一块地方。） */}
 
-        {/* ══ P27.1：顶部概览（总资产 + 赚亏 + 现金红线）══════════════
-            参照金融小游戏的顶栏：左半格是**大字总资产**，右半格是
-            两张小卡（赚亏 / 现金红线）。
-            这三样都是「一眼要看」的 ⇒ 顶格放在工具条下面。
-
-            右半格那两格用宿主 ``Grid``（等宽两列）——
-            宿主 Grid 只能等宽，但这里要的正好是两格等宽。── */}
-        <Grid cols={2} gap={8} className="rrm-anchor-overview rrm-live-overview">
+        {/* ══ P30.0：顶部三大数字压成**一行扁平 HUD** ══════════════════
+            P27.1 时代这里是「一张巨卡 + 两张小卡」，白白吃掉近 1/5 屏。
+            现在三格并排、数字统一 clamp(24px, 2.5vw, 36px)，
+            提示小字藏掉 —— 顶部只留「一眼要看」的三个数。
+            「跟 Yui 的比分」那句搬去了右列的聊天框（那里才是说话的地方）。── */}
+        <Grid cols={3} gap={8} className="rrm-anchor-overview rrm-live-overview rrm-live-hud">
           <Card title={t("panel.overview_assets_title")}>
-            <Stack gap={6}>
+            <BigStat
+              label={assetsLabel}
+              value={money(totalAssets)}
+              hint={t("visual.assets_hint", { stage: stageLabel })}
+              color={flashColor}
+              size="clamp(24px, 2.5vw, 36px)"
+            />
+          </Card>
+          <Card title={t("visual.pnl_title")}>
+            <BigStat
+              label={t("visual.total_pnl")}
+              value={`${pnlShown > 0 ? "+" : ""}${money(pnlShown)}`}
+              hint={pnlHint}
+              color={pnlColor}
+              size="clamp(24px, 2.5vw, 36px)"
+              pop={pnlPop}
+              // P23.0：老虎机闪光（赚绿 / 亏红）。
+              glow={pnlFlash}
+            />
+          </Card>
+          <Card className="rrm-overview-cash" title={t("panel.overview_cash_title")}>
+            <Stack gap={2}>
+              {/* P14.0：资金水位条 —— 街机档默认藏起来，
+                  但教程圈到它的时候强制显示（锚点还在它身上）。 */}
+              {showGauge
+                ? h(CashGauge, {
+                    cash: cash,
+                    bill: nextBill,
+                    crisis: cashCrisis,
+                    alarmOn: gaugeAlarm,
+                    t: t,
+                    // 前两关压成**一行字**（完整的水位条在那里是干扰）。
+                    compact: simpleUi,
+                  })
+                : null}
               <BigStat
-                label={assetsLabel}
-                value={money(totalAssets)}
-                hint={t("visual.assets_hint", { stage: stageLabel })}
-                color={flashColor}
-                size="clamp(34px, 4.4vw, 72px)"
+                label={cashLabel}
+                value={money(state.cash)}
+                hint={stageHint}
+                // P14.0：现金跌破生活费红线 ⇒ 数字**变红并轻微闪烁**。
+                color={
+                  cashCrisis
+                    ? gaugeAlarm
+                      ? "rgba(214, 72, 106, 0.45)"
+                      : "var(--danger)"
+                    : undefined
+                }
+                size="clamp(24px, 2.5vw, 36px)"
+                // P23.0：濒危发病 ① —— 资金数字**随机抖动**。
+                shake={cashShake}
               />
-              {/* 与 Yui 的对比：领先 / 落后都直说，不粉饰。 */}
-              <Text>{yuiCompareText}</Text>
             </Stack>
           </Card>
-          <Grid cols={2} gap={8}>
-            <Card title={t("visual.pnl_title")}>
-              <BigStat
-                label={t("visual.total_pnl")}
-                value={`${pnlShown > 0 ? "+" : ""}${money(pnlShown)}`}
-                hint={pnlHint}
-                color={pnlColor}
-                size="clamp(24px, 2.8vw, 44px)"
-                pop={pnlPop}
-                // P23.0：老虎机闪光（赚绿 / 亏红）。
-                glow={pnlFlash}
-              />
-            </Card>
-            <Card title={t("panel.overview_cash_title")}>
-              <Stack gap={6}>
-                {/* P14.0：资金水位条 —— 街机档默认藏起来，
-                    但教程圈到它的时候强制显示（锚点还在它身上）。 */}
-                {showGauge
-                  ? h(CashGauge, {
-                      cash: cash,
-                      bill: nextBill,
-                      crisis: cashCrisis,
-                      alarmOn: gaugeAlarm,
-                      t: t,
-                      // 前两关压成**一行字**（完整的水位条在那里是干扰）。
-                      compact: simpleUi,
-                    })
-                  : null}
-                <BigStat
-                  label={cashLabel}
-                  value={money(state.cash)}
-                  hint={stageHint}
-                  // P14.0：现金跌破生活费红线 ⇒ 数字**变红并轻微闪烁**。
-                  color={
-                    cashCrisis
-                      ? gaugeAlarm
-                        ? "rgba(214, 72, 106, 0.45)"
-                        : "var(--danger)"
-                      : undefined
-                  }
-                  size="clamp(20px, 2.2vw, 34px)"
-                  // P23.0：濒危发病 ① —— 资金数字**随机抖动**。
-                  shake={cashShake}
-                />
-              </Stack>
-            </Card>
-          </Grid>
         </Grid>
 
-        {/* ══ P23.2：左右分栏（宿主 ``Split``，``ratio="3fr 2fr"`` = 60/40）══
+        {/* ══ P30.0：左右分栏（宿主 ``Split``，``ratio="7fr 3fr"`` = 70/30）══
              P27.1 之后的分工：
-             左列 = K 线主视觉（含资产曲线）+ 行情方块；
-             右列 = 连击 / 账单 + 持仓方块 + 买卖比例 + 每日动作。
-             三大数字搬去了**顶部概览**，买卖按钮搬去了**底部操作台**
-             （整条压在下沿，三键并排）。
-             宿主 ``Grid`` / ``Columns`` 只能等宽，做不到 60/40；
+             左列 = 巨幅 K 线（含资产曲线）+ 行情方块；
+             右列 = 操作卡 + 持仓 + 每日动作 + 猫娘点评 / 聊天框。
+             三大数字压成了**顶部 HUD 一行**；
+             买卖按钮搬进了**右侧独立操作卡**（不再压在下沿当砖头）。
+             宿主 ``Grid`` / ``Columns`` 只能等宽，做不到 70/30；
              ``Split`` 把 ``ratio`` 原样写进 ``--split-template`` ⇒ 原生比例。 */}
-        <Split className="rrm-live-board" ratio="3fr 2fr" gap={8}>
-          {/* ── 左列（60%）────────────────────────────────────────────── */}
+        <Split className="rrm-live-board" ratio="7fr 3fr" gap={8}>
+          {/* ── 左列（70%）────────────────────────────────────────────── */}
           <Stack className="rrm-live-col" gap={8}>
         {/* ── P7.2 ①：K 线 —— 面板最上方的**主视觉**，占满全宽 ─────── */}
         <Card title={t("panel.kline")}>
@@ -6281,8 +6680,10 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
                       player: equityPlayer,
                       yui: equityYui,
                       title: t("panel.equity_title"),
+                      // P31.0：宽度交给画布**自己量**（量不到才回落到 320），
+                      // 高度加高到 76px —— 锯齿要看得见才叫「心跳」。
                       width: 320,
-                      height: 56,
+                      height: 76,
                     })
                   : h(Text, null, t("panel.equity_empty"))
               ),
@@ -6358,11 +6759,21 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
             <Text>{t("panel.no_stocks")}</Text>
           ) : (
             <ScrollArea axis="y" className="rrm-live-scroll">
-              <Columns fluid minWidth={228} gap={8}>
-                {visibleStocks.map((stock) => h(StockTile, { key: stock.id, stock, t }))}
+              <Columns fluid minWidth={248} gap={8}>
+                {slotStocks.map((stock) =>
+                  h(StockTile, {
+                    key: stock.id,
+                    stock,
+                    t,
+                    sheen: slotSheen,
+                    // P33.0：点一下就切主 K 线 + 选中态 + 通知 Yui。
+                    selected: String(stock.id) === String(klineStockId),
+                    onClick: () => focusStock(stock),
+                  })
+                )}
               </Columns>
               {hiddenStockCount > 0 ? (
-                <Text>{t("panel.more_stocks", { count: hiddenStockCount })}</Text>
+                <Text>{t("panel.more_stocks_short", { count: hiddenStockCount })}</Text>
               ) : null}
             </ScrollArea>
           )}
@@ -6375,13 +6786,192 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
             {/* ── P27.1：左列到此为止（K 线 + 行情）────────────────── */}
           </Stack>
 
-          {/* ── 右列（40%）：**持仓 → 比例 → 每日动作** ────────────────
-              P27.1：三大数字与水位条搬去了**顶部概览**，买卖按钮搬去了
-              **底部操作台** —— 右列现在只留「动手前要看的东西」。── */}
+          {/* ── 右列（30%）：**操作卡 → 持仓 → 每日动作 → 聊天框** ─────
+              P30.0：三大数字压成了**顶部 HUD 一行**；
+              P27.1 的「底部整条操作台」整块搬进了**这张独立操作卡**：
+              标的 Select + 买卖比例滑块 + 掏钱买 / 割肉卖 / 做空，
+              三键横排钉在卡片底部（高度收到 48px 一线，不再是两块砖头）。── */}
           <Stack className="rrm-live-col" gap={8}>
-            {/* ── P27.1：三大数字（赚亏 / 现钱 / 身家）**搬去顶部概览**了 ──
-                顶部那三格是「一眼要看」的东西；
-                右列现在只留「钱相关的操作件」与「持仓」。── */}
+            {/* ══ P30.0：右侧独立操作卡 ══════════════════════════════
+                ⚠ 这张卡的 class **必须原样**是 ``rrm-anchor-trade-console``
+                （后面不许追加任何 class）—— 教程按这个 class 圈焦点。── */}
+            <Card className="rrm-anchor-trade-console" title={t("panel.trade")}>
+              <Stack gap={6}>
+                {/* ── P14.0：买 / 卖**两条**独立仓位 ───────────────────────
+                    P13 只有一个"仓位"，买和卖共用它 —— 拖一下就同时改了
+                    "买多少"和"卖多少"，本来就该分开。P14 拆成两条，
+                    左右各看各的，标的也各自带在顶上。
+
+                    P30.0：这两条从「买卖比例」那张精调卡搬进了**操作卡** ——
+                    标的、比例、三键必须**同屏可见**，主播不用来回找。
+
+                    买入那条还多一层**全局上限**：台账里别的标的占掉的额度
+                    会把它**截断**（后拉动的滑条只能拉到上限为止）——
+                    那股"拉扯"的阻力感，就是在告诉玩家他的极限在哪。 */}
+                <Grid cols={2} gap={12} className="rrm-trade-sides">
+                  {/* ── 买入这一侧 ─────────────────────────────────── */}
+                  <Stack gap={6} className="rrm-trade-side">
+                    <Inline gap={10} wrap={false} align="center" className="rrm-select-row">
+                      <Select
+                        value={effectiveStockId}
+                        options={stockOptions}
+                        onChange={(value: any) => setSelectedStock(String(value))}
+                      />
+                    </Inline>
+                    <Inline gap={8} align="center" justify="space-between">
+                      <Text>{t("panel.trade_buy_side")}</Text>
+                      <Text>{t("panel.trade_pct", { pct: Math.round(buyPositionPct) })}</Text>
+                    </Inline>
+                    {h(
+                      "div",
+                      {
+                        className: "rrm-trade-slider",
+                        // 当前比例写进 CSS 变量 ⇒ 轨道渐变能画出"已填充到哪"。
+                        // 轨道满格 = 本轮**上限**（不是 100%）—— 上限被占满时
+                        // 整条填满，玩家一眼看见自己已经顶到天花板。
+                        style: { "--rrm-trade-fill": `${Math.round(buyFillPct * 10) / 10}%` },
+                      },
+                      h(Slider, {
+                        min: 0,
+                        // **上限不是 100**：别的标的占掉的额度会把这条滑条截断。
+                        max: Math.max(1, Math.floor(capPct)),
+                        step: 1,
+                        value: buyPositionPct,
+                        showValue: false,
+                        // 上限被吃光了 ⇒ 这条滑条**锁死**（连 1% 都分不到）。
+                        disabled: busy || capPct <= 0,
+                        onChange: (value: any) => {
+                          setPositionPct(Number(value))
+                          clearTradeDrafts()
+                        },
+                      })
+                    )}
+                    <Text>{t("panel.trade_cap_hint", {
+                      cap: Math.max(0, Math.floor(capPct)),
+                      used: othersBudget.toFixed(2),
+                    })}
+                    </Text>
+                  </Stack>
+
+                  {/* ── 卖出这一侧 ─────────────────────────────────── */}
+                  <Stack gap={6} className="rrm-trade-side">
+                    <Inline gap={10} wrap={false} align="center" className="rrm-select-row">
+                      <Select
+                        value={effectiveSellStockId}
+                        options={positionOptions}
+                        onChange={(value: any) => setSellStock(String(value))}
+                      />
+                    </Inline>
+                    <Inline gap={8} align="center" justify="space-between">
+                      <Text>{t("panel.trade_sell_side")}</Text>
+                      <Text>{t("panel.trade_pct", { pct: Math.round(sellPct) })}</Text>
+                    </Inline>
+                    {h(
+                      "div",
+                      {
+                        className: "rrm-trade-slider",
+                        style: { "--rrm-trade-fill": `${Math.round(sellPct * 10) / 10}%` },
+                      },
+                      h(Slider, {
+                        min: 0,
+                        max: 100,
+                        step: 1,
+                        value: sellPct,
+                        showValue: false,
+                        onChange: (value: any) => {
+                          setSellPositionPct(Number(value))
+                          clearTradeDrafts()
+                          // P21.0：第一次动卖出滑块 ⇒ 飘出新手兜底提示。
+                          triggerGhostHint()
+                        },
+                      })
+                    )}
+                    <Text>{t("panel.trade_sell_hint", { amount: sellAllAmount })}</Text>
+                  </Stack>
+                </Grid>
+
+                {/* ── P30.0：做空输入条（杠杆 / 标的 / 保证金）───────────
+                    口径（倍率表 / 最小保证金）**全部来自载荷**
+                    （``short_options``）⇒ 面板不写死。
+                    P28.0：街机档**整条不渲染**（连同下面的「做空」键）。── */}
+                {arcadeSimple ? null : h(
+                  "div",
+                  { className: "rrm-short-panel" },
+                  h("span", { className: "rrm-short-label" }, t("panel.short_leverage")),
+                  h(Select, {
+                    value: String(effectiveShortLeverage),
+                    options: shortLeverageOptions,
+                    disabled: busy,
+                    onChange: (value: any) => setShortLeverage(String(value)),
+                  }),
+                  h("span", { className: "rrm-short-label" }, t("panel.short_stock")),
+                  h(Select, {
+                    value: effectiveShortStockId,
+                    options: stockOptions,
+                    disabled: busy,
+                    onChange: (value: any) => setShortStock(String(value)),
+                  }),
+                  h("span", { className: "rrm-short-label" }, t("panel.short_margin")),
+                  h(Input, {
+                    className: "rrm-trade-input",
+                    type: "number",
+                    min: 0,
+                    step: 1,
+                    value: shortMarginDraft,
+                    placeholder: t("panel.short_margin"),
+                    disabled: busy,
+                    onChange: (value: any) => {
+                      setShortMarginDraft(String(value))
+                    },
+                  }),
+                  h(
+                    "span",
+                    { className: "rrm-short-count" },
+                    t("panel.short_open_count", { count: shortPositions.length })
+                  )
+                )}
+
+                {/* ── P30.0：三键横排（掏钱买 / 割肉卖 / 做空）────────────
+                    P12：三个键都用 ``Button`` + ``callAction`` ——
+                    ``ActionButton`` 既不支持 ``disabled``，也进不了
+                    P11.1 的全局请求锁（狂点会绕过「点击即禁用」）。
+
+                    P28.0：街机档**只剩两个键**（掏钱买 / 割肉卖）。
+                    P30.0：高度收到 48px 一线，横排钉在**卡片底部**
+                    （不再是压在下沿的两块砖头）。── */}
+                <Grid cols={3} gap={8} className="rrm-trade-row">
+                  <Button
+                    className="rrm-pill rrm-pill-buy"
+                    disabled={busy}
+                    onClick={() => {
+                      void executeBuy()
+                    }}
+                  >
+                    {t("panel.trade_execute_buy")}
+                  </Button>
+                  <Button
+                    className="rrm-pill rrm-pill-sell"
+                    disabled={busy}
+                    onClick={() => {
+                      void executeSell()
+                    }}
+                  >
+                    {t("panel.trade_execute_sell")}
+                  </Button>
+                  {arcadeSimple ? null : (
+                  <Button
+                    className="rrm-pill rrm-pill-short"
+                    disabled={busy}
+                    onClick={() => {
+                      void executeShort()
+                    }}
+                  >
+                    {t("panel.short_execute")}
+                  </Button>
+                  )}
+                </Grid>
+              </Stack>
+            </Card>
 
             {/* ── P16.0：连击徽章（P21.0：只有后面三档才给看）────────── */}
             {showCombo ? h(ComboBadge, { streak: comboStreak, best: comboBest, t: t }) : null}
@@ -6404,6 +6994,111 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
                 })}
               />
             ) : null}
+
+            {/* ── P23.2：日常动作（分析 / 领工资 / 网贷 / 跳过本日）────────
+                单独一张卡：这些是**每天一次**的动作，不是每分每秒都要看的，
+                但它们必须**一直够得着**（教程要圈到「借网贷」那个按钮），
+                所以留在面板里，只是收成一小排。
+
+                P30.0：整块**提到右列上方**（操作卡之下）——
+                右列从上到下：操作卡 → 每日动作 → 持仓 / 精调 → 猫娘点评。── */}
+        <Card className="rrm-daily-actions" title={t("panel.daily_actions")}>
+          <Inline gap={8} wrap align="center">
+              <ActionButton
+                className="rrm-mini"
+                action={actionById("analyze")}
+                label={t("action.analyze")}
+                values={{ stock_id: effectiveStockId }}
+                onResult={(result: any) => {
+                  if (result) setAnalysis(result as AnalysisResult)
+                }}
+                onError={onActionError}
+              />
+              <Text>{t("panel.analyses_left", { count: state.analyses_left || 0 })}</Text>
+            </Inline>
+
+            <Inline gap={8} wrap align="center">
+              <ActionButton
+                className="rrm-mini"
+                action={actionById("daily_claim")}
+                label={t("daily.claim")}
+                onError={onActionError}
+              />
+              <ActionButton
+                className="rrm-mini rrm-anchor-loan-button"
+                action={actionById("daily_loan")}
+                label={t("daily.loan")}
+                tone="danger"
+                onError={onActionError}
+              />
+              <ActionButton
+                className="rrm-mini"
+                action={actionById("daily_reject")}
+                label={t("panel.reject")}
+                onError={onActionError}
+              />
+              {/* P5.5 改动 6：跳过本日（无限模式专用，经典模式入口会报错） */}
+              <ActionButton
+                className="rrm-mini"
+                action={actionById("skip_day")}
+                label={t("panel.skip_day")}
+                onError={onActionError}
+              />
+            </Inline>
+
+            {/* ── P27.0：买报纸 ─────────────────────────────────────────
+                教程里那句「后面你得自己买报纸了」的兑现 ——
+                报纸 = 一次分析机会。新手前两档白拿，后面按天价自掏。── */}
+            {actionById("buy_report") ? (
+              <Inline gap={8} wrap align="center">
+                <Button
+                  className="rrm-mini"
+                  disabled={busy}
+                  onClick={() => {
+                    void buyReport()
+                  }}
+                >
+                  {t("panel.report_buy")}
+                </Button>
+                <Text>
+                  {state.report_free
+                    ? t("panel.report_free")
+                    : t("panel.report_hint", {
+                        price: `${Number(state.report_price || 0).toFixed(0)} ${t(
+                          "panel.trade_unit_money"
+                        )}`,
+                      })}
+                </Text>
+              </Inline>
+            ) : null}
+
+            {analysis ? (
+              <Card title={t("panel.analysis_result")}>
+                <Stack gap={8}>
+                  <Inline gap={8} wrap align="center">
+                    <StatusBadge
+                      tone={RATING_TONE[analysis.rating] || "default"}
+                      label={t(`analysis.${analysis.rating}`)}
+                    />
+                    <Text>
+                      {analysis.name} · {money(analysis.price)}
+                    </Text>
+                  </Inline>
+                  <KeyValue
+                    items={[
+                      { key: "chasing", label: t("panel.chasing"), value: analysis.chasing ? t("common.yes") : t("common.no") },
+                      { key: "weight", label: t("panel.weight"), value: percent(analysis.position_weight) },
+                      { key: "left", label: t("panel.analyses_left", { count: analysis.analyses_left }) },
+                    ]}
+                  />
+                  {analysis.market_note ? (
+                    <Alert tone="warning" message={analysis.market_note} />
+                  ) : null}
+                  <Text>{analysis.note}</Text>
+                </Stack>
+              </Card>
+            ) : null}
+        </Card>
 
             {/* ── P27.1：持仓列表（只留名称 / 市值 / 大号盈亏）─────────
                 从左列搬到了右列：右列是「动手之前看的」，
@@ -6482,100 +7177,11 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
           {/* P23.2：精调区自己会滚（宿主原生 ``ScrollArea``）——
               展开时再多的滑块也不会把整页撑出滚动条。 */}
           <ScrollArea axis="y" className="rrm-live-scroll">
-            {/* ── P14.0：买 / 卖**两条**独立仓位 ───────────────────────
-                P13 只有一个"仓位"，买和卖共用它 —— 拖一下就同时改了
-                "买多少"和"卖多少"，本来就该分开。P14 拆成两条，
-                左右各看各的，标的也各自带在顶上。
-
-                买入那条还多一层**全局上限**：台账里别的标的占掉的额度
-                会把它**截断**（后拉动的滑条只能拉到上限为止）——
-                那股"拉扯"的阻力感，就是在告诉玩家他的极限在哪。 */}
+            {/* ── P30.0：买 / 卖两条独立仓位**搬去操作卡**了 ────────────
+                这里只剩「细节」：水位预警 / 幽灵提示 / 实时预览 / 直输框 /
+                计划台账。滑块与标的都在操作卡里（必须同屏可见）。── */}
             {tradeFineTuneOpen ? (
               <>
-            <Grid cols={2} gap={12} className="rrm-trade-sides">
-              {/* ── 买入这一侧 ─────────────────────────────────── */}
-              <Stack gap={6} className="rrm-trade-side">
-                <Inline gap={10} wrap={false} align="center" className="rrm-select-row">
-                  <Select
-                    value={effectiveStockId}
-                    options={stockOptions}
-                    onChange={(value: any) => setSelectedStock(String(value))}
-                  />
-                </Inline>
-                {/* P27.1：「把兜里的钱全压在这只上」这类**说明文字**
-                    搬去了【更多】弹窗 —— 局中屏幕上只留数字和控件。 */}
-                <Inline gap={8} align="center" justify="space-between">
-                  <Text>{t("panel.trade_buy_side")}</Text>
-                  <Text>{t("panel.trade_pct", { pct: Math.round(buyPositionPct) })}</Text>
-                </Inline>
-                {h(
-                  "div",
-                  {
-                    className: "rrm-trade-slider",
-                    // 当前比例写进 CSS 变量 ⇒ 轨道渐变能画出"已填充到哪"。
-                    // 轨道满格 = 本轮**上限**（不是 100%）—— 上限被占满时
-                    // 整条填满，玩家一眼看见自己已经顶到天花板。
-                    style: { "--rrm-trade-fill": `${Math.round(buyFillPct * 10) / 10}%` },
-                  },
-                  h(Slider, {
-                    min: 0,
-                    // **上限不是 100**：别的标的占掉的额度会把这条滑条截断。
-                    max: Math.max(1, Math.floor(capPct)),
-                    step: 1,
-                    value: buyPositionPct,
-                    showValue: false,
-                    // 上限被吃光了 ⇒ 这条滑条**锁死**（连 1% 都分不到）。
-                    disabled: busy || capPct <= 0,
-                    onChange: (value: any) => {
-                      setPositionPct(Number(value))
-                      clearTradeDrafts()
-                    },
-                  })
-                )}
-                <Text>{t("panel.trade_cap_hint", {
-                    cap: Math.max(0, Math.floor(capPct)),
-                    used: othersBudget.toFixed(2),
-                  })}
-                </Text>
-              </Stack>
-
-              {/* ── 卖出这一侧 ─────────────────────────────────── */}
-              <Stack gap={6} className="rrm-trade-side">
-                <Inline gap={10} wrap={false} align="center" className="rrm-select-row">
-                  <Select
-                    value={effectiveSellStockId}
-                    options={positionOptions}
-                    onChange={(value: any) => setSellStock(String(value))}
-                  />
-                </Inline>
-                {/* P27.1：说明文字同样搬去了【更多】弹窗。 */}
-                <Inline gap={8} align="center" justify="space-between">
-                  <Text>{t("panel.trade_sell_side")}</Text>
-                  <Text>{t("panel.trade_pct", { pct: Math.round(sellPct) })}</Text>
-                </Inline>
-                {h(
-                  "div",
-                  {
-                    className: "rrm-trade-slider",
-                    style: { "--rrm-trade-fill": `${Math.round(sellPct * 10) / 10}%` },
-                  },
-                  h(Slider, {
-                    min: 0,
-                    max: 100,
-                    step: 1,
-                    value: sellPct,
-                    showValue: false,
-                    onChange: (value: any) => {
-                      setSellPositionPct(Number(value))
-                      clearTradeDrafts()
-                      // P21.0：第一次动卖出滑块 ⇒ 飘出新手兜底提示。
-                      triggerGhostHint()
-                    },
-                  })
-                )}
-                <Text>{t("panel.trade_sell_hint", { amount: sellAllAmount })}</Text>
-              </Stack>
-            </Grid>
 
             {/* ── P14.0：买入后的**水位预警** ─────────────────────────
                 玩家拉满滑块的时候，得让他看见"买完还剩多少"，
@@ -6872,106 +7478,48 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
           </ScrollArea>
         </Card>
 
-        {/* ── P23.2：日常动作（分析 / 领工资 / 网贷 / 跳过本日）────────
-            单独一张卡：这些是**每天一次**的动作，不是每分每秒都要看的，
-            但它们必须**一直够得着**（教程要圈到「借网贷」那个按钮），
-            所以留在面板里，只是收成一小排。 */}
-        <Card className="rrm-daily-actions" title={t("panel.daily_actions")}>
-          <Inline gap={8} wrap align="center">
-              <ActionButton
-                className="rrm-mini"
-                action={actionById("analyze")}
-                label={t("action.analyze")}
-                values={{ stock_id: effectiveStockId }}
-                onResult={(result: any) => {
-                  if (result) setAnalysis(result as AnalysisResult)
-                }}
-                onError={onActionError}
-              />
-              <Text>{t("panel.analyses_left", { count: state.analyses_left || 0 })}</Text>
-            </Inline>
+        {/* ── P30.0：每日动作卡**提到右列上方**了（操作卡之下、持仓之上）──
+            右列从上到下：操作卡 → 每日动作 → 持仓 / 精调 → 猫娘点评。── */}
 
-            <Inline gap={8} wrap align="center">
-              <ActionButton
-                className="rrm-mini"
-                action={actionById("daily_claim")}
-                label={t("daily.claim")}
-                onError={onActionError}
-              />
-              <ActionButton
-                className="rrm-mini rrm-anchor-loan-button"
-                action={actionById("daily_loan")}
-                label={t("daily.loan")}
-                tone="danger"
-                onError={onActionError}
-              />
-              <ActionButton
-                className="rrm-mini"
-                action={actionById("daily_reject")}
-                label={t("panel.reject")}
-                onError={onActionError}
-              />
-              {/* P5.5 改动 6：跳过本日（无限模式专用，经典模式入口会报错） */}
-              <ActionButton
-                className="rrm-mini"
-                action={actionById("skip_day")}
-                label={t("panel.skip_day")}
-                onError={onActionError}
-              />
+        {/* ── P30.0：猫娘点评 / 聊天框（右列最后一张，吃掉剩余高度）────
+            左边看盘、右边看她说话 —— 观众的注意力不用来回甩。
+            内容全是**现成的载荷**：与 Yui 的比分 + 猫娘公开状态 + 最近三条弹幕。
+            它是**只读**的（不新增任何后端动作 ⇒ 引擎零改动）。── */}
+        <Card className="rrm-live-chat" title={t("panel.live_chat_title")}>
+          <Stack gap={4}>
+            {/* 与 Yui 的对比：领先 / 落后都直说，不粉饰。 */}
+            <Text>{yuiCompareText}</Text>
+            <Inline gap={8} align="center" justify="space-between">
+              {catgirl && !arcadeSimple ? (
+                <StatusBadge
+                  tone={catgirl.alive ? "success" : "danger"}
+                  label={catgirl.alive ? t("catgirl.alive") : t("catgirl.dead")}
+                />
+              ) : null}
+              <Text>{t("visual.danmaku_title")}</Text>
             </Inline>
-
-            {/* ── P27.0：买报纸 ─────────────────────────────────────────
-                教程里那句「后面你得自己买报纸了」的兑现 ——
-                报纸 = 一次分析机会。新手前两档白拿，后面按天价自掏。── */}
-            {actionById("buy_report") ? (
-              <Inline gap={8} wrap align="center">
-                <Button
-                  className="rrm-mini"
-                  disabled={busy}
-                  onClick={() => {
-                    void buyReport()
-                  }}
-                >
-                  {t("panel.report_buy")}
-                </Button>
+          </Stack>
+          {/* 滚动区是卡片正文的**直接**孩子 ⇒ 它才吃得到卡片剩下的高度。 */}
+          <ScrollArea axis="y" className="rrm-live-scroll">
+            <Stack gap={2}>
+              {danmakuList.length === 0 ? (
                 <Text>
-                  {state.report_free
-                    ? t("panel.report_free")
-                    : t("panel.report_hint", {
-                        price: `${Number(state.report_price || 0).toFixed(0)} ${t(
-                          "panel.trade_unit_money"
-                        )}`,
-                      })}
+                  {state.stage === "idle" ? idleTaunt : t("visual.danmaku_empty")}
                 </Text>
-              </Inline>
-            ) : null}
-
-            {analysis ? (
-              <Card title={t("panel.analysis_result")}>
-                <Stack gap={8}>
-                  <Inline gap={8} wrap align="center">
-                    <StatusBadge
-                      tone={RATING_TONE[analysis.rating] || "default"}
-                      label={t(`analysis.${analysis.rating}`)}
-                    />
-                    <Text>
-                      {analysis.name} · {money(analysis.price)}
-                    </Text>
-                  </Inline>
-                  <KeyValue
-                    items={[
-                      { key: "chasing", label: t("panel.chasing"), value: analysis.chasing ? t("common.yes") : t("common.no") },
-                      { key: "weight", label: t("panel.weight"), value: percent(analysis.position_weight) },
-                      { key: "left", label: t("panel.analyses_left", { count: analysis.analyses_left }) },
-                    ]}
-                  />
-                  {analysis.market_note ? (
-                    <Alert tone="warning" message={analysis.market_note} />
-                  ) : null}
-                  <Text>{analysis.note}</Text>
-                </Stack>
-              </Card>
-            ) : null}
+              ) : (
+                danmakuList
+                  .slice(-3)
+                  .reverse()
+                  .map((item) =>
+                    h(
+                      "span",
+                      { key: item.id, className: "rrm-live-chat-line" },
+                      item.text || ""
+                    )
+                  )
+              )}
+            </Stack>
+          </ScrollArea>
         </Card>
 
         {/* ── P27.1：资产迷你折线图**并进 K 线卡**了 ─────────────────
@@ -7022,104 +7570,12 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
           </Stack>
         </Split>
 
-        {/* ── P27.1：底部操作台（整条压在下沿）──────────────────────────
-            三键并排（掏钱买 / 割肉卖 / 做空），上面紧跟一条
-            「杠杆 / 标的 / 保证金」输入条。
-            「文字说明」全部搬去了【更多】弹窗 ——
-            屏幕上只留**能点的**和**能看的**。
-
-            为什么搬到全宽：右列只有 40% 宽，三键挤在里面每个都不够
-            按；摊到整条底边，每个键都有整屏那么宽（``Grid`` 三等分，
-            天生等宽，不受按钮外壳包裹层影响）。
-
-            ⚠ 这张卡的 class **必须原样**是 ``rrm-anchor-trade-console``
-            （后面不许追加任何 class）—— 教程按这个 class 圈焦点。── */}
-        <Card className="rrm-anchor-trade-console" title={t("panel.trade")}>
-          <Stack gap={8}>
-            {/* ── 杠杆 / 标的 / 保证金输入条（紧贴三键上方）────────────
-                口径（倍率表 / 最小保证金）**全部来自载荷**
-                （``short_options``）⇒ 面板不写死。
-
-                P28.0：街机档**整条不渲染**（连同下面的「做空」键）——
-                街机档只留掏钱买 / 割肉卖两键。── */}
-            {arcadeSimple ? null : h(
-              "div",
-              { className: "rrm-short-panel" },
-              h("span", { className: "rrm-short-label" }, t("panel.short_leverage")),
-              h(Select, {
-                value: String(effectiveShortLeverage),
-                options: shortLeverageOptions,
-                disabled: busy,
-                onChange: (value: any) => setShortLeverage(String(value)),
-              }),
-              h("span", { className: "rrm-short-label" }, t("panel.short_stock")),
-              h(Select, {
-                value: effectiveShortStockId,
-                options: stockOptions,
-                disabled: busy,
-                onChange: (value: any) => setShortStock(String(value)),
-              }),
-              h("span", { className: "rrm-short-label" }, t("panel.short_margin")),
-              h(Input, {
-                className: "rrm-trade-input",
-                type: "number",
-                min: 0,
-                step: 1,
-                value: shortMarginDraft,
-                placeholder: t("panel.short_margin"),
-                disabled: busy,
-                onChange: (value: any) => {
-                  setShortMarginDraft(String(value))
-                },
-              }),
-              h(
-                "span",
-                { className: "rrm-short-count" },
-                t("panel.short_open_count", { count: shortPositions.length })
-              )
-            )}
-            {/* ── 三键并排（掏钱买 / 割肉卖 / 做空）────────────────────
-                P12：三个键都用 ``Button`` + ``callAction`` ——
-                ``ActionButton`` 既不支持 ``disabled``，也进不了
-                P11.1 的全局请求锁（狂点会绕过「点击即禁用」）。
-
-                P28.0：街机档**只剩两个键**（掏钱买 / 割肉卖）——
-                「做空」是纯爽局之外的东西，街机档不玩。
-                键位行本身一个字不动（``cols={3}`` 是既有红线），
-                两列的口径由根节点的 ``rrm-arcade-simple`` 在 CSS 里改。── */}
-            <Grid cols={3} gap={8} className="rrm-trade-row">
-              <Button
-                className="rrm-pill rrm-pill-buy"
-                disabled={busy}
-                onClick={() => {
-                  void executeBuy()
-                }}
-              >
-                {t("panel.trade_execute_buy")}
-              </Button>
-              <Button
-                className="rrm-pill rrm-pill-sell"
-                disabled={busy}
-                onClick={() => {
-                  void executeSell()
-                }}
-              >
-                {t("panel.trade_execute_sell")}
-              </Button>
-              {arcadeSimple ? null : (
-              <Button
-                className="rrm-pill rrm-pill-short"
-                disabled={busy}
-                onClick={() => {
-                  void executeShort()
-                }}
-              >
-                {t("panel.short_execute")}
-              </Button>
-              )}
-            </Grid>
-          </Stack>
-        </Card>
+        {/* ── P30.0：底部那条**整行操作台**删掉了 ─────────────────────
+            P27.1：它压在整条下沿（全宽），三键各占 1/3 屏 —— 像两块砖头，
+            还把右列挤得只剩一条缝。
+            P30.0：整块搬进**右列的独立操作卡**（标的 + 滑块 + 三键），
+            按钮高度收到 48px 一线，横排钉在卡片底部。
+            这里现在只留【更多】弹窗。── */}
 
         {/* ── P23.2：【更多】弹窗 ─────────────────────────────────────
             群友名册 / 当天新闻 / 猫娘公开状态 / 实时弹幕 ——

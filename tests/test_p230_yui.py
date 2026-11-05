@@ -454,7 +454,7 @@ def test_the_shame_column_is_empty_when_nobody_died(plugin) -> None:
 
 
 def test_the_kline_is_the_main_visual_of_the_left_column() -> None:
-    """K 线是**左列的主视觉**（P27.1：从 35vh 收到 26vh）。
+    """K 线是**左列的主视觉**（P30.0：重新拉高到 34vh）。
 
     P23.0 时它是「占掉半个屏幕」的巨幅主视觉。P23.2 改成直播看板布局 ——
     左右分栏（60/40）之后它只占左列，高度必须**让位**给行情方块、
@@ -463,6 +463,13 @@ def test_the_kline_is_the_main_visual_of_the_left_column() -> None:
     P27.1：顶部加了**概览卡**（总资产 / 赚亏 / 现金红线）、K 线下面塞了
     **资产曲线**、底部又多了**三键操作台** ⇒ 纵向预算又紧了，
     K 线高度从 240/35vh/450 收到 **210 / 26vh / 330**。
+
+    P30.0：左右改成 **70/30**，右列的操作件也压了一轮 ⇒ K 线重新拿回高度：
+    **240 / 34vh / 460**（深色画布在左列里占满一整块，压迫感回来）。
+
+    P31.0：左列下方的**行情卡**被挤扁了（截图里那排「今天在涨的这些」压成一条，
+    巨号涨跌幅直接撑破方块）⇒ K 线**让回**一截高度给行情卡：
+    **220 / 30vh / 400**。
     下限仍 ≥ 200px（p72 / p81 的「主视觉不许被砍矮」不变式）。
     """
     code = _panel_code()
@@ -470,9 +477,9 @@ def test_the_kline_is_the_main_visual_of_the_left_column() -> None:
         r'const KLINE_HEIGHT_CSS = "clamp\((\d+)px,\s*(\d+)vh,\s*(\d+)px\)', code
     )
     assert match, "K 线高度必须是 CSS 表达式"
-    assert int(match.group(1)) == 210, "K 线下限必须是 210px"
-    assert int(match.group(2)) == 26, "K 线必须占 26vh（一屏锁定布局）"
-    assert int(match.group(3)) == 330, "K 线上限必须是 330px"
+    assert int(match.group(1)) == 220, "K 线下限必须是 220px"
+    assert int(match.group(2)) == 30, "K 线必须占 30vh（一屏锁定布局）"
+    assert int(match.group(3)) == 400, "K 线上限必须是 400px"
     # 柱子弹光是**内联** box-shadow（跟着每根柱子的涨跌走）。
     kline = code.split("function Kline(props", 1)[1].split("function ", 1)[0]
     assert "boxShadow:" in kline
@@ -481,15 +488,15 @@ def test_the_kline_is_the_main_visual_of_the_left_column() -> None:
 
 
 def test_the_trade_buttons_are_compact_but_still_obvious() -> None:
-    """P23.2：按钮改回**紧凑档**（56px / 7vh / 80px），但配色不许变。
+    """P30.0：按钮收到 **48px 一线**（44 / 4.8vh / 48），但配色不许变。
 
-    P23.0 时是巨幅（76px / 11vh / 148px）。P23.2 收回来了 ——
-    右列只有 40% 宽，巨号按钮会把**滑块和预览数字**一起挤没，
-    而那三样（滑块 / 预览 / 按钮）必须同屏可见，交易台才用得上。
+    P23.0 时是巨幅（76px / 11vh / 148px）。P23.2 收回来一次（56px），
+    P30.0 又收一次 —— 三键搬进了**右侧 30% 窄列**，再大就把那一列撑爆。
+    「掏钱买 / 割肉卖 / 做空」仍要一眼看得见，颜色是它们的命根子。
     """
     css = _panel_css()
     block = css.split(".rrm-root .neko-button.rrm-pill {", 1)[1].split("}", 1)[0]
-    assert "height: clamp(56px" in block
+    assert "height: clamp(44px" in block
     assert "font-size: clamp(18px" in block
     buy = css.split(".rrm-root .neko-button.rrm-pill-buy {", 1)[1].split("}", 1)[0]
     assert "linear-gradient(90deg, #ff9db0 0%, #e8455f 100%)" in buy

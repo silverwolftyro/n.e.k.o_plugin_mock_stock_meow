@@ -250,7 +250,11 @@ def test_the_outrage_is_queued_not_pushed_inline(plugin) -> None:
     text = _init_text()
     body_start = text.index("def _maybe_fake_news_outrage")
     body = text[body_start : body_start + 6000]
-    assert "_yui_pending_prompts.append" in body
+    # P32.0：入队统一走 ``_yui_queue_prompt``（它会记下入队时刻与游戏日，
+    # 供推送前的熔断使用）；直接 ``append`` 也仍然算数。
+    assert (
+        "_yui_pending_prompts.append" in body or "_yui_queue_prompt" in body
+    ), "爆发必须入队（不许在结算路径里直接推）"
     assert "push_message" not in body, "爆发不许在结算路径里直接推"
 
 
