@@ -455,12 +455,18 @@ def test_the_progress_block_is_absent_when_only_the_director_is_on(
 
 
 def test_the_panel_renders_the_progress_block_only_when_it_is_there() -> None:
-    """面板**只在有值时**渲染这一块（开关关闭 ⇒ 与以前逐像素一样）。"""
+    """面板**只在有值时**渲染这一块（开关关闭 ⇒ 与以前逐像素一样）。
+
+    P34.0：这一格改成包在 ``Slot`` 里（``when: Boolean(state.director_progress)``）——
+    判空的口径没变，只是从「三元表达式」换成了「占位层的开关」，
+    这样子节点数量恒定（宿主匹配无 key 的子节点是从后往前配的）。
+    """
     code = _panel_code()
     assert "state.director_progress" in code
     assert "director.progress.hype" in code
     assert "director.progress.chapter" in code
-    assert "{state.director_progress ?" in code
+    assert "Boolean(state.director_progress)" in code, "导演进度条必须判空后才渲染"
+    assert "state.director_progress ?" in code, "导演进度条必须判空后才渲染"
 
 
 def test_the_progress_block_adds_no_dangerous_css() -> None:
@@ -550,6 +556,6 @@ def test_the_version_is_bumped_to_0_10_2() -> None:
     """版本号 = 0.10.5。"""
     from plugins.mock_stock_meow import PLUGIN_VERSION
 
-    assert PLUGIN_VERSION == "0.13.4-final-safety"
+    assert PLUGIN_VERSION == "0.13.6-live-ultimate"
     toml = (_PLUGIN_ROOT / "plugin.toml").read_text(encoding="utf-8")
-    assert 'version = "0.13.4-final-safety"' in toml
+    assert 'version = "0.13.6-live-ultimate"' in toml

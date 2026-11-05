@@ -467,6 +467,8 @@
   "panel.render_error_title": "重连中，请稍后",
   "panel.render_error_body": "面板渲染时出了点问题，这一屏先停在这里。数据都还在 —— 点下面的【重新渲染】就能接上。",
   "panel.render_error_retry": "重新渲染",
+  "panel.section_error_body": "这一块没能画出来。旁边的内容照常能用 —— 点一下把这块重画。",
+  "panel.section_error_retry": "重画这一块",
   "panel.story_modal_hint": "选项在聊天框里 —— 外置猫娘正在那边等你开口。",
   "panel.story_modal_title": "剧情",
   "panel.story_choice_done": "选好了。外面那只猫娘正在说你。",
@@ -644,5 +646,6 @@
   "panel.settlement_again_alive": "再来一局 · 趁手还热",
   "panel.alive_state": "本局状态",
   "panel.alive_state_value": "撑到结算日",
-  "panel.alive_praise_label": "本局评语"
+  "panel.alive_praise_label": "本局评语",
+  "panel.stock_delisted": "这只已经退市了 —— 看不到它的 K 线了，换一只盯。"
 }

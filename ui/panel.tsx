@@ -89,6 +89,8 @@ import {
 import type { HostedAction, PluginSurfaceProps, Tone } from "@neko/plugin-ui"
 
 import { AVATARS, MEOW_LOAN } from "./assets/avatars"
+// P34.0：官方「幽灵猫爪」引导的内联素材（base64 data URI）。
+import { GHOST_CURSOR_CLICK, GHOST_CURSOR_DEFAULT } from "./assets/ghost_cursor"
 
 type KlinePoint = [number, number]
 
@@ -753,6 +755,9 @@ const RRM_CSS = `
 }
 /* 主列（看板本体）：min-height: 0 ⇒ 它才**肯**被压缩。 */
 .rrm-root.rrm-live-page .rrm-live-stage { min-height: 0; }
+/* P34.0：看板本体与「幽灵猫爪」覆盖层**落在同一个格子里**（网格叠放）——
+   覆盖层 DOM 在后 ⇒ 画在看板之上；看板本体这一格**一个像素都不挪**。 */
+.rrm-root.rrm-live-page .rrm-live-stage { grid-area: 1 / 1 / 2 / 2; }
 /* 左右分栏：宿主 Split（grid），ratio="3fr 2fr" = 60/40。
    这条 flex 把它撑满看板区剩下的高度（Split 是主 Stack 的 flex item）。 */
 .rrm-root.rrm-live-page .rrm-live-board {
@@ -1507,6 +1512,41 @@ const RRM_CSS = `
   border-color: rgba(123, 188, 255, 0.55);
   box-shadow: 0 10px 28px rgba(123, 188, 255, 0.16);
 }
+
+/* ── P34.0：官方「幽灵猫爪」引导层（**零危险 CSS**）──────────────────
+   覆盖层靠**网格叠放**实现：宿主 Page 本身就是 display: grid，
+   覆盖层与正文落在**同一个格子**里，靠 DOM 顺序决定谁画在上面。
+   ⚠ 这一段里**不出现**定位 / 层叠 / 滤镜 / 淡入淡出 / 关键帧。
+   ⚠ pointer-events: none —— 覆盖层只是装饰，绝不能挡住玩家的点击。
+   ⚠ height: 0 —— 覆盖层**不占布局**（高度算 0，猫爪靠溢出画出来），
+      这样它就不会把整页的高度顶起来。 */
+.rrm-root .rrm-ghost-layer {
+  grid-area: 1 / 1 / 2 / 2;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.rrm-root .rrm-ghost-layer .rrm-ghost-cursor {
+  display: block;
+  width: 58px;
+  height: 60px;
+  transform-origin: 0 0;
+  pointer-events: none;
+}
+/* 幽灵光标指着的目标 ⇒ 蓝色高亮描边（与教程高亮同一套观感）。 */
+.rrm-ghost-target {
+  outline: 3px solid rgba(91, 143, 249, 0.95);
+  outline-offset: 2px;
+}
+/* ── P34.0：分区错误边界的**兜底块**（一块炸了，只换这一块）────────────
+   零危险 CSS：没有定位、没有层叠、没有滤镜、没有淡入淡出、没有关键帧。 */
+.rrm-root .rrm-section-error {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed rgba(214, 72, 106, 0.45);
+  border-radius: 14px;
+}
 .rrm-tutorial-steps .neko-step-index {
   background: linear-gradient(90deg, #a4e5ff 0%, #7bbcff 100%);
   color: #16305c;
@@ -1887,6 +1927,25 @@ const RRM_CSS_PAW = `
  */
 const PAW_BREATHE_PERIOD_MS = 2400
 const PAW_BREATHE_ON_MS = 1100
+
+// ── P34.0：官方「幽灵猫爪」的显示尺寸（素材原图 196×201 / 194×208）──
+//
+// 猫爪按**原图比例**缩到这个尺寸：太大会糊住按钮，太小看不见。
+const GHOST_PAW_W = 58
+const GHOST_PAW_H = 60
+
+// ── P34.0：猫爪的**初始内联样式**（**必须是模块级常量**）──────────────
+//
+// 宿主运行时的 ``patchProps`` 用的是**引用比较**：``oldProps.style !==
+// newProps.style`` 就会把整份 style **重新盖回 DOM**。
+// 如果这里每次渲染都新建一个对象字面量 ⇒ 面板每 3 秒轮询一次就会把
+// 猫爪的 transform 复位成起点、visibility 复位成 hidden ⇒
+// 飞行动画刚起步就被打断。写成常量 ⇒ 引用永远相同 ⇒ 宿主不再碰它，
+// 动画期间只由我们自己改 DOM。
+const GHOST_CURSOR_STYLE = {
+  visibility: "hidden",
+  transform: "translate(-999px, -999px)",
+}
 
 /**
  * P29.0：老虎机卡**高光扫过**的节奏（毫秒）。
@@ -3214,6 +3273,35 @@ function renderPanelFallback(t: Translate, error: any, reset: () => void) {
 }
 
 /**
+ * P34.0：**分区**错误边界（把 ErrorBoundary 的边界**放宽**）。
+ *
+ * 外层那道 ``ErrorBoundary`` 是「最后一道防线」—— 它一旦接住异常，
+ * **整个面板**会被换成一块提示页 ⇒ **名字输入框当场消失**、
+ * 玩家刚打的字全没了。
+ *
+ * 现在给「容易炸的那几块」各套一层**内层**边界：
+ * 一块炸了，**只炸那一块**（旁边照常能用），整屏不会被换掉。
+ *
+ * ⚠ 内层边界包的是**一块**内容 —— 宿主 ``BoundarySlot`` 把它原样吐出来，
+ * 只多两个**注释节点**（不渲染、不占位）⇒ 布局一个像素都不动。
+ */
+function SectionBoundary(props: { t: Translate; children: any }) {
+  return h(
+    ErrorBoundary,
+    {
+      fallback: (_error: any, reset: () => void) =>
+        h(
+          "div",
+          { className: "rrm-section-error" },
+          h(Alert, { tone: "warning" }, props.t("panel.section_error_body")),
+          h(Button, { onClick: reset, children: props.t("panel.section_error_retry") })
+        ),
+    },
+    props.children
+  )
+}
+
+/**
  * P9.0：结算页的**扁平空钱包**插画 —— 纯 CSS 拼的，不依赖任何素材文件。
  *
  * 0.9.1 那张「破产猫猫」是 PIL 画的：一只黄色猫瘫在灰色钱包上，远看就是个
@@ -3426,6 +3514,173 @@ function useTutorialHighlight(anchor: string | null) {
       targetRef.current = null
     }
   }, [anchor])
+}
+
+/**
+ * P34.0：**恒定子节点数**的占位层。
+ *
+ * 宿主运行时匹配**无 key** 的子节点是**从后往前**配的
+ * （``oldUnkeyed[unkeyedIndex--]``）—— 子节点**数量**一变，
+ * 排在它前面的兄弟节点会被**整个重建**：DOM 节点换新 ⇒
+ * 输入框失焦、刚打的字没了、整屏像被刷新过。
+ *
+ * 真机事故（2026-11-05）：初始界面（报名字那屏）老是莫名其妙被中断。
+ * 元凶之一就是 ``{cond ? <X/> : null}`` 这个形状 ——
+ * ``join`` 这个 action 到位之前 ``joinAction`` 是 undefined ⇒ 那一格
+ * 是 ``null``；action 一到位它变成元素 ⇒ **子节点数量 +1** ⇒
+ * 排在它前面的**名字输入框**被整个重建 ⇒ 焦点当场丢失。
+ *
+ * 规矩：凡是「可能变 null」的孩子，一律包进 ``Slot`` ——
+ * **vnode 永远在**（数量恒定），DOM 可以为空（不占位）。
+ */
+function Slot(props: { when: boolean; children: any }) {
+  if (!props.when) return null
+  return props.children
+}
+
+/**
+ * P34.0：官方「幽灵猫爪」引导层。
+ *
+ * 覆盖层是**网格叠放**出来的 —— 宿主 ``Page`` 本身就是 ``display: grid``，
+ * 覆盖层与正文落在**同一个格子**里，靠 DOM 顺序决定谁画在上面。
+ * ⚠ 面板红线：绝不用 ``absolute``、绝不用 ``@keyframes``、绝不用 ``opacity``。
+ * ⚠ 覆盖层必须 ``pointer-events: none``：它只是装饰，绝不能挡住玩家的点击。
+ *
+ * 移动**直接改 DOM**（``img.style.transform``），**不走 React 状态** ——
+ * 每帧重画整块面板是不可接受的（而且重画会把输入框重建掉，
+ * 正好是 P34.0 要修的那个毛病）。
+ *
+ * 素材是宿主官方美术资源（老板已授权），转成 base64 内联在
+ * ``ui/assets/ghost_cursor.ts``。
+ */
+function GhostCursorLayer(props: { anchor: string | null; enabled: boolean }) {
+  const imgRef = useRef<any>(null)
+  const rafRef = useRef<any>(0)
+  const tokenRef = useRef(0)
+  const selfClickRef = useRef(false)
+
+  const stop = () => {
+    tokenRef.current += 1
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = 0
+    }
+  }
+
+  useEffect(() => {
+    const img = imgRef.current
+    if (!img) return
+    if (!props.enabled || !props.anchor) {
+      stop()
+      img.style.visibility = "hidden"
+      return
+    }
+    // 锚点是 **className 约定**（宿主组件不透传 ``data-*``）：
+    // ``market_grid`` ⇒ ``.rrm-anchor-market-grid``。
+    const selector = ".rrm-anchor-" + String(props.anchor).replace(/_/g, "-")
+    const target = document.querySelector(selector) as any
+    if (!target) {
+      stop()
+      img.style.visibility = "hidden"
+      return
+    }
+    // 目标高亮：蓝色描边（与教程高亮同一套观感）。
+    target.classList.add("rrm-ghost-target")
+    img.style.visibility = "visible"
+    img.src = GHOST_CURSOR_DEFAULT
+
+    const layer = (img.parentElement || null) as any
+    const layerRect = layer && typeof layer.getBoundingClientRect === "function"
+      ? layer.getBoundingClientRect()
+      : ({ left: 0, top: 0 } as any)
+    // 起点：视口右下角（像一只停在角落的鼠标）。
+    const startX = Math.max(0, Number(window.innerWidth || 900) - 140) - Number(layerRect.left || 0)
+    const startY = Math.max(0, Number(window.innerHeight || 600) - 140) - Number(layerRect.top || 0)
+    const durationMs = 900
+    const startedAt = Date.now()
+    const token = ++tokenRef.current
+
+    const step = () => {
+      if (token !== tokenRef.current) return
+      const rect = target.getBoundingClientRect()
+      // 落点：目标正中（猫爪的左上角要往回挪半个身子）。
+      const goalX =
+        Number(rect.left || 0) + Number(rect.width || 0) / 2 - Number(layerRect.left || 0) - GHOST_PAW_W / 2
+      const goalY =
+        Number(rect.top || 0) + Number(rect.height || 0) / 2 - Number(layerRect.top || 0) - GHOST_PAW_H / 2
+      const progress = Math.min(1, (Date.now() - startedAt) / durationMs)
+      // 缓出（ease-out cubic）：起步快、落位稳。
+      const eased = 1 - Math.pow(1 - progress, 3)
+      const x = startX + (goalX - startX) * eased
+      const y = startY + (goalY - startY) * eased
+      img.style.transform = `translate(${x}px, ${y}px)`
+      if (progress < 1) {
+        rafRef.current = requestAnimationFrame(step)
+        return
+      }
+      // 到了 ⇒ 换成点击猫爪 + 自动点一下目标。
+      img.src = GHOST_CURSOR_CLICK
+      // ⚠ 安全闸：目标是**可交互元素**（按钮 / 输入框 / 链接，或它们的后代）时
+      // **绝不代劳点击** —— 教程里有一锚点就挂在【借钱】那个按钮上，
+      // 代劳等于替玩家签字借了一笔债。容器（卡片 / 网格 / 状态条）才代劳。
+      const tag = String(target.tagName || "").toLowerCase()
+      const interactive =
+        tag === "button" ||
+        tag === "input" ||
+        tag === "select" ||
+        tag === "textarea" ||
+        tag === "a" ||
+        (typeof target.closest === "function" &&
+          target.closest("button, a, input, select, textarea") !== null)
+      if (!interactive && typeof target.click === "function") {
+        selfClickRef.current = true
+        try {
+          target.click()
+        } catch (_error) {
+          // 点不到就算了：引导不该把面板带崩。
+        }
+        selfClickRef.current = false
+      }
+      rafRef.current = requestAnimationFrame(() => {
+        img.src = GHOST_CURSOR_DEFAULT
+        img.style.visibility = "hidden"
+      })
+    }
+    rafRef.current = requestAnimationFrame(step)
+
+    // 打断：玩家**自己先点了**目标 ⇒ 立刻收爪（别抢玩家的操作）。
+    const onUserClick = () => {
+      if (selfClickRef.current) return
+      stop()
+      img.style.visibility = "hidden"
+    }
+    target.addEventListener("click", onUserClick, true)
+
+    return () => {
+      stop()
+      target.classList.remove("rrm-ghost-target")
+      target.removeEventListener("click", onUserClick, true)
+      const node = imgRef.current as any
+      if (node) node.style.visibility = "hidden"
+    }
+  }, [props.anchor, props.enabled])
+
+  // ⚠ 这一层**永远存在**（不随引导开关而增删）——
+  // 宿主运行时匹配**无 key** 的子节点是从**后往前**配的，
+  // 子节点数量一变，前面的兄弟节点会被整个重建（输入框就是这么没的）。
+  return h(
+    "div",
+    { className: "rrm-ghost-layer" },
+    h("img", {
+      ref: imgRef,
+      className: "rrm-ghost-cursor",
+      src: GHOST_CURSOR_DEFAULT,
+      alt: "",
+      // ⚠ 必须是**模块级常量**：宿主按引用比较 style，每次渲染新建一个
+      // 对象字面量 ⇒ 面板一重画就把 transform 复位 ⇒ 动画刚起步就被打断。
+      style: GHOST_CURSOR_STYLE,
+    })
+  )
 }
 
 /**
@@ -3742,7 +3997,27 @@ export default function Panel(props: PluginSurfaceProps<State>) {
 
 /** P26.0：面板主体（原来那个 ``Panel`` 的实现，逻辑一行没改）。 */
 function PanelScreen(props: PluginSurfaceProps<State>) {
-  const { t, state, actions } = props
+  const { t, actions } = props
+  // ── P34.0：载荷**形状恒定** ⇒ 屏幕不再整块重画 ────────────────────
+  //
+  // 真机事故（2026-11-05）：**初始界面**（输入名字那屏）老是莫名其妙被
+  // 中断 —— 输入框失焦、刚打的字没了、整屏像被刷新过。
+  //
+  // 根因在**载荷**：宿主那边 UI 上下文超时 / 出错时会回一个**空的**
+  // ``state``（``{}``），插件自己也会在「拿不到锁」「数据库暂时不可用」
+  // 时回一份残缺载荷。面板每次拿到这种载荷就要**整屏重画** ⇒
+  // 输入框那个 DOM 节点被重建 ⇒ 焦点丢失、字也没了。
+  //
+  // 这里留一份**上一次的好载荷**：坏载荷直接丢掉，继续用好的那份 ——
+  // 屏幕内容不变 ⇒ 输入框不失焦、刚打的字还在。
+  const lastGoodState = useRef<any>(null)
+  const incomingState = props.state as any
+  const incomingUsable =
+    !!incomingState && typeof incomingState.stage === "string" && !!incomingState.stage
+  if (incomingUsable) lastGoodState.current = incomingState
+  const state = (incomingUsable
+    ? incomingState
+    : lastGoodState.current || incomingState || {}) as State
 
   const [selectedStock, setSelectedStock] = useLocalState<string>("rrm.selected_stock", "")
   const [sellStock, setSellStock] = useLocalState<string>("rrm.sell_stock", "")
@@ -3782,6 +4057,8 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
   // 一块「插件已停止」的提示，**只提示一次**。
   const [pluginOffline, setPluginOffline] = useState(false)
   const offlineNotified = useRef(false)
+  // ── P34.0：连续失败计数（一次失败不许把整屏换成「插件已停止」）──
+  const offlineStrikes = useRef(0)
   // ── P5.5 改动 4：天桥三屏（1 → 2 → 3，间隔自动推进）─────────────
   const [sceneScreen, setSceneScreen] = useState<number>(1)
   // ── P5.5 改动 7：称号图鉴的折叠状态（持久化）────────────────────
@@ -3808,7 +4085,15 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
       if (cancelled) return
       try {
         const pending = props.api.refresh()
-        if (pending && typeof pending.catch === "function") pending.catch(() => undefined)
+        if (pending && typeof pending.catch === "function") {
+          pending
+            .then(() => {
+              // ── P34.0：拉回来了 ⇒ 之前的失败是**瞬时的** ⇒ 计数归零。
+              // （连续两次失败才判「插件已停止」；拉回来一次就说明还活着。）
+              offlineStrikes.current = 0
+            })
+            .catch(() => undefined)
+        }
       } catch (_error) {
         // 插件正在重启：拉不到就算了，下一个周期再说。
       }
@@ -3886,6 +4171,12 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
   //
   // **等门槛事件的那一步不圈** —— 课还没开课，先圈会误导玩家
   // （而且门槛打开前后锚点相同，不这样处理的话高亮压根不会重新生效）。
+  //
+  // ── P34.0：幽灵猫爪跟教程**同一条命脉** ────────────────────────
+  // 「上课中」且「不在等门槛」时，猫爪才飞过去；其余时候它**藏起来**
+  // （但那一层 DOM **永远在** —— 见 GhostCursorLayer 的注释）。
+  const ghostEnabled = tutorialPhase === "step" && !tutorialWaiting
+  const ghostAnchor = ghostEnabled ? tutorialAnchor || null : null
   useTutorialHighlight(
     tutorialPhase === "step" && !tutorialWaiting ? tutorialAnchor : null
   )
@@ -3922,15 +4213,19 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
   //
   // **防呆在前端先做一遍**（去换行、限长 12），后端**还会再洗一遍** ——
   // 面板永远不可信。
-  const [nameDraft, setNameDraft] = useState<string>("")
-  const [nameTouched, setNameTouched] = useState(false)
+  //
+  // ── P34.0：草稿与「已改过」标记都走 ``useLocalState``（宿主那份是
+  // **进程内**的持久化）—— 屏幕被重建（重挂载 / 整屏重画）时，
+  // **玩家刚打的字不会凭空消失**，焦点标记也不会被清掉。
+  const [nameDraft, setNameDraft] = useLocalState<string>("rrm.name_draft", "")
+  const [nameTouched, setNameTouched] = useLocalState<string>("rrm.name_touched", "")
   useEffect(() => {
     if (nameTouched) return
     const incoming = String(state.player_name || "")
     if (incoming) setNameDraft(incoming)
-  }, [state.player_name, nameTouched])
+  }, [state.player_name, nameTouched, setNameDraft])
   const onNameInput = (raw: string) => {
-    setNameTouched(true)
+    setNameTouched("1")
     const cleaned = String(raw === undefined || raw === null ? "" : raw)
       .replace(/[\r\n\t]/g, " ")
       // P21.0：限 **6 个字** —— 太长会撑爆面板上的标题栏。
@@ -4031,6 +4326,19 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
    * · 黄色（warning）提示**只报一次**，不再一条一条地刷。
    */
   const markPluginOffline = () => {
+    // ── P34.0：**一次失败不直接换屏** ────────────────────────────
+    //
+    // 真机事故（2026-11-05）：初始界面老是莫名其妙被中断 —— 输入框失焦。
+    // 根因之一是这个「插件已停止」的整屏切换：只要**有一次**动作调用失败，
+    // 整块屏幕就被换成那块提示页 ⇒ 名字输入框被销毁 ⇒ 焦点丢失、字也没了。
+    //
+    // 现在改成**连续两次**才换屏（一次多半是瞬时的：宿主正忙着、插件刚好
+    // 在重启）。底下那次失败只弹一次黄色提示，不动布局。
+    offlineStrikes.current += 1
+    if (offlineStrikes.current < 2) {
+      showToast(t("panel.offline_toast"), "warning")
+      return
+    }
     setPluginOffline(true)
     if (offlineNotified.current) return
     offlineNotified.current = true
@@ -4045,6 +4353,8 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
       await props.api.refresh()
       setPluginOffline(false)
       offlineNotified.current = false
+      // P34.0：重连成功 ⇒ 之前的失败计数**清零**（不然再失败一次就又换屏了）。
+      offlineStrikes.current = 0
     } catch (_error) {
       showToast(t("panel.offline_still"), "warning")
     }
@@ -4508,6 +4818,12 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
   const focusStock = (stock: Stock) => {
     const id = String((stock && stock.id) || "")
     if (!id) return
+    // 已退市的标的没有 K 线可看（K 线下拉框只列活着的）⇒ 明确告诉他，
+    // 免得点了**什么都没发生**（直播里这种点不动的最劝退）。
+    if (stock && stock.alive === false) {
+      showToast(t("panel.stock_delisted"), "warning")
+      return
+    }
     setKlineStockPick(id)
     try {
       props.api
@@ -5139,36 +5455,43 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
   }, [visual.emoji_sea_size])
 
   // ── P7.2：赛博弹窗轰炸（关不掉，5 秒）───────────────────────────
-  const boomModal = boomActive
-    ? h(Modal, {
-        open: true,
-        title: t("visual.boom_title"),
-        // **点遮罩 / 按 ESC 都关不掉** —— 只能等它自己倒计时结束。
-        closeOnBackdrop: false,
-        closeOnEscape: false,
-        size: "lg",
-        children: h(
-          Stack,
-          { gap: 8 },
-          h(Text, null, t("visual.boom_body", { count: boom.count || 50 })),
-          h(Alert, {
-            tone: "warning",
-            message: t("visual.boom_countdown", { seconds: Math.ceil(boomLeft) }),
-          }),
-          h(
-            Grid,
-            { cols: 10, gap: 2 },
-            Array.from({ length: Number(boom.count || 50) }, (_item, index) =>
-              h(
-                "span",
-                { key: index, style: { fontSize: "22px", lineHeight: "1.1" } },
-                "🤡"
+  //
+  // P34.0：以前是 ``boomActive ? <Modal/> : null`` ⇒ **子节点数量会变**
+  // ⇒ 排在它前面的兄弟节点（名字输入框！）会被宿主整个重建 ⇒ 输入框失焦。
+  // 现在包进 ``Slot``：vnode 恒定，DOM 可空。
+  const boomModal = h(Slot, {
+    when: boomActive,
+    children: boomActive
+      ? h(Modal, {
+          open: true,
+          title: t("visual.boom_title"),
+          // **点遮罩 / 按 ESC 都关不掉** —— 只能等它自己倒计时结束。
+          closeOnBackdrop: false,
+          closeOnEscape: false,
+          size: "lg",
+          children: h(
+            Stack,
+            { gap: 8 },
+            h(Text, null, t("visual.boom_body", { count: boom.count || 50 })),
+            h(Alert, {
+              tone: "warning",
+              message: t("visual.boom_countdown", { seconds: Math.ceil(boomLeft) }),
+            }),
+            h(
+              Grid,
+              { cols: 10, gap: 2 },
+              Array.from({ length: Number(boom.count || 50) }, (_item, index) =>
+                h(
+                  "span",
+                  { key: index, style: { fontSize: "22px", lineHeight: "1.1" } },
+                  "🤡"
+                )
               )
             )
-          )
-        ),
-      })
-    : null
+          ),
+        })
+      : null,
+  })
 
   // ── P7.3：标题栏右上角的**紧急逃生**（两步内联确认）────────────
   // 用途：处理所有不可预见的 UI 卡死（弹窗锁死、载荷不刷新、按钮点不动）。
@@ -5361,7 +5684,11 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
   )
 
   // ── P7：导演台（只在特制版；入口本身也会在插件层再挡一次）──────
-  const directorConsole = directorOpen
+  //
+  // P34.0：同 ``boomModal`` —— 包进 ``Slot``，子节点数量恒定。
+  const directorConsole = h(Slot, {
+    when: directorOpen,
+    children: directorOpen
     ? h(
         Card,
         { title: t("visual.director_title") },
@@ -5426,7 +5753,8 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
           )
         )
       )
-    : null
+    : null,
+  })
 
   // ── P7.2：猫娘实时弹幕框（**常驻面板底部**，文档流、不悬浮）─────
   const danmakuCard = h(
@@ -6170,51 +6498,65 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
 
                   颜色全部走**内联渐变**（P14 的纪律：极度克制地使用 CSS），
                   一行新 CSS 都不加。 */}
-              {joinAction ? (
-                h(
-                  "div",
-                  {
-                    style: {
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "10px",
+              {/* ── P34.0：这一格包进 ``Slot``（**子节点数量恒定**）────
+                  ``join`` 这个 action 到位之前 ``joinAction`` 是 undefined
+                  ⇒ 这一格是 ``null``；action 一到位它变成元素 ⇒
+                  **子节点数量 +1** ⇒ 排在它前面的**名字输入框**被宿主
+                  整个重建 ⇒ 玩家正打着字，焦点当场丢失、整屏像被刷新。
+                  现在 vnode 永远在（数量不变），DOM 可以为空。── */}
+              {h(Slot, {
+                when: Boolean(joinAction),
+                // P34.0：档位卡这块再套一层**分区错误边界** ——
+                // 万一它自己炸了，名字输入框照样能用、刚打的字也还在
+                // （外层那道边界会换掉**整屏**，这一层只换**这一块**）。
+                children: h(
+                  SectionBoundary,
+                  { t: t },
+                  h(
+                    "div",
+                    {
+                      style: {
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: "10px",
+                      },
                     },
-                  },
-                  modeCard({
-                    title: t("panel.mode_arcade_title"),
-                    tagline: t("panel.mode_arcade_tag"),
-                    hint: t("panel.mode_arcade_hint"),
-                    band: "linear-gradient(90deg, #8fe0bf 0%, #17916f 100%)",
-                    bg: "linear-gradient(180deg, #effaf4 0%, #ddf3e7 100%)",
-                    titleColor: "#0f6b4c",
-                    tagColor: "#17916f",
-                    hintColor: "#5d7d70",
-                    onClick: () => joinMode("classic_arcade"),
-                  }),
-                  modeCard({
-                    title: t("panel.mode_challenge_title"),
-                    tagline: t("panel.mode_challenge_tag"),
-                    hint: t("panel.mode_challenge_hint"),
-                    band: "linear-gradient(90deg, #f5c451 0%, #d6486a 100%)",
-                    bg: "linear-gradient(180deg, #fff6e2 0%, #ffe3e6 100%)",
-                    titleColor: "#9c2b45",
-                    tagColor: "#c0455f",
-                    hintColor: "#8a6a70",
-                    onClick: () => setChallengeOpen(true),
-                  }),
-                  modeCard({
-                    title: t("panel.mode_infinite_title"),
-                    tagline: t("panel.mode_infinite_tag"),
-                    hint: t("panel.mode_infinite_hint"),
-                    band: "linear-gradient(90deg, #7a3a63 0%, #d6486a 100%)",
-                    bg: "linear-gradient(180deg, #2b2650 0%, #16122f 100%)",
-                    titleColor: "#e7e0ff",
-                    tagColor: "#b9a8f0",
-                    hintColor: "#8d86b8",
-                    onClick: () => joinMode("infinite"),
-                  })
-                )
-              ) : null}
+                    modeCard({
+                      title: t("panel.mode_arcade_title"),
+                      tagline: t("panel.mode_arcade_tag"),
+                      hint: t("panel.mode_arcade_hint"),
+                      band: "linear-gradient(90deg, #8fe0bf 0%, #17916f 100%)",
+                      bg: "linear-gradient(180deg, #effaf4 0%, #ddf3e7 100%)",
+                      titleColor: "#0f6b4c",
+                      tagColor: "#17916f",
+                      hintColor: "#5d7d70",
+                      onClick: () => joinMode("classic_arcade"),
+                    }),
+                    modeCard({
+                      title: t("panel.mode_challenge_title"),
+                      tagline: t("panel.mode_challenge_tag"),
+                      hint: t("panel.mode_challenge_hint"),
+                      band: "linear-gradient(90deg, #f5c451 0%, #d6486a 100%)",
+                      bg: "linear-gradient(180deg, #fff6e2 0%, #ffe3e6 100%)",
+                      titleColor: "#9c2b45",
+                      tagColor: "#c0455f",
+                      hintColor: "#8a6a70",
+                      onClick: () => setChallengeOpen(true),
+                    }),
+                    modeCard({
+                      title: t("panel.mode_infinite_title"),
+                      tagline: t("panel.mode_infinite_tag"),
+                      hint: t("panel.mode_infinite_hint"),
+                      band: "linear-gradient(90deg, #7a3a63 0%, #d6486a 100%)",
+                      bg: "linear-gradient(180deg, #2b2650 0%, #16122f 100%)",
+                      titleColor: "#e7e0ff",
+                      tagColor: "#b9a8f0",
+                      hintColor: "#8d86b8",
+                      onClick: () => joinMode("infinite"),
+                    })
+                  )
+                ),
+              })}
               <Text>{t("panel.idle_modes_hint")}</Text>
               {/* ── P10：大号《玩法说明》按钮 ──────────────────────────
                   上手门槛太高是这一版最致命的问题：玩家打开面板完全不知道
@@ -6402,17 +6744,26 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
         })}
         {/* ── 0.8.1 病危表现：**只有**一条红色 Alert 警告条（文档流内）。
             绝不用闪烁 / 半透明 / 遮罩 —— 那是 0.8.0 崩 UI 的根因。───── */}
-        {critical ? (
-          <Alert
-            tone="danger"
-            message={`${visual.critical_emoji || "💸"} ${t("visual.critical")}`}
-          />
-        ) : null}
+        {h(Slot, {
+          when: Boolean(critical),
+          children: h(
+            Alert,
+            {
+              tone: "danger",
+              message: `${visual.critical_emoji || "💸"} ${t("visual.critical")}`,
+            }
+          ),
+        })}
         {titleBar}
         {/* ── P23.0：Yui 介入横幅（**专属于猫娘**，区别于玩家自己的操作）──
             紫色调 + 爪印 + 呼吸高光 —— 面板上只有这一处是这个颜色，
             一眼就知道「这笔不是玩家点的」。 */}
-        {yuiBanner ? (
+        {/* ── P34.0：横幅包进 ``Slot``（**子节点数量恒定**）────────────
+            横幅出现 / 消失都会让子节点数量变一次 ⇒ 排在它前面的节点会被
+            宿主整个重建（滚动位置、焦点全丢）。vnode 恒定就没这问题。── */}
+        {h(Slot, {
+          when: Boolean(yuiBanner),
+          children: yuiBanner ? (
           <Card
             className={
               yuiBannerHot ? "rrm-yui-banner rrm-yui-banner-hot" : "rrm-yui-banner"
@@ -6437,7 +6788,8 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
               </span>
             </Stack>
           </Card>
-        ) : null}
+          ) : null,
+        })}
         {directorConsole}
         {boomModal}
         {guideModal}
@@ -6518,7 +6870,9 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
             直播特制版的开关 ``[director] show_progress = true``。
             开关关闭时 ``state.director_progress`` 是 undefined ⇒ **整块不渲染**，
             面板与以前逐像素一样。 */}
-        {state.director_progress ? (
+        {h(Slot, {
+          when: Boolean(state.director_progress),
+          children: state.director_progress ? (
           <Inline gap={8} wrap align="center" className="rrm-director-progress">
             <StatusBadge
               tone={(state.director_progress.hype || 0) > 0.6 ? "danger" : "default"}
@@ -6540,7 +6894,8 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
               />
             ) : null}
           </Inline>
-        ) : null}
+          ) : null,
+        })}
 
         {/* ── P23.2：节奏卡与 Yui 模式**已经搬进上面那行工具条** ─────
             （自动 / 手动依然一眼可见，但不再各占一块地方。） */}
@@ -7485,6 +7840,11 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
             左边看盘、右边看她说话 —— 观众的注意力不用来回甩。
             内容全是**现成的载荷**：与 Yui 的比分 + 猫娘公开状态 + 最近三条弹幕。
             它是**只读**的（不新增任何后端动作 ⇒ 引擎零改动）。── */}
+        {/* ── P34.0：聊天框套一层**分区错误边界** ─────────────────────
+            它是右列最后一张、内容最杂（弹幕 / 猫娘状态 / 比分）——
+            万一它自己炸了，**左边的 K 线与行情照常看**，
+            而不是整块看板被换成「重连中」。── */}
+        <SectionBoundary t={t}>
         <Card className="rrm-live-chat" title={t("panel.live_chat_title")}>
           <Stack gap={4}>
             {/* 与 Yui 的对比：领先 / 落后都直说，不粉饰。 */}
@@ -7521,6 +7881,7 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
             </Stack>
           </ScrollArea>
         </Card>
+        </SectionBoundary>
 
         {/* ── P27.1：资产迷你折线图**并进 K 线卡**了 ─────────────────
             （K 线正下方 ⇒ 图表区连成一整块深色画布。）── */}
@@ -7808,6 +8169,16 @@ function PanelScreen(props: PluginSurfaceProps<State>) {
         </Modal>
         {loanModal}
       </Stack>
+      {/* ── P34.0：官方「幽灵猫爪」引导层 ────────────────────────────
+          **网格叠放**：``.neko-page`` 本来就是 ``display: grid``，
+          这一层跟上面的看板落在**同一个格子**里（``grid-area: 1/1/2/2``），
+          靠 DOM 顺序决定谁画在上面 ⇒ 猫爪浮在看板之上。
+          ⚠ ``pointer-events: none`` —— 它只是装饰，绝不能挡住玩家的点击。
+          ⚠ ``height: 0`` —— 它**不占布局**，猫爪靠溢出画出来。
+          ⚠ 这一层**永远存在**（不随引导增删）—— 宿主运行时匹配**无 key**
+            的子节点是**从后往前**配的，子节点数量一变，前面的兄弟节点会被
+            整个重建（那正是 P34.0 要修的失焦毛病）。── */}
+      {h(GhostCursorLayer, { anchor: ghostAnchor, enabled: ghostEnabled })}
     </Page>
   )
 }

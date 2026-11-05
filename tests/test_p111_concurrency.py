@@ -514,14 +514,30 @@ def test_concurrent_advances_keep_the_one_second_gap(plugin, monkeypatch) -> Non
 
 
 def test_context_survives_a_busy_lock_from_the_start(plugin) -> None:
-    """连一次快照都还没有时，锁忙也要返回载荷（不能让宿主 500）。"""
+    """连一次快照都还没有时，锁忙也要返回载荷（不能让宿主 500）。
+
+    P34.0：锁忙时回的不再是**两键残缺载荷**（``{"stage": "busy"}``），
+    而是**形状恒定**的完整空闲载荷 —— 残缺载荷会让面板整屏重画，
+    初始界面的名字输入框当场失焦（真机事故 2026-11-05）。
+    """
     plugin._lock.acquire()
     try:
         payload = run(plugin.market_context())
     finally:
         plugin._lock.release()
     assert isinstance(payload, dict)
-    assert payload.get("stage") == "busy"
+    assert payload.get("stage") == "idle"
+    # 形状必须与正常空闲态**完全一致**（键一个不少、一个不多）。
+    for key in (
+        "notice",
+        "player_name",
+        "pace",
+        "onboarding",
+        "meow",
+        "yui",
+        "community_events",
+    ):
+        assert key in payload, f"锁忙时的载荷缺 {key}（形状必须恒定）"
 
 
 # ══════════════════════════════════════════════════════════════ ⑥ 红线
@@ -600,5 +616,5 @@ def test_panel_uses_only_dictionary_keys() -> None:
 
 def test_version_is_0_9_5() -> None:
     """版本号 = 0.10.5。"""
-    assert 'version = "0.13.4-final-safety"' in _TOML.read_text(encoding="utf-8")
-    assert 'PLUGIN_VERSION = "0.13.4-final-safety"' in _init_text()
+    assert 'version = "0.13.6-live-ultimate"' in _TOML.read_text(encoding="utf-8")
+    assert 'PLUGIN_VERSION = "0.13.6-live-ultimate"' in _init_text()

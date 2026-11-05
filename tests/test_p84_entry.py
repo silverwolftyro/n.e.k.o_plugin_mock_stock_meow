@@ -153,12 +153,17 @@ def test_join_buttons_are_guarded_by_the_action_existing() -> None:
 
     P14.0：档位卡不再用 ``ActionButton``，所以守卫从"判空后渲染"改成
     **"判空后连调用都不许发生"** —— 更严。
+
+    P34.0：判空那一步从「三元表达式」换成了**占位层的开关**
+    （``h(Slot, { when: Boolean(joinAction) })``）—— 口径没变，
+    换成占位层是为了**子节点数量恒定**（宿主匹配无 key 的子节点是从后往前配的，
+    数量一变，排在它前面的兄弟节点会被整个重建 ⇒ 名字输入框失焦）。
     """
     branch = _idle_branch()
     assert 'actionById("join")' in branch, "必须取 join action"
     assert "joinActionId" in branch, "join 必须判空"
     assert "if (!joinActionId) return" in branch, "join 必须在调用前判空"
-    assert "joinAction ?" in branch, "档位卡必须判空后才渲染"
+    assert "Boolean(joinAction)" in branch, "档位卡必须判空后才渲染"
 
 
 def test_panel_polls_its_own_context() -> None:
@@ -322,7 +327,7 @@ def test_panel_i18n_keys_all_exist() -> None:
 
 def test_version_is_bumped() -> None:
     raw = _PLUGIN_TOML.read_text(encoding="utf-8")
-    assert 'version = "0.13.4-final-safety"' in raw
+    assert 'version = "0.13.6-live-ultimate"' in raw
 
 
 def test_engine_and_mode_layers_are_still_untouched() -> None:

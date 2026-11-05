@@ -513,7 +513,7 @@ __all__ = ["MockStockMeowPlugin"]
 PLUGIN_ID = "mock_stock_meow"
 
 #: 插件版本号，与 [plugin].version 保持一致。
-PLUGIN_VERSION = "0.13.4-final-safety"
+PLUGIN_VERSION = "0.13.6-live-ultimate"
 
 #: P10：游戏速度档位 → **真实时间**推进间隔的倍率。
 #:
@@ -5312,10 +5312,9 @@ class MockStockMeowPlugin(NekoPluginBase):
         change = ((price - prev_price) / prev_price * 100.0) if prev_price > 0 else 0.0
         prompt = (
             "《拟股喵喵》里玩家切换了观察标的。\n"
-            f"事实：他现在盯着「{name}」（{stock.id}），现价 {price:.2f}，"
-            f"涨跌幅 {change:+.2f}%。\n"
-            "你可以顺嘴接一句（这句只是素材，措辞你自己定）："
-            "他盯得这么紧，是不是有什么打算？\n"
+            f"事实：玩家正在盯「{name}」股票，目前涨跌幅 {change:+.2f}%"
+            f"（现价 {price:.2f}，编号 {stock.id}）。\n"
+            "你可以顺嘴搭腔（比如：'盯这么紧，是准备梭哈吗？'），"
             "只准用上面给出的事实，不许编造别的数字或内幕。"
         )
         self._yui_queue_prompt(
@@ -7534,6 +7533,18 @@ class MockStockMeowPlugin(NekoPluginBase):
             self.logger.error(f"LLM 工具自愈异常（不影响后续心跳）：{error}")
         # ── P33.0：没有活跃对局 ⇒ **立刻返回**（幽灵播报的第一道闸）──
         if not await self._game_is_active():
+            # ── P34.0：空闲态也要把缓存**焐热** ──────────────────────
+            # 面板的 UI 上下文请求只有 5 秒预算（宿主那边超时就回一个**空的**
+            # state ⇒ 面板整屏重画 ⇒ 初始界面的输入框当场失焦）。
+            # P33.0 之前，空闲态的心跳每秒都会走一遍 ``_due_ticks()``，
+            # 顺带把配置缓存焐热；P33.0 早退之后这条线断了 ⇒ 缓存一过期，
+            # 面板的第一次上下文请求就要付一次**冷的**宿主 IPC。
+            # 这里显式焐热（两个都是带缓存的读，热路径上几乎不花钱）。
+            try:
+                await self._engine_config()
+                await self._ensure_settings_cache()
+            except Exception as error:  # noqa: BLE001 - 焐热失败不许带崩心跳
+                self.logger.warning(f"空闲态缓存预热失败（不影响心跳）：{error}")
             # 基线照常刷新：否则下一局开局会一次性补一大串 tick。
             self._last_tick_at = time.time()
             return Ok({"status": "heartbeat", "due": 0, "inactive": True})
@@ -7557,9 +7568,9 @@ class MockStockMeowPlugin(NekoPluginBase):
             await self._loan_prompt_watchdog()
         except Exception as error:  # noqa: BLE001 - 看门狗绝不能把心跳带崩
             self.logger.error(f"网贷弹窗看门狗异常（不影响后续心跳）：{error}")
-        # P7.4：LLM 工具注册的**自愈**（main_server 重启后把工具救回来）。
-        # ⚠ P33.0：这一段已经挪到本方法**最前面**（没有对局时也要跑）。
         # P16.0：玩家发呆太久 → 猫娘主动搭话（对齐宿主 Focus 语义）。
+        # （P7.4 的 LLM 工具自愈已经挪到本方法**最前面** —— P33.0：
+        #  没有对局时它也得跑，所以不能待在这个「有对局才走」的段里。）
         try:
             await self._idle_meow_watchdog()
         except Exception as error:  # noqa: BLE001 - 主动搭话绝不能把心跳带崩
@@ -10116,14 +10127,51 @@ class MockStockMeowPlugin(NekoPluginBase):
             cached = self._context_cache
             if cached is not None:
                 return dict(cached)
-            # 连一次快照都还没有（刚启动就来查询）：给个最小载荷，别让宿主 500。
-            return {"stage": "busy", "notice": "市场正在结算，稍等一下。"}
+            # 连一次快照都还没有（刚启动就来查询）：给一份**形状完整**的空闲载荷，
+            # 别让宿主 500（P34.0：形状必须恒定 —— 见 :meth:`_idle_context_payload`）。
+            return self._idle_context_payload("市场正在结算，稍等一下。")
         try:
             payload = await self._market_context_payload(**_)
             self._context_cache = dict(payload)
             return payload
         finally:
             self._lock.release()
+
+    def _idle_context_payload(self, notice: str) -> dict[str, Any]:
+        """P34.0：空闲态载荷 —— **形状恒定**（这一版的关键修复）。
+
+        真机事故（2026-11-05）：面板的**初始界面**（输入名字那屏）老是
+        莫名其妙被中断 —— 输入框失焦、刚打的字没了、整屏像被刷新过。
+
+        根因之一在**载荷形状**：之前插件在「拿不到锁」或「数据库暂时不可用」
+        时会回一份**只有两个键**的残缺载荷（``{"stage": "busy"}``），
+        宿主那边超时更是直接回一个**空的** ``state``。面板每次拿到形状不一样的
+        载荷就要整屏重画 ⇒ 输入框被重建 ⇒ 焦点丢失、字也没了。
+
+        所以这里规定一条硬规矩：**空闲态的载荷形状永远一样** ——
+        键的集合固定、值的类型固定。面板据此判断「这还是同一块屏幕」，
+        不重画 ⇒ 输入框不失焦。
+
+        全部**纯内存**（不查库、不问宿主）—— 这个方法会在「拿不到锁」的
+        热路径上被调用，绝不能慢。
+        """
+        engine_config = self._engine_config_cache
+        pace: dict[str, Any] = {}
+        if engine_config is not None:
+            try:
+                pace = self._pace_block(engine_config, None)
+            except Exception:  # noqa: BLE001 - 形状兜底不该把上下文带崩
+                pace = {}
+        return {
+            "stage": "idle",
+            "notice": notice,
+            "player_name": self._remembered_name or "",
+            "pace": pace,
+            "onboarding": self._onboarding_block(None),
+            "meow": self._meow_block(),
+            "yui": self._yui_block(0),
+            "community_events": self._community_events_payload(),
+        }
 
     async def _market_context_payload(self, **_):
         """（原 ``market_context`` 的实现；**调用方必须自己持锁**。）
@@ -10144,7 +10192,9 @@ class MockStockMeowPlugin(NekoPluginBase):
         engine_config = await self._engine_config()
         session, error = await self._session_or_error(engine_config)
         if error is not None:
-            return {"stage": "p2-persistence", "notice": "数据库不可用。"}
+            # P34.0：数据库暂时不可用 ⇒ 同样给一份**形状完整**的空闲载荷
+            # （以前这里是残缺的两键载荷 ⇒ 面板整屏重画 ⇒ 输入框失焦）。
+            return self._idle_context_payload("数据库不可用。")
         # ── P10：节奏块（速度 / 自动·手动）与引导块（要不要自动弹说明）──
         # **纯内存**（不查库、不问宿主）：面板每秒轮询，这里必须便宜。
         pace = self._pace_block(engine_config, session)
@@ -10208,21 +10258,13 @@ class MockStockMeowPlugin(NekoPluginBase):
                     "yui": self._yui_block(0),
                     "notice": "本局已经结算归档。下面是这一局的最终成绩。",
                 }
-            return {
-                "stage": "idle",
-                "notice": "当前没有进行中的对局，请先加入一局。",
-                # ── P20.0：回填玩家上次用的名字（"下次进入直接读取"）────
-                "player_name": await self._remembered_player_name(),
-                # ── P10：空闲态也要有节奏块（玩家可以在开局前先调速度）──
-                "pace": pace,
-                "onboarding": onboarding,
-                # ── P11：空闲态也能呼叫猫娘（第一次打开就在这儿）──────
-                "meow": self._meow_block(),
-                # ── P23.0：空闲态也要能看到 Yui 的模式（直播托管在局前就开）──
-                "yui": self._yui_block(0),
-                # ── P26.0：空闲态也留着上一局的群友事件 ───────────────
-                "community_events": self._community_events_payload(),
-            }
+            # P34.0：空闲态的载荷**形状恒定** —— 与
+            # :meth:`_idle_context_payload` 完全一致（键一样、类型一样）。
+            # 面板拿到形状不变的载荷就不重画 ⇒ 初始界面的输入框不失焦。
+            payload = self._idle_context_payload("当前没有进行中的对局，请先加入一局。")
+            # ── P20.0：回填玩家上次用的名字（"下次进入直接读取"）────
+            payload["player_name"] = await self._remembered_player_name()
+            return payload
         payload = self._panel_payload(session, engine_config, pace, onboarding)
         # ── P18.0：推进教程（超时 / 门槛事件），然后刷新教程块 ─────────
         # 面板每秒问一次 ⇒ 教程的推进节奏跟得上玩家的眼睛。

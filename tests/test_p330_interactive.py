@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from pathlib import Path
@@ -209,6 +210,15 @@ def test_the_selected_tile_has_a_visible_state() -> None:
     # 面板的 CSS 红线一条都不许破。
     for banned in ("@keyframes", "position", "filter", "opacity", "clip-path", "z-index"):
         assert banned not in css, f"CSS 里出现了禁用词：{banned}"
+
+
+def test_the_delisted_stock_says_so_instead_of_ignoring_the_click() -> None:
+    """已退市的标的点不动 ⇒ 明确说一句话（不许点了个寂寞）。"""
+    code = _panel_code()
+    assert "stock.alive === false" in code, "退市标的必须被单独处理"
+    assert 't("panel.stock_delisted")' in code, "退市提示必须走 i18n"
+    i18n = json.loads((_PLUGIN_ROOT / "i18n" / "zh-CN.json").read_text(encoding="utf-8"))
+    assert "panel.stock_delisted" in i18n, "i18n 缺 panel.stock_delisted"
 
 
 # ══════════════════════════════════════════════════════ ② 退出自杀机制
